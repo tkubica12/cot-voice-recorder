@@ -216,3 +216,119 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ---------------------------------------------------------------------------
+# uv (Python) — keep uv.lock tracked for the backend; ignore local venvs/cache
+# ---------------------------------------------------------------------------
+.uv/
+uv-cache/
+
+# ---------------------------------------------------------------------------
+# Android / Gradle / Kotlin
+# ---------------------------------------------------------------------------
+.gradle/
+android/.gradle/
+**/build/
+android/local.properties
+local.properties
+captures/
+.externalNativeBuild/
+.cxx/
+*.keystore
+*.jks
+*.aab
+*.apk
+*.ap_
+*.dex
+# Keep the Gradle wrapper jar tracked
+!gradle/wrapper/gradle-wrapper.jar
+
+# Android signing secrets & local tooling (never commit)
+android/keystore/
+android/keystore.properties
+keystore.properties
+android/.sdk-download/
+android/.gradle-dist/
+android/.test-out.txt
+android/.sdkmanager*
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# ---------------------------------------------------------------------------
+# .NET / Visual Studio (Windows tray app)
+# ---------------------------------------------------------------------------
+# The PyInstaller rules above ignore *.manifest; a WPF application manifest is
+# source and must stay tracked.
+!windows/**/app.manifest
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+.vs/
+*.user
+*.suo
+*.userprefs
+*.rsuser
+*.userosscache
+*.sln.docstates
+project.lock.json
+artifacts/
+TestResults/
+[Tt]est[Rr]esults/
+publish/
+[Pp]ublish/
+*.msi
+*.msix
+*.msixbundle
+*.appx
+*.appxbundle
+*.nupkg
+*.snupkg
+
+# ---------------------------------------------------------------------------
+# Local configuration & secrets (do not commit)
+# ---------------------------------------------------------------------------
+.secrets/
+*.local.json
+appsettings.*.local.json
+secrets.json
+.env.*
+!.env.example
+
+# ---------------------------------------------------------------------------
+# Windows tray app — generated OAuth runtime config & installer build inputs
+# (the Desktop OAuth client JSON is sensitive operational config; never commit)
+# ---------------------------------------------------------------------------
+windows/**/google-desktop-client.json
+windows/build/
+windows/publish/
+windows/installer/output/
+windows/installer/staging/
+google-desktop-client.json
+*.oauth.local.json
+
+# ---------------------------------------------------------------------------
+# Azure local development
+# ---------------------------------------------------------------------------
+.azure/
+__azurite_db*__.json
+__blobstorage__/
+__queuestorage__/
+__tablestorage__/
+azurite-debug.log
+
+# ---------------------------------------------------------------------------
+# Editors / OS
+# ---------------------------------------------------------------------------
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db

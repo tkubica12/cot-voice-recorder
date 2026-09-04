@@ -1,0 +1,59 @@
+name: android-ci
+
+on:
+  push:
+    paths:
+      - "android/**"
+      - ".github/workflows/android-ci.yml"
+  pull_request:
+    paths:
+      - "android/**"
+      - ".github/workflows/android-ci.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: android
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+
+      # Deterministic checks only — no cloud secrets. Google sign-in stays unconfigured
+      # (GOOGLE_WEB_CLIENT_ID blank) and the release build falls back to debug signing when
+      # keystore.properties is absent, so assembleRelease is not run here.
+      - name: Unit tests
+        run: ./gradlew :app:testDebugUnitTest --console=plain --stacktrace
+
+      - name: Lint
+        run: ./gradlew :app:lintDebug --console=plain --stacktrace
+
+      - name: Assemble debug APK
+        run: ./gradlew :app:assembleDebug --console=plain --stacktrace
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-reports
+          path: |
+            android/app/build/reports/**
+            android/app/build/test-results/**
+          if-no-files-found: ignore

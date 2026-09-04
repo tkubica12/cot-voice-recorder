@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <RootNamespace>VoicePrompt.Core</RootNamespace>
+    <AssemblyName>VoicePrompt.Core</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- DPAPI (CurrentUser) at-rest encryption for cached tokens. Runs on Windows only. -->
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="VoicePrompt.Core.Tests" />
+  </ItemGroup>
+
+</Project>

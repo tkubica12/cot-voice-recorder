@@ -1,0 +1,33 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "location": {
+      "value": "swedencentral"
+    },
+    "projectName": {
+      "value": "cot-voice-recorder"
+    },
+    "environmentName": {
+      "value": "dev"
+    },
+    "resourceGroupName": {
+      "value": "rg-cot-voice-recorder"
+    },
+    "foundryResourceGroup": {
+      "value": "ai-services"
+    },
+    "foundryAccountName": {
+      "value": "tomaskubica-foundry-resource"
+    },
+    "foundryEndpoint": {
+      "value": "https://tomaskubica-foundry-resource.cognitiveservices.azure.com/"
+    },
+    "googleAllowedAudiences": {
+      "value": "not-configured"
+    },
+    "allowlistedEmail": {
+      "value": "nobody@invalid.example"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+# Local Azurite emulator for integration tests and local development.
+#
+#   docker compose -f docker-compose.azurite.yml up -d
+#   VR_RUN_AZURITE=1 uv run pytest -m azurite
+#   docker compose -f docker-compose.azurite.yml down
+#
+# Data is ephemeral (kept in a named volume). Azurite is only for local/test use;
+# production uses real Azure Storage over private endpoints with managed identity.
+services:
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:latest
+    command: >-
+      azurite --blobHost 0.0.0.0 --queueHost 0.0.0.0 --tableHost 0.0.0.0
+      --location /data --skipApiVersionCheck
+    ports:
+      - "10000:10000" # blob
+      - "10001:10001" # queue
+      - "10002:10002" # table
+    volumes:
+      - azurite-data:/data
+
+volumes:
+  azurite-data:

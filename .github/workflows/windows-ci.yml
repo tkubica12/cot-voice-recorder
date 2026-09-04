@@ -1,0 +1,85 @@
+name: windows-ci
+
+on:
+  push:
+    paths:
+      - "windows/**"
+      - ".github/workflows/windows-ci.yml"
+  pull_request:
+    paths:
+      - "windows/**"
+      - ".github/workflows/windows-ci.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: windows
+
+jobs:
+  build-and-test:
+    # WPF + WinForms require a Windows runner.
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('windows/**/*.csproj') }}
+          restore-keys: ${{ runner.os }}-nuget-
+
+      # No secrets are used anywhere in this job. The Desktop OAuth client JSON is
+      # deliberately absent, so the app builds and every test runs against the safe
+      # "not configured" state (sign-in disabled, realtime idle, no placeholder tokens).
+      - name: Restore
+        run: dotnet restore VoicePrompt.sln
+
+      - name: Build (Release)
+        run: dotnet build VoicePrompt.sln -c Release --no-restore
+
+      - name: Test (Release)
+        run: >
+          dotnet test VoicePrompt.sln -c Release --no-build
+          --logger "trx;LogFileName=windows-tests.trx"
+          --results-directory TestResults
+
+      - name: Publish framework-dependent x64
+        run: >
+          dotnet publish src/VoicePrompt.App/VoicePrompt.App.csproj
+          -c Release -r win-x64 --self-contained false -o publish/win-x64
+
+      - name: Verify no OAuth client JSON was packaged
+        shell: pwsh
+        run: |
+          $leaked = Get-ChildItem publish/win-x64 -Recurse -File |
+            Where-Object { $_.Name -like '*client_secret*' -or $_.Name -eq 'google-desktop-client.json' }
+          if ($leaked) {
+            $leaked | ForEach-Object { Write-Error "Unexpected credential file: $($_.FullName)" }
+            exit 1
+          }
+          Write-Host "No OAuth client material in the published output."
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-test-results
+          path: windows/TestResults/**
+          if-no-files-found: ignore
+
+      - name: Upload publish output
+        uses: actions/upload-artifact@v4
+        with:
+          name: voiceprompt-win-x64
+          path: windows/publish/win-x64/**
+          if-no-files-found: error

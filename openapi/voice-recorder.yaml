@@ -1,0 +1,1003 @@
+openapi: 3.1.0
+info:
+  title: Voice Recorder API
+  version: 1.0.0
+  summary: Personal voice-prompt recorder backend API.
+  description: |
+    HTTP API for the **cot-voice-recorder** personal voice-prompt system.
+
+    A single, allowlisted user records speech on Android; the backend transcribes each
+    audio chunk (Czech, `gpt-4o-transcribe`), refines the stitched text (`gpt-5.6-luna`
+    by default), stores a short-lived transcript, and notifies the Windows tray app over
+    Azure Web PubSub.
+
+    ## Conventions
+    - **IDs** are UUIDs (string, format `uuid`).
+    - **Timestamps** are ISO 8601 / RFC 3339 UTC strings (format `date-time`).
+    - **Errors** use RFC 9457 Problem Details (`application/problem+json`).
+    - **Auth**: every `/v1` route requires a Google OpenID Connect **ID token** as
+      `Authorization: Bearer <token>`. Health endpoints are unauthenticated.
+    - **Idempotency**: recording creation, chunk upload, and complete are all idempotent
+      (see individual operations).
+    - **Retention**: transcripts and history are available for 48 hours; audio is deleted
+      immediately after transcription.
+  contact:
+    name: Tomáš Kubica
+  license:
+    name: MIT
+    identifier: MIT
+
+servers:
+  - url: https://placeholder-backend.example.azurecontainerapps.io
+    description: Deployed backend (URL assigned after first deployment).
+  - url: http://localhost:8000
+    description: Local development.
+
+security:
+  - googleIdToken: []
+
+tags:
+  - name: recordings
+    description: Recording session lifecycle and chunk upload.
+  - name: transcripts
+    description: Retrieval of completed transcripts within retention.
+  - name: realtime
+    description: Web PubSub negotiation for push notifications.
+  - name: health
+    description: Unauthenticated liveness/readiness probes.
+
+paths:
+  /health/live:
+    get:
+      operationId: getLiveness
+      tags: [health]
+      summary: Liveness probe.
+      description: Returns 200 if the process is running. Unauthenticated; exposes no user data.
+      security: []
+      responses:
+        "200":
+          description: Process is alive.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+              example:
+                status: ok
+
+  /health/ready:
+    get:
+      operationId: getReadiness
+      tags: [health]
+      summary: Readiness probe.
+      description: |
+        Returns 200 when the backend is ready to serve traffic (configuration loaded and
+        dependencies reachable enough to accept work). Unauthenticated.
+      security: []
+      responses:
+        "200":
+          description: Ready to serve traffic.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+              example:
+                status: ok
+        "503":
+          description: Not ready.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+              example:
+                status: not_ready
+
+  /v1/recordings:
+    post:
+      operationId: createRecording
+      tags: [recordings]
+      summary: Create or return a recording session (idempotent).
+      description: |
+        Idempotently creates a recording session keyed by `client_recording_id`.
+
+        - First request for a given `client_recording_id` → `201 Created`.
+        - Subsequent requests with the same `client_recording_id` → `200 OK` returning the
+          existing recording (the request body is ignored beyond the key).
+
+        This lets the Android client start capturing immediately and (re)send the create
+        request from a durable queue even during backend cold start.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRecordingRequest"
+            example:
+              client_recording_id: 3f8a1e0c-1b2c-4d5e-8f90-a1b2c3d4e5f6
+              refine_model: gpt-5.6-luna
+              language: cs
+              client:
+                platform: android
+                app_version: 1.0.0
+              started_at: "2026-09-03T13:52:00Z"
+      responses:
+        "201":
+          description: Recording created.
+          headers:
+            Location:
+              description: URL of the created recording.
+              schema:
+                type: string
+                format: uri
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Recording"
+              example:
+                recording_id: 9a1b2c3d-4e5f-6a7b-8c9d-0e1f2a3b4c5d
+                client_recording_id: 3f8a1e0c-1b2c-4d5e-8f90-a1b2c3d4e5f6
+                state: recording
+                refine_model: gpt-5.6-luna
+                language: cs
+                progress:
+                  expected_chunk_count: null
+                  received_chunk_count: 0
+                  transcribed_chunk_count: 0
+                created_at: "2026-09-03T13:52:01Z"
+                updated_at: "2026-09-03T13:52:01Z"
+        "200":
+          description: Existing recording returned (idempotent replay).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Recording"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /v1/recordings/{recording_id}:
+    parameters:
+      - $ref: "#/components/parameters/RecordingId"
+    get:
+      operationId: getRecording
+      tags: [recordings]
+      summary: Get recording state and progress.
+      responses:
+        "200":
+          description: Current recording state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Recording"
+              example:
+                recording_id: 9a1b2c3d-4e5f-6a7b-8c9d-0e1f2a3b4c5d
+                client_recording_id: 3f8a1e0c-1b2c-4d5e-8f90-a1b2c3d4e5f6
+                state: transcribing
+                refine_model: gpt-5.6-luna
+                language: cs
+                progress:
+                  expected_chunk_count: 4
+                  received_chunk_count: 4
+                  transcribed_chunk_count: 2
+                transcript_id: null
+                created_at: "2026-09-03T13:52:01Z"
+                updated_at: "2026-09-03T13:52:40Z"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/recordings/{recording_id}/chunks/{index}:
+    parameters:
+      - $ref: "#/components/parameters/RecordingId"
+      - $ref: "#/components/parameters/ChunkIndex"
+    put:
+      operationId: uploadChunk
+      tags: [recordings]
+      summary: Upload one WAV audio chunk (idempotent).
+      description: |
+        Uploads a single 16 kHz mono PCM WAV chunk (30 s window, 1.5 s overlap with the
+        previous chunk) at position `index` (0-based).
+
+        **Idempotency.** Re-uploading the same `index` with the same `Content-Digest`
+        checksum returns `200` without duplicating work. Uploading the same `index` with a
+        **different** checksum returns `409 Conflict`.
+
+        **Body.** The raw WAV bytes are sent as `audio/wav`. Chunk metadata is carried in
+        request headers (checksum, capture timing, sample format) so the body stays a plain
+        binary blob.
+      parameters:
+        - name: Content-Digest
+          in: header
+          required: true
+          description: |
+            RFC 9530 content digest of the WAV bytes, used as the idempotency checksum.
+            Format `sha-256=:<base64>:`.
+          schema:
+            type: string
+            example: "sha-256=:X48E9qOokqqrvdts8nOJRJN3OWDUoyWxBf7kbu9DBPE=:"
+        - name: X-Chunk-Duration-Ms
+          in: header
+          required: false
+          description: Captured duration of this chunk in milliseconds (nominally 30000).
+          schema:
+            type: integer
+            minimum: 1
+            example: 30000
+        - name: X-Chunk-Overlap-Ms
+          in: header
+          required: false
+          description: Overlap in milliseconds shared with the previous chunk (nominally 1500).
+          schema:
+            type: integer
+            minimum: 0
+            example: 1500
+        - name: X-Chunk-Started-At
+          in: header
+          required: false
+          description: Capture start time of this chunk (ISO 8601 UTC).
+          schema:
+            type: string
+            format: date-time
+      requestBody:
+        required: true
+        content:
+          audio/wav:
+            schema:
+              type: string
+              format: binary
+              description: |
+                Raw WAV bytes. Constraints: 16 kHz, mono, 16-bit PCM. Maximum 8 MiB per
+                chunk (a 30 s 16 kHz mono 16-bit clip is ~960 KiB; the limit allows headroom).
+      responses:
+        "202":
+          description: Chunk accepted (queued for transcription).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChunkAccepted"
+              example:
+                recording_id: 9a1b2c3d-4e5f-6a7b-8c9d-0e1f2a3b4c5d
+                index: 0
+                chunk_state: accepted
+                checksum: "sha-256=:X48E9qOokqqrvdts8nOJRJN3OWDUoyWxBf7kbu9DBPE=:"
+                received_at: "2026-09-03T13:52:05Z"
+        "200":
+          description: Chunk already accepted with a matching checksum (idempotent replay).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChunkAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: |
+            Conflict. The same index was already uploaded with a different checksum, or the
+            index is out of range after `complete` declared a smaller `chunk_count`.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: "https://voice-recorder/errors/chunk-conflict"
+                title: Chunk conflict
+                status: 409
+                detail: Chunk index 0 was already uploaded with a different checksum.
+                instance: /v1/recordings/9a1b2c3d-4e5f-6a7b-8c9d-0e1f2a3b4c5d/chunks/0
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /v1/recordings/{recording_id}/complete:
+    parameters:
+      - $ref: "#/components/parameters/RecordingId"
+    post:
+      operationId: completeRecording
+      tags: [recordings]
+      summary: Mark recording complete with the expected chunk count (idempotent).
+      description: |
+        Declares that capture has finished and supplies the total `chunk_count` the client
+        sent. The backend waits for exactly `chunk_count` distinct chunk indices before
+        transcription finalizes.
+
+        **Idempotency.** Re-calling with the same `chunk_count` returns the current state.
+        Calling with a **different** `chunk_count` after the first accepted complete →
+        `409 Conflict`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompleteRecordingRequest"
+            example:
+              chunk_count: 4
+              stopped_at: "2026-09-03T13:52:40Z"
+      responses:
+        "202":
+          description: Completion accepted; finalization in progress.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Recording"
+              example:
+                recording_id: 9a1b2c3d-4e5f-6a7b-8c9d-0e1f2a3b4c5d
+                client_recording_id: 3f8a1e0c-1b2c-4d5e-8f90-a1b2c3d4e5f6
+                state: uploading
+                refine_model: gpt-5.6-luna
+                language: cs
+                progress:
+                  expected_chunk_count: 4
+                  received_chunk_count: 3
+                  transcribed_chunk_count: 2
+                created_at: "2026-09-03T13:52:01Z"
+                updated_at: "2026-09-03T13:52:41Z"
+        "200":
+          description: Already completed with the same chunk_count (idempotent replay).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Recording"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: A different chunk_count was already accepted for this recording.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: "https://voice-recorder/errors/complete-conflict"
+                title: Complete conflict
+                status: 409
+                detail: Recording already completed with chunk_count=4; got 5.
+                instance: /v1/recordings/9a1b2c3d-4e5f-6a7b-8c9d-0e1f2a3b4c5d/complete
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /v1/transcripts:
+    get:
+      operationId: listTranscripts
+      tags: [transcripts]
+      summary: List the authenticated user's transcripts (cursor paginated).
+      description: |
+        Returns transcripts for the authenticated user within the 48-hour retention window,
+        newest first. Uses opaque cursor pagination.
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          description: Opaque cursor from a previous response's `next_cursor`.
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of items to return.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        "200":
+          description: A page of transcript summaries.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TranscriptListPage"
+              example:
+                items:
+                  - transcript_id: 1c2d3e4f-5a6b-7c8d-9e0f-1a2b3c4d5e6f
+                    recording_id: 9a1b2c3d-4e5f-6a7b-8c9d-0e1f2a3b4c5d
+                    preview: "Připomeň mi zítra ráno zavolat doktorovi…"
+                    completed_at: "2026-09-03T13:53:10Z"
+                    expires_at: "2026-09-05T13:53:10Z"
+                    refine_model: gpt-5.6-luna
+                    language: cs
+                next_cursor: null
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/transcripts/{transcript_id}:
+    parameters:
+      - $ref: "#/components/parameters/TranscriptId"
+    get:
+      operationId: getTranscript
+      tags: [transcripts]
+      summary: Get a completed transcript, including its full body.
+      responses:
+        "200":
+          description: The transcript and its final body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Transcript"
+              example:
+                transcript_id: 1c2d3e4f-5a6b-7c8d-9e0f-1a2b3c4d5e6f
+                recording_id: 9a1b2c3d-4e5f-6a7b-8c9d-0e1f2a3b4c5d
+                body: "Připomeň mi zítra ráno zavolat doktorovi ohledně výsledků."
+                preview: "Připomeň mi zítra ráno zavolat doktorovi…"
+                language: cs
+                refine_model: gpt-5.6-luna
+                completed_at: "2026-09-03T13:53:10Z"
+                expires_at: "2026-09-05T13:53:10Z"
+                character_count: 58
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: |
+            Transcript not found or expired (past the 48-hour retention window).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: "https://voice-recorder/errors/not-found"
+                title: Not found
+                status: 404
+                detail: Transcript not found or expired.
+                instance: /v1/transcripts/1c2d3e4f-5a6b-7c8d-9e0f-1a2b3c4d5e6f
+
+  /v1/realtime/negotiate:
+    post:
+      operationId: negotiateRealtime
+      tags: [realtime]
+      summary: Get a user-scoped Web PubSub client access URL.
+      description: |
+        Returns a short-lived, user-scoped Azure Web PubSub client access URL that the
+        caller connects to directly. The connection is joined to the user's group and only
+        receives `transcript.completed` events. Clients renew before `expires_at`.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NegotiateRequest"
+            example:
+              client:
+                platform: windows
+                app_version: 1.0.0
+      responses:
+        "200":
+          description: Client access URL issued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NegotiateResponse"
+              example:
+                url: "wss://voice-recorder.webpubsub.azure.com/client/hubs/transcripts?access_token=eyJhbGciOi..."
+                hub: transcripts
+                group: user-allowlisted
+                expires_at: "2026-09-03T14:52:00Z"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+components:
+  securitySchemes:
+    googleIdToken:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Google OpenID Connect **ID token** in `Authorization: Bearer <token>`.
+        The backend validates the signature against Google's JWKS, checks `iss`, `exp`,
+        and that `aud` is one of the configured Google client IDs, and enforces the single
+        allowlisted, verified email.
+
+  parameters:
+    RecordingId:
+      name: recording_id
+      in: path
+      required: true
+      description: Server-assigned recording identifier.
+      schema:
+        type: string
+        format: uuid
+    TranscriptId:
+      name: transcript_id
+      in: path
+      required: true
+      description: Server-assigned transcript identifier.
+      schema:
+        type: string
+        format: uuid
+    ChunkIndex:
+      name: index
+      in: path
+      required: true
+      description: 0-based chunk position within the recording.
+      schema:
+        type: integer
+        minimum: 0
+
+  responses:
+    BadRequest:
+      description: Malformed request.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          example:
+            type: "https://voice-recorder/errors/bad-request"
+            title: Bad request
+            status: 400
+            detail: Request body is not valid JSON.
+    Unauthorized:
+      description: Missing or invalid bearer ID token.
+      headers:
+        WWW-Authenticate:
+          schema:
+            type: string
+          example: Bearer error="invalid_token"
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          example:
+            type: "https://voice-recorder/errors/unauthorized"
+            title: Unauthorized
+            status: 401
+            detail: The ID token is missing, expired, or has an invalid audience.
+    Forbidden:
+      description: Authenticated but not the allowlisted user.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          example:
+            type: "https://voice-recorder/errors/forbidden"
+            title: Forbidden
+            status: 403
+            detail: This account is not permitted to use this service.
+    NotFound:
+      description: Resource not found or expired.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          example:
+            type: "https://voice-recorder/errors/not-found"
+            title: Not found
+            status: 404
+            detail: Recording not found.
+    PayloadTooLarge:
+      description: The chunk exceeds the maximum allowed size.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          example:
+            type: "https://voice-recorder/errors/payload-too-large"
+            title: Payload too large
+            status: 413
+            detail: Chunk exceeds the 8 MiB limit.
+    UnsupportedMediaType:
+      description: The request body media type is not supported.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          example:
+            type: "https://voice-recorder/errors/unsupported-media-type"
+            title: Unsupported media type
+            status: 415
+            detail: Chunk upload must be audio/wav.
+    UnprocessableEntity:
+      description: Semantically invalid request (validation failed).
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          example:
+            type: "https://voice-recorder/errors/validation"
+            title: Validation error
+            status: 422
+            detail: One or more fields are invalid.
+            errors:
+              - field: chunk_count
+                message: must be greater than or equal to 1
+
+  schemas:
+    HealthStatus:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok, not_ready]
+
+    RecordingState:
+      type: string
+      description: Lifecycle state of a recording session.
+      enum:
+        - recording
+        - uploading
+        - transcribing
+        - refining
+        - completed
+        - failed
+
+    RefineModel:
+      type: string
+      description: Text-refinement model deployment to use.
+      enum:
+        - gpt-5.6-luna
+        - gpt-5.6-terra
+      default: gpt-5.6-luna
+
+    Language:
+      type: string
+      description: BCP 47 language code of the speech. Czech-first.
+      default: cs
+      examples: [cs]
+
+    ClientPlatform:
+      type: string
+      enum: [android, windows]
+
+    ClientInfo:
+      type: object
+      additionalProperties: false
+      description: Optional client descriptor for diagnostics.
+      properties:
+        platform:
+          $ref: "#/components/schemas/ClientPlatform"
+        app_version:
+          type: string
+          examples: ["1.0.0"]
+      required: [platform]
+
+    FailureReason:
+      type: string
+      description: Reason a recording ended in the `failed` state.
+      enum:
+        - missing_chunks
+        - transcription_failed
+        - refinement_failed
+        - internal_error
+
+    RecordingProgress:
+      type: object
+      additionalProperties: false
+      required:
+        - received_chunk_count
+        - transcribed_chunk_count
+      properties:
+        expected_chunk_count:
+          type: [integer, "null"]
+          minimum: 0
+          description: Declared total from `complete`; null until completion is requested.
+        received_chunk_count:
+          type: integer
+          minimum: 0
+          description: Distinct chunk indices received so far.
+        transcribed_chunk_count:
+          type: integer
+          minimum: 0
+          description: Chunks that have been transcribed so far.
+
+    CreateRecordingRequest:
+      type: object
+      additionalProperties: false
+      required: [client_recording_id]
+      properties:
+        client_recording_id:
+          type: string
+          format: uuid
+          description: Client-generated idempotency key for this recording.
+        refine_model:
+          $ref: "#/components/schemas/RefineModel"
+        language:
+          $ref: "#/components/schemas/Language"
+        client:
+          $ref: "#/components/schemas/ClientInfo"
+        started_at:
+          type: string
+          format: date-time
+          description: Client-side capture start time.
+
+    Recording:
+      type: object
+      additionalProperties: false
+      required:
+        - recording_id
+        - client_recording_id
+        - state
+        - refine_model
+        - language
+        - progress
+        - created_at
+        - updated_at
+      properties:
+        recording_id:
+          type: string
+          format: uuid
+        client_recording_id:
+          type: string
+          format: uuid
+        state:
+          $ref: "#/components/schemas/RecordingState"
+        refine_model:
+          $ref: "#/components/schemas/RefineModel"
+        language:
+          $ref: "#/components/schemas/Language"
+        progress:
+          $ref: "#/components/schemas/RecordingProgress"
+        transcript_id:
+          type: [string, "null"]
+          format: uuid
+          description: Set once state is `completed`.
+        failure_reason:
+          description: >-
+            Reason a recording ended in the `failed` state; `null` for every other state.
+          oneOf:
+            - $ref: "#/components/schemas/FailureReason"
+            - type: "null"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ChunkState:
+      type: string
+      enum: [accepted, transcribed, failed]
+
+    ChunkAccepted:
+      type: object
+      additionalProperties: false
+      required: [recording_id, index, chunk_state, checksum, received_at]
+      properties:
+        recording_id:
+          type: string
+          format: uuid
+        index:
+          type: integer
+          minimum: 0
+        chunk_state:
+          $ref: "#/components/schemas/ChunkState"
+        checksum:
+          type: string
+          description: The accepted content digest (echoes `Content-Digest`).
+        received_at:
+          type: string
+          format: date-time
+
+    CompleteRecordingRequest:
+      type: object
+      additionalProperties: false
+      required: [chunk_count]
+      properties:
+        chunk_count:
+          type: integer
+          minimum: 1
+          description: Total number of chunks the client sent (indices 0..chunk_count-1).
+        stopped_at:
+          type: string
+          format: date-time
+          description: Client-side capture stop time.
+
+    TranscriptSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - transcript_id
+        - recording_id
+        - preview
+        - completed_at
+        - expires_at
+        - language
+        - refine_model
+      properties:
+        transcript_id:
+          type: string
+          format: uuid
+        recording_id:
+          type: string
+          format: uuid
+        preview:
+          type: string
+          maxLength: 140
+          description: Short preview of the transcript (never the full body in list views).
+        completed_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          description: When the transcript is deleted (48 h after completion).
+        language:
+          $ref: "#/components/schemas/Language"
+        refine_model:
+          $ref: "#/components/schemas/RefineModel"
+
+    Transcript:
+      type: object
+      additionalProperties: false
+      required:
+        - transcript_id
+        - recording_id
+        - body
+        - preview
+        - language
+        - refine_model
+        - completed_at
+        - expires_at
+        - character_count
+      properties:
+        transcript_id:
+          type: string
+          format: uuid
+        recording_id:
+          type: string
+          format: uuid
+        body:
+          type: string
+          description: Final refined transcript text.
+        preview:
+          type: string
+          maxLength: 140
+        language:
+          $ref: "#/components/schemas/Language"
+        refine_model:
+          $ref: "#/components/schemas/RefineModel"
+        completed_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        character_count:
+          type: integer
+          minimum: 0
+
+    TranscriptListPage:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/TranscriptSummary"
+        next_cursor:
+          type: [string, "null"]
+          description: Opaque cursor for the next page, or null if this is the last page.
+
+    NegotiateRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        client:
+          $ref: "#/components/schemas/ClientInfo"
+
+    NegotiateResponse:
+      type: object
+      additionalProperties: false
+      required: [url, hub, group, expires_at]
+      properties:
+        url:
+          type: string
+          format: uri
+          description: User-scoped Web PubSub client access URL (contains an access token).
+        hub:
+          type: string
+          description: Web PubSub hub name.
+        group:
+          type: string
+          description: Group the connection is joined to.
+        expires_at:
+          type: string
+          format: date-time
+          description: When the access URL expires and must be renegotiated.
+
+    TranscriptCompletedEvent:
+      type: object
+      additionalProperties: false
+      description: |
+        Payload delivered over Web PubSub when a transcript is ready. Deliberately excludes
+        the full transcript body; clients fetch it via `GET /v1/transcripts/{transcript_id}`.
+      required:
+        - event
+        - event_id
+        - transcript_id
+        - recording_id
+        - completed_at
+        - preview
+      properties:
+        event:
+          type: string
+          const: transcript.completed
+        event_id:
+          type: string
+          format: uuid
+          description: Unique event ID for client-side deduplication.
+        transcript_id:
+          type: string
+          format: uuid
+        recording_id:
+          type: string
+          format: uuid
+        completed_at:
+          type: string
+          format: date-time
+        preview:
+          type: string
+          maxLength: 140
+          description: Short preview only; never the full private transcript.
+      examples:
+        - event: transcript.completed
+          event_id: 7d8e9f0a-1b2c-3d4e-5f6a-7b8c9d0e1f2a
+          transcript_id: 1c2d3e4f-5a6b-7c8d-9e0f-1a2b3c4d5e6f
+          recording_id: 9a1b2c3d-4e5f-6a7b-8c9d-0e1f2a3b4c5d
+          completed_at: "2026-09-03T13:53:10Z"
+          preview: "Připomeň mi zítra ráno zavolat doktorovi…"
+
+    Problem:
+      type: object
+      description: RFC 9457 Problem Details object.
+      properties:
+        type:
+          type: string
+          format: uri
+          default: "about:blank"
+          description: A URI reference identifying the problem type.
+        title:
+          type: string
+          description: Short, human-readable summary of the problem type.
+        status:
+          type: integer
+          minimum: 100
+          maximum: 599
+          description: HTTP status code.
+        detail:
+          type: string
+          description: Human-readable explanation specific to this occurrence.
+        instance:
+          type: string
+          format: uri-reference
+          description: URI reference identifying the specific occurrence.
+        errors:
+          type: array
+          description: Optional field-level validation errors.
+          items:
+            type: object
+            additionalProperties: false
+            required: [message]
+            properties:
+              field:
+                type: string
+              message:
+                type: string
+      required: [title, status]

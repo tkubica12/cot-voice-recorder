@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Palette from assets/voice-cloud.svg: black #111111, gray #6B7280,
+         light #E5E7EB, orange accent #F97316 -->
+    <color name="ink">#FF111111</color>
+    <color name="gray">#FF6B7280</color>
+    <color name="light">#FFE5E7EB</color>
+    <color name="orange">#FFF97316</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="ic_launcher_background">#FFE5E7EB</color>
+</resources>

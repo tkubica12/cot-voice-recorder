@@ -1,0 +1,13 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "_comment": "Copy to main.parameters.local.json (git-ignored) and fill real values AFTER you register Google OAuth clients. deploy.ps1 -LocalParametersFile main.parameters.local.json overrides the deny-all placeholders. Never commit real client IDs or the owner email.",
+  "parameters": {
+    "googleAllowedAudiences": {
+      "value": "REPLACE_ANDROID_CLIENT_ID.apps.googleusercontent.com,REPLACE_DESKTOP_CLIENT_ID.apps.googleusercontent.com"
+    },
+    "allowlistedEmail": {
+      "value": "REPLACE_WITH_OWNER_EMAIL"
+    }
+  }
+}

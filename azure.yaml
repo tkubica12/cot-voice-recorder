@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+
+# Azure Developer CLI project mapping for cot-voice-recorder.
+#
+# NOTE: The authoritative, repeatable deployment path is infra/deploy.ps1 (a
+# two-phase provision -> image build -> app deploy flow required because the
+# Container Apps pull the backend image from the ACR created in phase 1, and
+# Storage is private so the API only becomes healthy once RBAC + private DNS are
+# in place). `azd provision` can create the infrastructure (deployApps=false),
+# but use deploy.ps1 for the full end-to-end flow. See infra/README.md.
+name: cot-voice-recorder
+metadata:
+  template: cot-voice-recorder@1.0.0
+
+infra:
+  provider: bicep
+  path: infra
+  module: main
+
+services:
+  api:
+    project: ./backend
+    language: python
+    host: containerapp
+    docker:
+      path: Dockerfile
+      context: .

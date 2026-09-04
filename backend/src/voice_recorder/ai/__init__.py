@@ -1,0 +1,1 @@
+"""AI (transcription/refinement) adapters."""

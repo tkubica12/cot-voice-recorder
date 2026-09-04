@@ -1,0 +1,33 @@
+# Build context hygiene for the backend image.
+.venv/
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+
+# Local env / secrets — never bake into the image.
+.env
+.env.*
+!.env.example
+
+# Tests and dev-only files are not needed at runtime.
+tests/
+docker-compose.azurite.yml
+
+# Azurite local state.
+__blobstorage__/
+__queuestorage__/
+__tablestorage__/
+__azurite_db*__.json
+azurite-debug.log
+
+# VCS / editor noise.
+.git/
+.gitignore
+*.md
+!README.md
