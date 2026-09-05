@@ -8,6 +8,7 @@ from voice_recorder.ai.fakes import FakeRefiner
 from voice_recorder.ai.protocols import (
     TerminalTranscriptionError,
     TranscriptionError,
+    TranscriptionHints,
 )
 from voice_recorder.config import Settings
 from voice_recorder.digest import compute_content_digest
@@ -40,7 +41,7 @@ class _RaisingTranscriber:
         self._exc = exc
         self.attempts = 0
 
-    def transcribe(self, audio: bytes, *, language: str, prompt: str) -> str:
+    def transcribe(self, audio: bytes, *, hints: TranscriptionHints) -> str:
         self.attempts += 1
         raise self._exc
 

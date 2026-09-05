@@ -2,7 +2,7 @@
 
 **Owner:** infrastructure/deployment.
 **Tech:** Azure — Container Apps, Storage (Blob/Queue/Table), Web PubSub, ACR, Log
-Analytics, AI Foundry (existing). IaC: **Bicep**, orchestrated by **`infra/deploy.ps1`**
+Analytics, Azure Speech, AI Foundry (existing). IaC: **Bicep**, orchestrated by **`infra/deploy.ps1`**
 (two-phase) with an `azure.yaml` for Azure Developer CLI familiarity.
 
 Provisions what [`../docs/architecture.md`](../docs/architecture.md) requires. The API
@@ -20,6 +20,8 @@ rg-cot-voice-recorder (Sweden Central)
 │   ├── queue: work
 │   └── table: recordings, chunks, transcripts
 ├── pe-*-{blob,queue,table} + privatelink.{blob,queue,table}.core.windows.net zones
+├── aispeech-cotvr-<token>  Azure Speech (North Europe) — public access/local auth DISABLED
+├── pe-aispeech-* + privatelink.cognitiveservices.azure.com zone
 ├── crcotvr<token>         ACR (Standard, admin disabled, MI pull)
 ├── wps-cotvr-<token>      Web PubSub (Free_F1, hub `transcripts`, local auth disabled)
 ├── id-cotvr-<token>       user-assigned managed identity (SHARED by all runtime apps)
@@ -49,6 +51,7 @@ Least-privilege data-plane roles assigned to the identity (no keys anywhere):
 | ACR | AcrPull |
 | Web PubSub | Web PubSub Service Owner (negotiate + send) |
 | Foundry account (RG `ai-services`) | Cognitive Services User (invoke deployments) |
+| Azure Speech account | Cognitive Services User (invoke MAI-Transcribe-2) |
 
 ### Networking & the storage privacy guarantee
 
@@ -61,6 +64,12 @@ IPs (10.20.2.4–6). The Container Apps environment is injected into the `infra`
 API/worker/job traffic to Storage stays private. Control-plane creation of the
 containers/queues/tables works despite disabled public access + shared key because it
 goes through ARM, not the data plane.
+
+The Azure Speech resource follows the same closed-network pattern: public access and
+local key authentication are disabled, its `account` private endpoint resolves through
+`privatelink.cognitiveservices.azure.com`, and the worker authenticates only with the
+shared managed identity. It is deployed in North Europe because MAI transcription is not
+available in Sweden Central.
 
 ### Deliberate network exceptions (Storage never weakened)
 
@@ -164,15 +173,16 @@ curl -i https://<api-fqdn>/v1/recordings/x   # 401 until Google auth is configur
 - Resource group `ai-services`, Foundry account `tomaskubica-foundry-resource`
   (Sweden Central), endpoint
   `https://tomaskubica-foundry-resource.cognitiveservices.azure.com/`.
-- Deployments (unchanged): `gpt-4o-transcribe` (2025-03-20),
-  `gpt-5.6-luna` / `gpt-5.6-terra` (2026-07-09). This IaC only adds a role assignment.
+- Deployments (unchanged): `gpt-5.6-luna` / `gpt-5.6-terra` (2026-07-09) and
+  `gpt-4o-transcribe` (2025-03-20) as the transcription fallback. This IaC only adds a
+  role assignment to that existing account.
 
 ## Cost / tradeoffs
 
 - Container Apps **Consumption** profile with min-replicas 0 → near-zero idle cost; cold
   start is absorbed by the async client design.
 - Web PubSub **Free_F1** (no cost) is sufficient for one user.
-- Three private endpoints + a VNet incur a small hourly PE cost; this is the price of the
+- Four private endpoints + a VNet incur a small hourly PE cost; this is the price of the
   closed Storage firewall the subscription policy requires.
 - ACR **Standard** avoids Premium's Private Link cost; the tradeoff is a public (but
   credential-less, MI-only) registry endpoint.

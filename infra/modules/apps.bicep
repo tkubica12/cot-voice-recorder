@@ -34,6 +34,9 @@ param webPubSubEndpoint string
 @description('Foundry endpoint.')
 param foundryEndpoint string
 
+@description('Azure Speech endpoint for MAI-Transcribe.')
+param speechEndpoint string
+
 @description('Comma-separated Google OIDC audiences (deny-all placeholder).')
 param googleAllowedAudiences string
 
@@ -118,6 +121,30 @@ var commonEnv = [
   {
     name: 'VR_TRANSCRIBE_DEPLOYMENT'
     value: 'gpt-4o-transcribe'
+  }
+  {
+    name: 'VR_TRANSCRIBE_PROVIDER'
+    value: 'azure_speech'
+  }
+  {
+    name: 'VR_SPEECH_ENDPOINT'
+    value: speechEndpoint
+  }
+  {
+    name: 'VR_SPEECH_API_VERSION'
+    value: '2025-10-15'
+  }
+  {
+    name: 'VR_SPEECH_MODEL'
+    value: 'MAI-Transcribe-2'
+  }
+  {
+    name: 'VR_SPEECH_TRANSCRIBE_STYLE'
+    value: 'verbatim'
+  }
+  {
+    name: 'VR_SPEECH_TIMEOUT_SECONDS'
+    value: '180'
   }
   {
     name: 'VR_REFINE_DEPLOYMENT_DEFAULT'

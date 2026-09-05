@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Protocol
 
 from ..errors import TerminalError, TransientError
@@ -23,8 +24,17 @@ class TerminalRefinementError(TerminalError):
     """Non-retryable refinement failure."""
 
 
+@dataclass(frozen=True)
+class TranscriptionHints:
+    """Provider-neutral language and vocabulary hints for one audio chunk."""
+
+    language: str
+    prompt: str
+    phrases: tuple[str, ...]
+
+
 class Transcriber(Protocol):
-    def transcribe(self, audio: bytes, *, language: str, prompt: str) -> str: ...
+    def transcribe(self, audio: bytes, *, hints: TranscriptionHints) -> str: ...
 
 
 class Refiner(Protocol):

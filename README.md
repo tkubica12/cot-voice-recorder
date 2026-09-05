@@ -76,7 +76,7 @@ flowchart LR
 2. Audio is stored locally before upload and split into 30-second PCM WAV chunks with a
    1.5-second overlap so words are not clipped at boundaries.
 3. Each acknowledged chunk is queued and transcribed independently with
-   `gpt-4o-transcribe`; its audio is then deleted.
+   `MAI-Transcribe-2` through Azure Speech Fast Transcription; its audio is then deleted.
 4. After all chunks arrive, the worker stitches and deduplicates their text.
 5. `gpt-5.6-luna` performs a conservative cleanup pass over the complete transcript.
 6. Web PubSub notifies the Windows tray app, which fetches the final text and copies it to
@@ -93,8 +93,9 @@ an APK and Windows through a local per-user installer.
 
 ### Prerequisites
 
-- An Azure subscription and an Azure AI Foundry resource with deployments for
-  `gpt-4o-transcribe` and `gpt-5.6-luna` (optionally `gpt-5.6-terra`).
+- An Azure subscription and an Azure AI Foundry resource with `gpt-5.6-luna`
+  (optionally `gpt-5.6-terra` and the `gpt-4o-transcribe` fallback). The deployment
+  creates the private Azure Speech resource required by `MAI-Transcribe-2`.
 - Azure CLI with permission to create resources and role assignments.
 - Python 3.13 and [`uv`](https://docs.astral.sh/uv/) for backend development.
 - JDK 17 and Android SDK 35 for the Android build.

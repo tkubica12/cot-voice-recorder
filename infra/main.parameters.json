@@ -5,6 +5,9 @@
     "location": {
       "value": "swedencentral"
     },
+    "speechLocation": {
+      "value": "northeurope"
+    },
     "projectName": {
       "value": "cot-voice-recorder"
     },

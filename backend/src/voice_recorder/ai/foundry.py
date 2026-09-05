@@ -16,6 +16,7 @@ from .protocols import (
     TerminalRefinementError,
     TerminalTranscriptionError,
     TranscriptionError,
+    TranscriptionHints,
 )
 
 _TRANSIENT_STATUS = frozenset({408, 409, 429, 500, 502, 503, 504})
@@ -36,13 +37,13 @@ class FoundryTranscriber:
         self._client = client
         self._deployment = deployment
 
-    def transcribe(self, audio: bytes, *, language: str, prompt: str) -> str:
+    def transcribe(self, audio: bytes, *, hints: TranscriptionHints) -> str:
         try:
             result = self._client.audio.transcriptions.create(
                 model=self._deployment,
                 file=("chunk.wav", audio, "audio/wav"),
-                language=language,
-                prompt=prompt,
+                language=hints.language,
+                prompt=hints.prompt,
                 response_format="text",
             )
         except openai.APIError as exc:

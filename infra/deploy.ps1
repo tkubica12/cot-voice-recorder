@@ -23,6 +23,7 @@
 param(
     [string] $SubscriptionId = '673af34d-6b28-41dc-bc7b-f507418045e6',
     [string] $Location = 'swedencentral',
+    [string] $SpeechLocation = 'northeurope',
     [string] $EnvironmentName = 'dev',
     [string] $ProjectName = 'cot-voice-recorder',
     [string] $ImageRepository = 'voice-recorder-backend',
@@ -72,6 +73,7 @@ if (-not $ImageTag) {
 Write-Host "=== cot-voice-recorder deploy ===" -ForegroundColor Cyan
 Write-Host "Subscription : $SubscriptionId"
 Write-Host "Location     : $Location"
+Write-Host "Speech region: $SpeechLocation"
 Write-Host "Environment  : $EnvironmentName"
 Write-Host "Image tag    : $ImageTag"
 Write-Host ""
@@ -96,6 +98,7 @@ $phase1Args = @(
 ) + $paramArgs + @(
     '--parameters','deployApps=false',
     "--parameters","location=$Location",
+    "--parameters","speechLocation=$SpeechLocation",
     "--parameters","environmentName=$EnvironmentName",
     "--parameters","projectName=$ProjectName",
     '--output','json'
@@ -181,6 +184,7 @@ $phase2Args = @(
     '--parameters','deployApps=true',
     "--parameters","containerImage=$imageRef",
     "--parameters","location=$Location",
+    "--parameters","speechLocation=$SpeechLocation",
     "--parameters","environmentName=$EnvironmentName",
     "--parameters","projectName=$ProjectName",
     '--output','json'
@@ -203,6 +207,8 @@ Write-Host "`n=== Deployment outputs ===" -ForegroundColor Cyan
     ManagedIdentityGuid = $out.userAssignedClientId.value
     WebPubSubName       = $out.webPubSubName.value
     WebPubSubEndpoint   = $out.webPubSubEndpoint.value
+    SpeechAccount       = $out.speechAccountName.value
+    SpeechEndpoint      = $out.speechEndpoint.value
     ContainerEnv        = $out.managedEnvironmentName.value
     LogAnalytics        = $out.logAnalyticsName.value
     Acr                 = $out.acrName.value

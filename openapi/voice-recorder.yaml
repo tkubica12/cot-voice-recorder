@@ -7,7 +7,7 @@ info:
     HTTP API for the **cot-voice-recorder** personal voice-prompt system.
 
     A single, allowlisted user records speech on Android; the backend transcribes each
-    audio chunk (Czech, `gpt-4o-transcribe`), refines the stitched text (`gpt-5.6-luna`
+    audio chunk (Czech, `MAI-Transcribe-2`), refines the stitched text (`gpt-5.6-luna`
     by default), stores a short-lived transcript, and notifies the Windows tray app over
     Azure Web PubSub.
 

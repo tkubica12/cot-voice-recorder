@@ -51,7 +51,8 @@ flowchart LR
     TABLE[(Table<br/>session metadata)]
   end
 
-  FND[Azure AI Foundry<br/>gpt-4o-transcribe · gpt-5.6-luna/terra]
+  SPEECH[Azure Speech<br/>MAI-Transcribe-2]
+  FND[Azure AI Foundry<br/>gpt-5.6-luna/terra]
   WPS[Azure Web PubSub]
 
   subgraph Tray[Windows tray app · .NET 8 WPF]
@@ -68,6 +69,7 @@ flowchart LR
   QUEUE --> W
   W --> BLOB
   W --> TABLE
+  W --> SPEECH
   W --> FND
   W -->|transcript.completed| WPS
   CLEAN --> BLOB
@@ -88,7 +90,7 @@ sequenceDiagram
   participant API as FastAPI
   participant ST as Storage (Blob/Queue/Table)
   participant WK as Worker
-  participant AI as Azure AI Foundry
+  participant AI as Azure Speech / AI Foundry
   participant WPS as Web PubSub
   participant W as Windows tray
 
@@ -102,7 +104,7 @@ sequenceDiagram
     API-->>A: 202 {chunk_state: accepted}
     A->>A: delete local chunk after ack
     WK->>ST: dequeue transcribe-chunk
-    WK->>AI: transcribe (gpt-4o-transcribe, cs)
+    WK->>AI: transcribe (MAI-Transcribe-2, cs)
     AI-->>WK: chunk text
     WK->>ST: store chunk text, DELETE audio blob
   end
@@ -315,9 +317,13 @@ flowchart TB
 
 ## 8. Model choice rationale
 
-- **Transcription — `gpt-4o-transcribe` (version 2025-03-20).** Chosen for strong Czech
-  speech-to-text quality. Called per 30 s chunk so latency is bounded and partial results can
-  proceed while later audio is still uploading.
+- **Transcription — `MAI-Transcribe-2` via Azure Speech Fast Transcription API
+  `2025-10-15`.** Chosen after live Czech comparison against `gpt-4o-transcribe`: the
+  models produced the same mean word-error rate on clean, self-correction, code-switching,
+  and 12 dB noisy samples, while MAI verbatim completed about twice as fast. It runs in a
+  private North Europe `AIServices` resource because Sweden Central does not currently
+  support MAI transcription. `gpt-4o-transcribe` remains a configurable fallback.
+  MAI-Transcribe-2 is currently an Azure public-preview feature without an SLA.
 - **Refinement (default) — `gpt-5.6-luna` (2026-07-09).** Cleans up disfluencies, fixes
   punctuation/casing, and stitches overlap seams into coherent prose while preserving meaning.
   Default because it balances quality and cost for short prompts.

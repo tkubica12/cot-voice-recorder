@@ -18,6 +18,9 @@ targetScope = 'subscription'
 @description('Azure region for all new resources.')
 param location string = 'swedencentral'
 
+@description('Azure region for MAI-Transcribe-2. Must support Azure Speech LLM transcription.')
+param speechLocation string = 'northeurope'
+
 @description('Short project name used for tagging and resource naming.')
 param projectName string = 'cot-voice-recorder'
 
@@ -69,6 +72,7 @@ module resources 'modules/resources.bicep' = {
   scope: rg
   params: {
     location: location
+    speechLocation: speechLocation
     tags: tags
     resourceToken: resourceToken
     foundryEndpoint: foundryEndpoint
@@ -89,6 +93,7 @@ module apps 'modules/apps.bicep' = if (deployApps) {
     storageAccountName: resources.outputs.storageAccountName
     webPubSubEndpoint: resources.outputs.webPubSubEndpoint
     foundryEndpoint: foundryEndpoint
+    speechEndpoint: resources.outputs.speechEndpoint
     googleAllowedAudiences: googleAllowedAudiences
     allowlistedEmail: allowlistedEmail
   }
@@ -118,6 +123,8 @@ output userAssignedClientId string = resources.outputs.userAssignedClientId
 output userAssignedPrincipalId string = resources.outputs.userAssignedPrincipalId
 output webPubSubName string = resources.outputs.webPubSubName
 output webPubSubEndpoint string = resources.outputs.webPubSubEndpoint
+output speechAccountName string = resources.outputs.speechAccountName
+output speechEndpoint string = resources.outputs.speechEndpoint
 output managedEnvironmentName string = resources.outputs.managedEnvironmentName
 output logAnalyticsName string = resources.outputs.logAnalyticsName
 output apiFqdn string = deployApps ? apps.outputs.apiFqdn : ''

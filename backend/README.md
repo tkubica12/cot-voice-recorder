@@ -4,8 +4,9 @@
 **Tech:** Python 3.13 · FastAPI · uv · Azure Container Apps (min replicas 0), managed identity only.
 
 The stateless API and workers that orchestrate the recorder: authenticate the user,
-accept recording sessions and audio chunks, transcribe (Czech, `gpt-4o-transcribe`) and
-refine (`gpt-5.6-luna` default / `gpt-5.6-terra`) via Azure AI Foundry, persist
+accept recording sessions and audio chunks, transcribe Czech with `MAI-Transcribe-2`
+through Azure Speech, and refine (`gpt-5.6-luna` default / `gpt-5.6-terra`) through
+Azure AI Foundry, persist
 short-lived transcripts, and push `transcript.completed` events over Azure Web PubSub.
 
 Implements the contract in [`../openapi/voice-recorder.yaml`](../openapi/voice-recorder.yaml)
@@ -27,7 +28,7 @@ backend/
 │   ├── services/                 # recording lifecycle, pipeline, cleanup
 │   ├── repositories/             # Table repos + in-memory fakes
 │   ├── storage/                  # Blob + Queue adapters + in-memory fakes
-│   ├── ai/                       # Foundry transcriber/refiner + fakes
+│   ├── ai/                       # Azure Speech/Foundry adapters + fakes
 │   ├── realtime/                 # Web PubSub gateway + in-memory fake
 │   ├── routers/                  # health, recordings, transcripts, realtime
 │   ├── worker.py                 # queue worker (bounded retries)
@@ -108,7 +109,7 @@ The container runs as a non-root user and starts quickly; the worker and API han
 ## Configuration
 
 All settings are environment variables prefixed with `VR_` (see `.env.example`).
-Production access to Azure Storage, Web PubSub, and Azure AI Foundry uses a shared
+Production access to Azure Storage, Azure Speech, Web PubSub, and Azure AI Foundry uses a shared
 **user-assigned managed identity** — no keys or connection strings. The identity's
 client id is passed to every container as `AZURE_CLIENT_ID` so `DefaultAzureCredential`
 selects it. The API, queue worker, and cleanup job run as three separate Container

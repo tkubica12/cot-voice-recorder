@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import uuid
 
+from ..ai.protocols import TranscriptionHints
 from ..domain import (
     ChunkState,
     FailureReason,
@@ -61,8 +62,11 @@ def transcribe_chunk(ctx: ServiceContext, recording_id: str, index: int) -> None
 
     text = ctx.transcriber.transcribe(
         audio,
-        language=recording.language,
-        prompt=build_transcription_prompt(ctx.settings.glossary_prompt()),
+        hints=TranscriptionHints(
+            language=recording.language,
+            prompt=build_transcription_prompt(ctx.settings.glossary_prompt()),
+            phrases=ctx.settings.glossary_phrases(),
+        ),
     )
 
     for _ in range(5):

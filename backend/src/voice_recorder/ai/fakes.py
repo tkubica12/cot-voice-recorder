@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ..stitch import _normalize_token
+from .protocols import TranscriptionHints
 
 
 class FakeTranscriber:
@@ -14,10 +15,10 @@ class FakeTranscriber:
 
     def __init__(self, responses: dict[bytes, str] | None = None) -> None:
         self.responses = responses or {}
-        self.calls: list[tuple[str, str]] = []
+        self.calls: list[TranscriptionHints] = []
 
-    def transcribe(self, audio: bytes, *, language: str, prompt: str) -> str:
-        self.calls.append((language, prompt))
+    def transcribe(self, audio: bytes, *, hints: TranscriptionHints) -> str:
+        self.calls.append(hints)
         if audio in self.responses:
             return self.responses[audio]
         return f"chunk-{len(audio)}"

@@ -15,6 +15,8 @@ from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 Environment = Literal["production", "local", "test"]
+TranscribeProvider = Literal["azure_openai", "azure_speech"]
+TranscribeStyle = Literal["verbatim", "clean"]
 
 # Development connection string documented by Azurite. Only usable outside production.
 AZURITE_DEV_CONNECTION_STRING = (
@@ -28,8 +30,9 @@ AZURITE_DEV_CONNECTION_STRING = (
 
 DEFAULT_GLOSSARY_TERMS = (
     "Microsoft, Azure, GitHub, SDK, API, AI, Container Apps, Managed Identity, "
-    "Foundry, Copilot, Kubernetes, Entra, OpenAI, FastAPI, Python, DevOps, "
-    "Kubernetes, Terraform, Bicep, Azure OpenAI, Web PubSub, DNS, OIDC, JWT"
+    "Foundry, Copilot, Backend, Speech-to-text, MAI-Transcribe-2, GPT-5.6 Luna, "
+    "REST API, Blob Storage, Kubernetes, Entra, OpenAI, FastAPI, Python, DevOps, "
+    "Terraform, Azure OpenAI, Web PubSub, DNS, OIDC, JWT"
 )
 
 
@@ -76,7 +79,13 @@ class Settings(BaseSettings):
     foundry_endpoint: str = "https://tomaskubica-foundry-resource.cognitiveservices.azure.com/"
     foundry_api_version: str = "2024-10-21"
     foundry_scope: str = "https://cognitiveservices.azure.com/.default"
+    transcribe_provider: TranscribeProvider = "azure_speech"
     transcribe_deployment: str = "gpt-4o-transcribe"
+    speech_endpoint: str = ""
+    speech_api_version: str = "2025-10-15"
+    speech_model: str = "MAI-Transcribe-2"
+    speech_transcribe_style: TranscribeStyle = "verbatim"
+    speech_timeout_seconds: float = 180.0
     refine_deployment_default: str = "gpt-5.6-luna"
     refine_deployment_alternative: str = "gpt-5.6-terra"
 
@@ -155,6 +164,10 @@ class Settings(BaseSettings):
                 raise ValueError("fake AI/realtime/storage adapters are not allowed in production")
             if not self.webpubsub_endpoint:
                 raise ValueError("webpubsub_endpoint is required in production")
+            if self.transcribe_provider == "azure_speech" and not self.speech_endpoint:
+                raise ValueError(
+                    "speech_endpoint is required for the azure_speech transcribe provider"
+                )
         return self
 
     # -------------------------------------------------------------- helpers
@@ -177,6 +190,9 @@ class Settings(BaseSettings):
 
     def glossary_prompt(self) -> str:
         return f"Domain glossary (spell these technical terms correctly): {self.glossary_terms}."
+
+    def glossary_phrases(self) -> tuple[str, ...]:
+        return tuple(term.strip() for term in self.glossary_terms.split(",") if term.strip())
 
 
 @lru_cache(maxsize=1)

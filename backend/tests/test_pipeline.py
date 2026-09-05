@@ -83,10 +83,12 @@ def test_transcriber_called_with_language_and_glossary(
     context: ServiceContext,
 ) -> None:
     _run(context, ["ahoj"])
-    languages = {lang for lang, _ in context.transcriber.calls}  # type: ignore[attr-defined]
-    prompts = [prompt for _, prompt in context.transcriber.calls]  # type: ignore[attr-defined]
+    languages = {hints.language for hints in context.transcriber.calls}  # type: ignore[attr-defined]
+    prompts = [hints.prompt for hints in context.transcriber.calls]  # type: ignore[attr-defined]
+    phrase_lists = [hints.phrases for hints in context.transcriber.calls]  # type: ignore[attr-defined]
     assert languages == {"cs"}
     assert any("Azure" in p and "Entra" in p for p in prompts)
+    assert any("Azure" in phrases and "Entra" in phrases for phrases in phrase_lists)
 
 
 def test_refiner_uses_selected_deployment(context: ServiceContext) -> None:

@@ -11,6 +11,7 @@ from typing import Any
 
 from .ai.fakes import FakeRefiner, FakeTranscriber
 from .ai.foundry import FoundryRefiner, FoundryTranscriber
+from .ai.protocols import Refiner, Transcriber
 from .auth import GoogleTokenVerifier, StaticTokenVerifier, TokenVerifier
 from .clock import Clock, SystemClock
 from .config import Settings
@@ -96,7 +97,7 @@ def _build_table(settings: Settings, credential: Any, table_name: str) -> Any:
     return service.get_table_client(table_name)
 
 
-def _build_ai(settings: Settings, credential: Any) -> tuple[Any, Any]:
+def _build_ai(settings: Settings, credential: Any) -> tuple[Transcriber, Refiner]:
     if settings.use_fake_ai:
         return FakeTranscriber(), FakeRefiner()
     from azure.identity import get_bearer_token_provider
@@ -108,10 +109,21 @@ def _build_ai(settings: Settings, credential: Any) -> tuple[Any, Any]:
         azure_ad_token_provider=token_provider,
         api_version=settings.foundry_api_version,
     )
-    return (
-        FoundryTranscriber(client, settings.transcribe_deployment),
-        FoundryRefiner(client),
-    )
+    transcriber: Transcriber
+    if settings.transcribe_provider == "azure_speech":
+        from .ai.speech import AzureSpeechTranscriber
+
+        transcriber = AzureSpeechTranscriber(
+            settings.speech_endpoint,
+            credential,
+            model=settings.speech_model,
+            api_version=settings.speech_api_version,
+            transcribe_style=settings.speech_transcribe_style,
+            timeout_seconds=settings.speech_timeout_seconds,
+        )
+    else:
+        transcriber = FoundryTranscriber(client, settings.transcribe_deployment)
+    return transcriber, FoundryRefiner(client)
 
 
 def _build_realtime(settings: Settings, credential: Any) -> RealtimeGateway:

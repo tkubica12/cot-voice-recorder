@@ -7,6 +7,9 @@
 @description('Azure region.')
 param location string
 
+@description('Azure region for the MAI-Transcribe Speech resource.')
+param speechLocation string
+
 @description('Resource tags.')
 param tags object
 
@@ -24,6 +27,7 @@ var identityName = 'id-cotvr-${resourceToken}'
 var vnetName = 'vnet-cotvr'
 var logAnalyticsName = 'log-cotvr-${resourceToken}'
 var managedEnvironmentName = 'cae-cotvr'
+var speechAccountName = 'aispeech-cotvr-${resourceToken}'
 
 // Built-in role definition IDs (resolved from Azure).
 var roleBlobDataContributor = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
@@ -31,10 +35,12 @@ var roleQueueDataContributor = '974c5e8b-45b9-4653-ba55-5f855dd0fb88'
 var roleTableDataContributor = '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3'
 var roleAcrPull = '7f951dda-4ed3-4680-a7ca-43fe172d538d'
 var roleWebPubSubServiceOwner = '12cf5a90-567b-43ae-8102-96cf46c7d9b4'
+var roleCognitiveServicesUser = 'a97b65f3-24c7-4388-baec-2e87135dc908'
 
 var blobDnsZoneName = 'privatelink.blob.core.windows.net'
 var queueDnsZoneName = 'privatelink.queue.core.windows.net'
 var tableDnsZoneName = 'privatelink.table.core.windows.net'
+var cognitiveServicesDnsZoneName = 'privatelink.cognitiveservices.azure.com'
 
 // ------------------------------------------------------------ identity
 resource uami 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
@@ -125,6 +131,11 @@ resource tableZone 'Microsoft.Network/privateDnsZones@2020-06-01' = {
   location: 'global'
   tags: tags
 }
+resource cognitiveServicesZone 'Microsoft.Network/privateDnsZones@2020-06-01' = {
+  name: cognitiveServicesDnsZoneName
+  location: 'global'
+  tags: tags
+}
 
 resource blobZoneLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = {
   parent: blobZone
@@ -150,6 +161,17 @@ resource queueZoneLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@20
 }
 resource tableZoneLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = {
   parent: tableZone
+  name: 'link-vnet'
+  location: 'global'
+  properties: {
+    registrationEnabled: false
+    virtualNetwork: {
+      id: vnet.id
+    }
+  }
+}
+resource cognitiveServicesZoneLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = {
+  parent: cognitiveServicesZone
   name: 'link-vnet'
   location: 'global'
   properties: {
@@ -336,6 +358,64 @@ resource peTableDns 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@202
   }
 }
 
+// --------------------------------------------- MAI transcription resource
+// MAI-Transcribe-2 is exposed through Azure Speech Fast Transcription rather than
+// an Azure OpenAI model deployment. North Europe is the nearest supported region.
+resource speech 'Microsoft.CognitiveServices/accounts@2024-10-01' = {
+  name: speechAccountName
+  location: speechLocation
+  tags: tags
+  kind: 'AIServices'
+  sku: {
+    name: 'S0'
+  }
+  properties: {
+    customSubDomainName: speechAccountName
+    publicNetworkAccess: 'Disabled'
+    disableLocalAuth: true
+    networkAcls: {
+      defaultAction: 'Deny'
+    }
+  }
+}
+
+resource peSpeech 'Microsoft.Network/privateEndpoints@2024-05-01' = {
+  name: 'pe-${speechAccountName}'
+  location: location
+  tags: tags
+  properties: {
+    subnet: {
+      id: peSubnet.id
+    }
+    privateLinkServiceConnections: [
+      {
+        name: 'account'
+        properties: {
+          privateLinkServiceId: speech.id
+          groupIds: [
+            'account'
+          ]
+        }
+      }
+    ]
+  }
+}
+
+resource peSpeechDns 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2024-05-01' = {
+  parent: peSpeech
+  name: 'default'
+  properties: {
+    privateDnsZoneConfigs: [
+      {
+        name: 'account'
+        properties: {
+          privateDnsZoneId: cognitiveServicesZone.id
+        }
+      }
+    ]
+  }
+}
+
 // -------------------------------------------------- container registry
 // Standard SKU with public network access + managed-identity pull. ACR private
 // link requires Premium; Standard keeps `az acr build` automatable while the
@@ -433,6 +513,15 @@ resource raWebPubSub 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roleWebPubSubServiceOwner)
   }
 }
+resource raSpeech 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(speech.id, uami.id, roleCognitiveServicesUser)
+  scope: speech
+  properties: {
+    principalId: uami.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roleCognitiveServicesUser)
+  }
+}
 
 // --------------------------------------------- container apps environment
 // Workload-profile environment injected into the VNet, keeping EXTERNAL ingress
@@ -473,6 +562,8 @@ output acrName string = acr.name
 output acrLoginServer string = acr.properties.loginServer
 output webPubSubName string = webPubSub.name
 output webPubSubEndpoint string = 'https://${webPubSub.properties.hostName}'
+output speechAccountName string = speech.name
+output speechEndpoint string = 'https://${speech.properties.customSubDomainName}.cognitiveservices.azure.com/'
 output userAssignedIdentityId string = uami.id
 output userAssignedClientId string = uami.properties.clientId
 output userAssignedPrincipalId string = uami.properties.principalId
