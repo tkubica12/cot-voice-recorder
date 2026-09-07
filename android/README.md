@@ -173,6 +173,31 @@ booted emulator:
   notification remained. The partial wake lock + `microphone` foreground-service type keep capture
   running while locked.
 
+## Quick recording and the lock screen
+
+- Open the normal app once and grant microphone permission by starting a recording.
+- Long-press the launcher icon for **Quick recording**. Compatible launchers can drag this
+  shortcut onto the home screen. Mapping hardware buttons or gestures is device-specific.
+- **Settings > Quick recording** enables an optional persistent start notification. Allow
+  notifications (including its channel) on the lock screen in Android/HyperOS settings.
+  Reopen the normal app to restore the notification after dismissal or a reboot.
+- The exported `com.tomaskubica.voiceprompt.ui.QuickRecordActivity` accepts action
+  `com.tomaskubica.voiceprompt.action.QUICK_RECORD` for automation tools. It starts capture
+  once per explicit invocation, only after becoming visible. Repeated invocation while recording
+  does not stop or duplicate capture. Opening the ongoing recording notification only shows controls.
+- The separate quick-record task may appear above the keyguard and wake the display, but
+  never unlocks the phone or exposes history, transcripts, authentication, or settings.
+  It confirms microphone startup with a short vibration. Stop finishes and queues the recording;
+  closing the screen or turning the display off does not stop capture.
+- Android/HyperOS can still restrict launching activities from background gestures or require
+  unlocking to interact with a notification. Lock-screen display flags do not bypass those rules.
+  On Xiaomi, allow background operation / unrestricted battery and relevant lock-screen permissions.
+
+Manual device scenarios: launch the shortcut with a secure keyguard; confirm capture and vibration;
+turn the screen off for over 30 seconds; reopen controls and stop; confirm the complete recording.
+Also check denied microphone permission, repeated shortcuts, rotation, and that private screens
+remain behind the keyguard. Real locked-device behavior is not established by JVM tests.
+
 ## Architecture (app internals)
 
 - **Capture** — `RecordingService` (foreground, type `microphone`) owns an `AudioRecord`

@@ -14,13 +14,15 @@ import android.media.AudioManager
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.os.VibrationEffect
+import android.os.Vibrator
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.tomaskubica.voiceprompt.R
 import com.tomaskubica.voiceprompt.VoicePromptApp
 import com.tomaskubica.voiceprompt.audio.AudioRecordSource
 import com.tomaskubica.voiceprompt.audio.PcmSource
-import com.tomaskubica.voiceprompt.ui.MainActivity
+import com.tomaskubica.voiceprompt.ui.QuickRecordActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -58,14 +60,14 @@ class RecordingService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_START -> handleStart()
+            ACTION_START -> handleStart(intent.getBooleanExtra(EXTRA_CONFIRM_START, false))
             ACTION_STOP -> handleStop(cancel = false)
             ACTION_CANCEL -> handleStop(cancel = true)
         }
         return START_NOT_STICKY
     }
 
-    private fun handleStart() {
+    private fun handleStart(confirmStart: Boolean) {
         if (recordJob != null) return // already recording
         stopRequested = false
         cancelRequested = false
@@ -95,7 +97,16 @@ class RecordingService : Service() {
             // repository what is actually on disk so a mid-recording error preserves and
             // uploads every persisted WAV instead of deleting the recording.
             val outcome = runCatching {
-                controller.record(clientId, startEpoch) { stopRequested }
+                controller.record(
+                    clientId, startEpoch,
+                    shouldStop = { stopRequested },
+                    onCaptureStarted = {
+                        if (confirmStart) {
+                            getSystemService(Vibrator::class.java)
+                                .vibrate(VibrationEffect.createOneShot(70, VibrationEffect.DEFAULT_AMPLITUDE))
+                        }
+                    },
+                )
             }
             CaptureFinalizer(
                 repository = container.repository,
@@ -141,7 +152,7 @@ class RecordingService : Service() {
 
     private fun buildNotification(): Notification {
         val contentIntent = PendingIntent.getActivity(
-            this, 0, Intent(this, MainActivity::class.java),
+            this, 0, Intent(this, QuickRecordActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val stopIntent = PendingIntent.getService(
@@ -210,14 +221,16 @@ class RecordingService : Service() {
         const val ACTION_START = "com.tomaskubica.voiceprompt.action.START"
         const val ACTION_STOP = "com.tomaskubica.voiceprompt.action.STOP"
         const val ACTION_CANCEL = "com.tomaskubica.voiceprompt.action.CANCEL"
+        private const val EXTRA_CONFIRM_START = "confirm_start"
 
         private const val CHANNEL_ID = "recording"
         private const val NOTIFICATION_ID = 42
         private const val WAKE_TAG = "voiceprompt:recording"
         private const val MAX_WAKE_MS = 4L * 60 * 60 * 1000 // safety cap
 
-        fun start(context: Context) {
+        fun start(context: Context, confirmStart: Boolean = false) {
             val intent = Intent(context, RecordingService::class.java).setAction(ACTION_START)
+                .putExtra(EXTRA_CONFIRM_START, confirmStart)
             context.startForegroundService(intent)
         }
 

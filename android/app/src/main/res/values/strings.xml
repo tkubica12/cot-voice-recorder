@@ -1,5 +1,15 @@
 <resources>
     <string name="app_name">VoicePrompt</string>
+    <string name="quick_record">Quick recording</string>
+    <string name="quick_stopping">Finishing recording...</string>
+    <string name="quick_close">Close</string>
+    <string name="quick_close_recording">Close (recording continues)</string>
+    <string name="quick_private_hint">You may turn the screen off. Unlock and open VoicePrompt normally to access history and settings.</string>
+    <string name="quick_permission_needed">Unlock your phone and start a recording in VoicePrompt once to grant microphone access. Then use this shortcut again.</string>
+    <string name="quick_start_failed">Could not start recording: %1$s</string>
+    <string name="quick_notification_channel">Quick recording shortcut</string>
+    <string name="quick_notification_text">Tap to start recording without opening history</string>
+    <string name="quick_settings_hint">Show a persistent notification for quick recording. Allow notifications on the lock screen in system settings. If hidden or dismissed, reopen VoicePrompt to restore it. A Quick recording shortcut is also available by holding the app icon. Microphone permission must be granted beforehand.</string>
     <string name="hold_to_talk">Hold to talk</string>
     <string name="hold_to_talk_hint">Press and hold to record; release to finish</string>
     <string name="toggle_record">Start recording</string>

@@ -21,6 +21,10 @@ class SettingsStore(context: Context) {
         get() = prefs.getString(KEY_REFINE, null) ?: "gpt-5.6-luna"
         set(value) { prefs.edit().putString(KEY_REFINE, value).apply() }
 
+    var quickRecordNotification: Boolean
+        get() = prefs.getBoolean("quick_record_notification", false)
+        set(value) { prefs.edit().putBoolean("quick_record_notification", value).apply() }
+
     companion object {
         private const val KEY_BACKEND = "backend_url"
         private const val KEY_REFINE = "refine_model"

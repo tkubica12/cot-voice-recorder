@@ -31,6 +31,7 @@ class RecordingController(
         clientId: String,
         startEpochMs: Long,
         shouldStop: () -> Boolean,
+        onCaptureStarted: () -> Unit = {},
     ): Int = coroutineScope {
         scheduler.startChain(clientId)
 
@@ -49,6 +50,7 @@ class RecordingController(
             val source = sourceFactory()
             source.start()
             try {
+                onCaptureStarted()
                 val buf = ByteArray(source.bufferSize)
                 while (!shouldStop()) {
                     val n = source.read(buf)

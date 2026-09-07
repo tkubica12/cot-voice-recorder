@@ -30,6 +30,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.tomaskubica.voiceprompt.data.SettingsStore
 import com.tomaskubica.voiceprompt.ui.screens.HistoryScreen
 import com.tomaskubica.voiceprompt.ui.screens.HomeScreen
 import com.tomaskubica.voiceprompt.ui.screens.SettingsScreen
@@ -38,6 +39,7 @@ import com.tomaskubica.voiceprompt.ui.theme.VoicePromptTheme
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        QuickRecordEntryPoints.registerShortcut(this)
         setContent {
             VoicePromptTheme {
                 Surface(color = MaterialTheme.colorScheme.background) {
@@ -45,6 +47,11 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        QuickRecordEntryPoints.refreshNotification(this)
     }
 }
 
@@ -78,7 +85,7 @@ private fun AppRoot(vm: RecorderViewModel = viewModel()) {
 
     val notificationsLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
-    ) { /* optional; recording works regardless */ }
+    ) { QuickRecordEntryPoints.refreshNotification(context) }
 
     // Ask for notifications once (Android 13+), restore auth, and refresh warmup on entry.
     LaunchedEffect(Unit) {
@@ -125,6 +132,17 @@ private fun AppRoot(vm: RecorderViewModel = viewModel()) {
                 onSignIn = { vm.signIn(context) },
                 onSignOut = { vm.signOut() },
                 onBack = { navController.popBackStack() },
+                quickRecordNotification = SettingsStore(context).quickRecordNotification,
+                onQuickRecordNotificationChange = { enabled ->
+                    SettingsStore(context).quickRecordNotification = enabled
+                    if (enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                        ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+                        PackageManager.PERMISSION_GRANTED
+                    ) {
+                        notificationsLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    }
+                    QuickRecordEntryPoints.refreshNotification(context)
+                },
             )
         }
         composable("history") {
