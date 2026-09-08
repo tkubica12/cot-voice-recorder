@@ -33,15 +33,17 @@ class RecordingController(
         shouldStop: () -> Boolean,
         onCaptureStarted: () -> Unit = {},
     ): Int = coroutineScope {
-        scheduler.startChain(clientId)
+        repository.withUploadScheduling { scheduler.startChain(clientId) }
 
         val channel = Channel<StreamingChunker.RawChunk>(Channel.UNLIMITED)
         val chunker = StreamingChunker { channel.trySend(it) }
 
         val consumer = launch(Dispatchers.IO) {
             for (raw in channel) {
-                repository.persistChunk(clientId, raw, startEpochMs)
-                scheduler.enqueueChunk(clientId, raw.index)
+                repository.withUploadScheduling {
+                    repository.persistChunk(clientId, raw, startEpochMs)
+                    scheduler.enqueueChunk(clientId, raw.index)
+                }
                 RecorderState.onChunkCaptured(raw.index + 1)
             }
         }

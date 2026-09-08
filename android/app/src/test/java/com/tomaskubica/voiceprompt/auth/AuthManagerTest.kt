@@ -13,11 +13,52 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.util.concurrent.atomic.AtomicInteger
+import androidx.credentials.exceptions.NoCredentialException
+import kotlinx.coroutines.CancellationException
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = android.app.Application::class)
 class AuthManagerTest {
     private val app: Application = ApplicationProvider.getApplicationContext()
+
+    @Test fun expired_cached_token_is_not_reported_as_signed_in_on_startup() {
+        val manager = AuthManager(
+            app, FakeTokenProvider(StoredToken("expired", "owner@example.com", 0L)),
+            webClientId = "web-client",
+        )
+        assertThat(manager.state.value).isEqualTo(AuthState.SignedOut)
+    }
+
+    @Test fun foreground_check_detects_expiry_without_opening_credentials() {
+        var now = 0L
+        val store = FakeTokenProvider(StoredToken("token", "owner@example.com", 120_000L)) { now }
+        val manager = AuthManager(app, store, webClientId = "web-client", credentialGetter = { _, _ ->
+            error("Foreground validity checks must not show a chooser")
+        })
+        assertThat(manager.state.value).isInstanceOf(AuthState.SignedIn::class.java)
+        now = 60_000L
+        manager.refreshState()
+        assertThat(manager.state.value).isEqualTo(AuthState.SignedOut)
+    }
+
+    @Test fun failed_restore_of_expired_token_leaves_ui_signed_out() = runBlocking {
+        val manager = AuthManager(
+            app, FakeTokenProvider(StoredToken("expired", "owner@example.com", 0L)),
+            webClientId = "web-client",
+            credentialGetter = { _, _ -> throw NoCredentialException() },
+        )
+        assertThat(manager.trySilentSignIn(app)).isFalse()
+        assertThat(manager.state.value).isEqualTo(AuthState.SignedOut)
+    }
+
+    @Test fun cancelled_credential_request_propagates_cancellation() = runBlocking {
+        val manager = AuthManager(app, FakeTokenProvider(null), webClientId = "web-client",
+            credentialGetter = { _, _ -> throw CancellationException("activity stopped") })
+        val request = async { manager.explicitSignIn(app) }
+        request.join()
+        assertThat(request.isCancelled).isTrue()
+        assertThat(manager.state.value).isEqualTo(AuthState.SignedOut)
+    }
 
     @Test
     fun valid_cached_token_survives_repeated_startup_restores_without_credential_requests() =

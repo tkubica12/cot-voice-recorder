@@ -13,6 +13,8 @@ import com.tomaskubica.voiceprompt.warmup.WarmupManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import com.tomaskubica.voiceprompt.work.AuthNotifier
+import com.tomaskubica.voiceprompt.work.NoOpAuthNotifier
 
 /** [AuthController] fake: no Credential Manager, no Android Keystore. */
 class FakeAuthController(
@@ -28,6 +30,16 @@ class FakeAuthController(
         private set
     var signOuts: Int = 0
         private set
+    var refreshes: Int = 0
+        private set
+    var refreshedState: AuthState? = null
+    var explicitResult = true
+    var beforeSignIn: suspend () -> Unit = {}
+
+    override fun refreshState() {
+        refreshes++
+        refreshedState?.let { _state.value = it }
+    }
 
     override suspend fun trySilentSignIn(context: Context): Boolean {
         silentSignIns++
@@ -36,7 +48,9 @@ class FakeAuthController(
 
     override suspend fun explicitSignIn(context: Context): Boolean {
         explicitSignIns++
-        return true
+        beforeSignIn()
+        if (explicitResult) _state.value = AuthState.SignedIn("owner@example.com")
+        return explicitResult
     }
 
     override suspend fun signOut() {
@@ -58,6 +72,7 @@ class FakeAppDependencies(
     override val authTokens: AuthTokenProvider,
     val scheduler: RecordingScheduler = RecordingScheduler(),
     override val authManager: AuthController = FakeAuthController(),
+    override val authNotifier: AuthNotifier = NoOpAuthNotifier,
 ) : AppDependencies {
     override val settings: SettingsStore = SettingsStore(context)
     override val retryCoordinator: RecordingRetryCoordinator =

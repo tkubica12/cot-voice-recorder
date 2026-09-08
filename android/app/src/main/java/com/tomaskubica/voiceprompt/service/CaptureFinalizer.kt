@@ -40,17 +40,17 @@ class CaptureFinalizer(
         clientId: String,
         outcome: Result<Int>,
         cancelled: Boolean,
-    ): CaptureResult {
+    ): CaptureResult = repository.withUploadScheduling {
         val persisted = repository.persistedChunkCount(clientId)
 
         if (cancelled) {
             repository.discardRecording(clientId)
-            return CaptureResult.Discarded("cancelled")
+            return@withUploadScheduling CaptureResult.Discarded("cancelled")
         }
         if (persisted == 0) {
             // Genuinely nothing to upload: either silence or a failure before the first chunk.
             repository.discardRecording(clientId)
-            return CaptureResult.Discarded(if (outcome.isFailure) "capture_failed" else "empty")
+            return@withUploadScheduling CaptureResult.Discarded(if (outcome.isFailure) "capture_failed" else "empty")
         }
 
         // Guarantee upload work exists for every durable chunk. Enqueueing a chunk twice is
@@ -64,6 +64,6 @@ class CaptureFinalizer(
             repository.noteCaptureError(clientId, "capture_error")
         }
         scheduler.enqueueComplete(clientId)
-        return CaptureResult.Uploading(persisted, captureFailed = outcome.isFailure)
+        CaptureResult.Uploading(persisted, captureFailed = outcome.isFailure)
     }
 }

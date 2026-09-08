@@ -82,7 +82,7 @@ class AndroidAuthNotifier(context: Context) : AuthNotifier {
 
     companion object {
         const val CHANNEL_ID = "auth"
-        const val NOTIFICATION_ID = 43
+        const val NOTIFICATION_ID = 44
         private const val AUTH_REQUEST_CODE = 2
     }
 }

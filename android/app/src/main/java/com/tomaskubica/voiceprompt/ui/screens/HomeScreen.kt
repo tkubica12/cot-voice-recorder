@@ -58,6 +58,7 @@ import com.tomaskubica.voiceprompt.ui.DisplayStatus
 import com.tomaskubica.voiceprompt.ui.HomeUiState
 import com.tomaskubica.voiceprompt.ui.Statuses
 import com.tomaskubica.voiceprompt.ui.theme.Orange
+import com.tomaskubica.voiceprompt.auth.AuthState
 import com.tomaskubica.voiceprompt.warmup.WarmupState
 
 /**
@@ -75,6 +76,8 @@ fun HomeScreen(
     onRetry: (String) -> Unit,
     onOpenSettings: () -> Unit,
     onOpenHistory: () -> Unit,
+    onSignIn: () -> Unit,
+    onResumeUploads: () -> Unit,
 ) {
     val status = Statuses.displayStatus(state.phase, state.activeRecording, state.pendingChunks)
     val recording = state.isRecording
@@ -111,6 +114,42 @@ fun HomeScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             StatusHero(state, status)
+
+            if (state.uploadAuthRequired) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(top = 10.dp).testTag("uploadAuthBanner"),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(
+                        if (state.auth == AuthState.Unavailable) {
+                            "Uploads paused. Configure Google sign-in in Settings."
+                        } else if (state.auth is AuthState.Error) {
+                            "Sign-in failed. Your audio is kept on this phone. Try again."
+                        } else {
+                            "Uploads paused. Sign in to send your saved audio."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        textAlign = TextAlign.Center,
+                    )
+                    TextButton(
+                        onClick = if (state.auth == AuthState.Unavailable) onOpenSettings else onSignIn,
+                        enabled = !state.signingIn,
+                        modifier = Modifier.testTag("uploadSignInButton"),
+                    ) {
+                        Text(
+                            if (state.signingIn) "Signing in..."
+                            else if (state.auth == AuthState.Unavailable) "Settings"
+                            else "Sign in with Google",
+                        )
+                    }
+                }
+            }
+            if (state.retryError != null && status != DisplayStatus.FAILED) {
+                Text("Uploads could not resume. Your saved audio has not been deleted.")
+                TextButton(onClick = onResumeUploads, modifier = Modifier.testTag("resumeUploadsButton")) {
+                    Text("Retry upload")
+                }
+            }
 
             Spacer(Modifier.weight(1f))
 
@@ -177,7 +216,9 @@ private fun StatusHero(state: HomeUiState, status: DisplayStatus) {
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(
-            text = statusLabel(status),
+            text = if (state.uploadAuthRequired && status in setOf(
+                    DisplayStatus.IDLE, DisplayStatus.UPLOADING, DisplayStatus.RETRYING,
+                )) "Sign-in required" else statusLabel(status),
             color = Orange,
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
@@ -194,7 +235,7 @@ private fun StatusHero(state: HomeUiState, status: DisplayStatus) {
                 .testTag("elapsedText"),
         )
 
-        if (status in PROCESSING_STATES) {
+        if (status in PROCESSING_STATES && !state.uploadAuthRequired) {
             LinearProgressIndicator(
                 color = Orange,
                 trackColor = Orange.copy(alpha = 0.14f),

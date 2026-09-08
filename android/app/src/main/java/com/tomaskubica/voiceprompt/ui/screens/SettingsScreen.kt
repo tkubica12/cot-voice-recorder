@@ -43,6 +43,7 @@ fun SettingsScreen(
     onSignIn: () -> Unit,
     onSignOut: () -> Unit,
     onBack: () -> Unit,
+    signingIn: Boolean = false,
     quickRecordNotification: Boolean = false,
     onQuickRecordNotificationChange: (Boolean) -> Unit = {},
 ) {
@@ -98,9 +99,9 @@ fun SettingsScreen(
                     }
                 }
                 else -> {
-                    Text("Signed out")
-                    Button(onClick = onSignIn, modifier = Modifier.testTag("signIn")) {
-                        Text("Sign in with Google")
+                    Text(if (auth is AuthState.Error) "Sign-in failed. Please try again." else "Signed out")
+                    Button(onClick = onSignIn, enabled = !signingIn, modifier = Modifier.testTag("signIn")) {
+                        Text(if (signingIn) "Signing in..." else "Sign in with Google")
                     }
                 }
             }

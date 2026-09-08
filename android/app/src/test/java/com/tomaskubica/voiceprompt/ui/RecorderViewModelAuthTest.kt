@@ -20,6 +20,12 @@ import com.tomaskubica.voiceprompt.testutil.FakeAppDependencies
 import com.tomaskubica.voiceprompt.testutil.FakeAuthTokenProvider
 import com.tomaskubica.voiceprompt.testutil.FakeSilentRefresher
 import com.tomaskubica.voiceprompt.testutil.FakeTokenProvider
+import com.tomaskubica.voiceprompt.testutil.FakeAuthController
+import com.tomaskubica.voiceprompt.auth.AuthState
+import com.tomaskubica.voiceprompt.work.AuthNotifier
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.runBlocking
@@ -114,6 +120,125 @@ class RecorderViewModelAuthTest {
     private suspend fun seedRecording() {
         repo.createLocalRecording(clientId, "gpt-5.6-luna", "cs", 1_000)
         repo.setServerRecordingId(clientId, "rid-1", "recording")
+    }
+
+    @Test fun successful_sign_in_resumes_pending_completion_and_clears_auth_notification() = runBlocking {
+        seedRecording()
+        repo.markStopped(clientId, 0, 2_000)
+        var cleared = false
+        val auth = FakeAuthController(AuthState.SignedOut)
+        val deps = FakeAppDependencies(
+            app, repo, VoiceApiClient({ server.url("/").toString() }),
+            FakeAuthTokenProvider(), authManager = auth,
+            authNotifier = object : AuthNotifier {
+                override fun signInRequired() = Unit
+                override fun clear() { cleared = true }
+            },
+        )
+        val vm = RecorderViewModel(app, deps, statusPollingEnabled = false)
+        vm.signIn(app).join()
+        assertThat(deps.scheduler.retries).containsExactly(Triple(clientId, emptyList<Int>(), true))
+        assertThat(cleared).isTrue()
+        assertThat(auth.explicitSignIns).isEqualTo(1)
+    }
+
+    @Test fun failed_sign_in_does_not_rebuild_uploads() = runBlocking {
+        seedRecording()
+        val auth = FakeAuthController(AuthState.SignedOut).apply { explicitResult = false }
+        val deps = FakeAppDependencies(
+            app, repo, VoiceApiClient({ server.url("/").toString() }),
+            FakeAuthTokenProvider(TokenResult.AuthNeeded), authManager = auth,
+        )
+        val vm = RecorderViewModel(app, deps, statusPollingEnabled = false)
+        vm.signIn(app).join()
+        assertThat(deps.scheduler.retries).isEmpty()
+    }
+
+    @Test fun repeated_sign_in_taps_do_not_stack_credential_requests() = runBlocking {
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val auth = FakeAuthController(AuthState.SignedOut).apply {
+            beforeSignIn = {
+                started.complete(Unit)
+                release.await()
+            }
+        }
+        val deps = FakeAppDependencies(
+            app, repo, VoiceApiClient({ server.url("/").toString() }),
+            FakeAuthTokenProvider(), authManager = auth,
+        )
+        val vm = RecorderViewModel(app, deps, statusPollingEnabled = false)
+        val first = vm.signIn(app)
+        started.await()
+        vm.signIn(app).join()
+        assertThat(auth.explicitSignIns).isEqualTo(1)
+        release.complete(Unit)
+        first.join()
+    }
+
+    @Test fun returning_to_foreground_updates_auth_without_opening_a_chooser() {
+        val auth = FakeAuthController().apply { refreshedState = AuthState.SignedOut }
+        val deps = FakeAppDependencies(
+            app, repo, VoiceApiClient({ server.url("/").toString() }),
+            FakeAuthTokenProvider(), authManager = auth,
+        )
+        val vm = RecorderViewModel(app, deps, statusPollingEnabled = false)
+        vm.refreshAuthState()
+        assertThat(auth.state.value).isEqualTo(AuthState.SignedOut)
+        assertThat(auth.silentSignIns).isEqualTo(0)
+        assertThat(auth.explicitSignIns).isEqualTo(0)
+    }
+
+    @Test fun repeated_startup_restore_resumes_work_only_once() = runBlocking {
+        seedRecording()
+        val deps = FakeAppDependencies(
+            app, repo, VoiceApiClient({ server.url("/").toString() }), FakeAuthTokenProvider(),
+        )
+        val vm = RecorderViewModel(app, deps, statusPollingEnabled = false)
+        vm.trySilentSignIn(app).join()
+        vm.trySilentSignIn(app).join()
+        assertThat(deps.scheduler.retries).hasSize(1)
+    }
+
+    @Test fun a_resume_failure_is_visible_and_retryable_after_successful_sign_in() = runBlocking {
+        seedRecording()
+        val deps = FakeAppDependencies(
+            app, repo, VoiceApiClient({ server.url("/").toString() }), FakeAuthTokenProvider(),
+        )
+        deps.scheduler.failWith = IllegalStateException("schedule failed")
+        val vm = RecorderViewModel(app, deps, statusPollingEnabled = false)
+        vm.signIn(app).join()
+        assertThat(withTimeout(5_000) { vm.uiState.first { it.retryError != null } }.retryError)
+            .isNotNull()
+        deps.scheduler.failWith = null
+        vm.resumeUploads().join()
+        assertThat(withTimeout(5_000) { vm.uiState.first { it.retryError == null } }.retryError)
+            .isNull()
+        assertThat(deps.scheduler.retries).hasSize(1)
+    }
+
+    @Test fun foreground_401_invalidates_token_and_refreshes_auth_state() = runBlocking {
+        val tokens = FakeAuthTokenProvider()
+        val auth = FakeAuthController().apply { refreshedState = AuthState.SignedOut }
+        val deps = FakeAppDependencies(
+            app, repo, VoiceApiClient({ server.url("/").toString() }), tokens, authManager = auth,
+        )
+        val vm = RecorderViewModel(app, deps, statusPollingEnabled = false)
+        server.enqueue(MockResponse().setResponseCode(401))
+        vm.loadHistory().join()
+        assertThat(tokens.invalidations).isEqualTo(1)
+        assertThat(auth.state.value).isEqualTo(AuthState.SignedOut)
+    }
+
+    @Test fun auth_warning_includes_completion_waiting_with_no_pending_audio() = runBlocking {
+        seedRecording()
+        repo.markStopped(clientId, 0, 2_000)
+        val state = HomeUiState(
+            auth = AuthState.SignedOut, activeRecording = repo.getRecording(clientId),
+        )
+        assertThat(state.uploadAuthRequired).isTrue()
+        assertThat(state.copy(auth = AuthState.SignedIn("owner@example.com")).uploadAuthRequired).isFalse()
+        assertThat(HomeUiState(auth = AuthState.SignedOut).uploadAuthRequired).isFalse()
     }
 
     // ------------------------------------------- expired cached token + silent refresh

@@ -5,6 +5,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.tomaskubica.voiceprompt.AppContainer
 import com.tomaskubica.voiceprompt.VoicePromptApp
+import com.tomaskubica.voiceprompt.auth.AuthState
 
 /** Shared base: resolves the container-backed [UploadOrchestrator] and maps outcomes to Results. */
 abstract class BaseUploadWorker(
@@ -28,13 +29,14 @@ abstract class BaseUploadWorker(
     /**
      * Auth failures stay retryable so nothing captured is thrown away, but they are also
      * surfaced as a notification: the user is told to open the app and sign in instead of
-     * watching an opaque, endless retry. Any other outcome clears that notification.
+     * watching an opaque, endless retry. Only success with a valid sign-in clears the warning.
      */
     protected fun StepOutcome.toResult(): Result {
         val notifier = container.authNotifier
         return when (this) {
             StepOutcome.SUCCESS -> {
-                notifier.clear()
+                container.authManager.refreshState()
+                if (container.authManager.state.value is AuthState.SignedIn) notifier.clear()
                 Result.success()
             }
             StepOutcome.RETRY -> Result.retry()

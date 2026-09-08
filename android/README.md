@@ -228,6 +228,16 @@ remain behind the keyguard. Real locked-device behavior is not established by JV
   tracked so uploads never use a stale token. Background uploads never call Credential Manager
   because its provider may show a chooser even with auto-select enabled. An expired/rejected token
   keeps the step retryable and triggers a notification asking the user to open the app and sign in.
+- **Expired sign-in recovery** — while the normal app is resumed, token validity is checked locally
+  every second, without launching credential choosers. Pending uploads (including a completion
+  request with no remaining WAVs) show an explicit sign-in prompt on Home; capture remains enabled.
+  A successful foreground sign-in or first startup restore immediately rebuilds all non-terminal
+  upload chains with fresh backoff and only unacknowledged chunks. Chain replacement is serialized
+  with capture persistence and finalization, so signing in mid-recording cannot drop newly queued
+  audio. Scheduling errors are visible and retryable. Auth and quick-record notifications have
+  separate IDs; idempotent worker successes do not clear the auth warning while signed out.
+  This does not introduce a background refresh-token session: if Google requires interaction,
+  the user must still sign in from the foreground app.
 - **History/cleanup** — history lists API transcripts (48 h retention); tapping a completed item
   copies it. `CleanupWorker` removes local metadata/WAVs older than 48 h **only when not pending
   upload**.

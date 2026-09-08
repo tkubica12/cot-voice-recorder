@@ -53,7 +53,7 @@ class AppContainer(context: Context) : AppDependencies {
         )
     }
 
-    val authNotifier: AuthNotifier by lazy { AndroidAuthNotifier(app) }
+    override val authNotifier: AuthNotifier by lazy { AndroidAuthNotifier(app) }
 
     override val authManager: AuthManager by lazy {
         AuthManager(app, tokenStore)

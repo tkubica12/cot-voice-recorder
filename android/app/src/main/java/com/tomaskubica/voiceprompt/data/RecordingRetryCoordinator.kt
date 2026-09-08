@@ -2,6 +2,7 @@ package com.tomaskubica.voiceprompt.data
 
 import com.tomaskubica.voiceprompt.work.UploadWorkScheduler
 import kotlinx.coroutines.CancellationException
+import android.util.Log
 
 /** Result of a user-initiated retry request. */
 sealed interface RetryOutcome {
@@ -37,9 +38,9 @@ class RecordingRetryCoordinator(
     private val repository: RecordingRepository,
     private val scheduler: UploadWorkScheduler,
 ) {
-    suspend fun retry(clientId: String): RetryOutcome {
-        val recording = repository.prepareRetry(clientId) ?: return RetryOutcome.NotRetryable
-        return try {
+    suspend fun retry(clientId: String): RetryOutcome = repository.withUploadScheduling {
+        val recording = repository.prepareRetry(clientId) ?: return@withUploadScheduling RetryOutcome.NotRetryable
+        try {
             val pending = repository.pendingChunkIndices(clientId)
             scheduler.retry(clientId, pending, hasComplete = recording.chunkCount != null)
             RetryOutcome.Scheduled
@@ -48,6 +49,27 @@ class RecordingRetryCoordinator(
         } catch (t: Throwable) {
             // Keep the failure visible (and retryable) instead of silently pretending to retry.
             repository.markFailed(clientId, RETRY_SCHEDULE_FAILED)
+            RetryOutcome.Failed(RETRY_SCHEDULE_FAILED)
+        }
+    }
+
+    /** Reset auth backoff without changing recording state or disturbing ongoing capture. */
+    suspend fun resumeAfterSignIn(): RetryOutcome = repository.withUploadScheduling {
+        try {
+            val recordings = repository.recordingsAwaitingUpload()
+            for (recording in recordings) {
+                val clientId = recording.clientRecordingId
+                scheduler.retry(
+                    clientId,
+                    repository.pendingChunkIndices(clientId),
+                    hasComplete = recording.chunkCount != null,
+                )
+            }
+            if (recordings.isEmpty()) RetryOutcome.NotRetryable else RetryOutcome.Scheduled
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (e: Exception) {
+            Log.e("UploadRecovery", "Could not resume uploads after sign-in", e)
             RetryOutcome.Failed(RETRY_SCHEDULE_FAILED)
         }
     }

@@ -4,6 +4,7 @@ import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -23,13 +24,14 @@ class HomeScreenComposeTest {
 
     @get:Rule val rule = createComposeRule()
 
-    private fun render(state: HomeUiState, onToggle: () -> Unit = {}) {
+    private fun render(state: HomeUiState, onSignIn: () -> Unit = {}, onToggle: () -> Unit = {}) {
         rule.setContent {
             VoicePromptTheme {
                 HomeScreen(
                     state = state,
                     onHoldStart = {}, onHoldRelease = {}, onHoldCancel = {},
                     onToggle = onToggle, onRetry = {}, onOpenSettings = {}, onOpenHistory = {},
+                    onSignIn = onSignIn, onResumeUploads = {},
                 )
             }
         }
@@ -95,5 +97,28 @@ class HomeScreenComposeTest {
         render(HomeUiState(phase = CapturePhase.IDLE, activeRecording = recording("TRANSCRIBING")))
         rule.onNodeWithTag("statusText").assertTextEquals("Transcribing")
         rule.onNodeWithTag("processingIndicator").assertIsDisplayed()
+    }
+
+    @Test fun expired_sign_in_replaces_upload_spinner_with_actionable_prompt() {
+        var signInRequested = false
+        render(
+            HomeUiState(
+                auth = AuthState.SignedOut, pendingChunks = 35,
+                activeRecording = recording("RECORDING"),
+            ),
+            onSignIn = { signInRequested = true },
+        )
+        rule.onNodeWithTag("statusText").assertTextEquals("Sign-in required")
+        rule.onNodeWithTag("processingIndicator").assertDoesNotExist()
+        rule.onNodeWithTag("uploadSignInButton").assertIsDisplayed().performClick()
+        assertTrue(signInRequested)
+        rule.onNodeWithTag("toggleButton").assertIsEnabled()
+    }
+
+    @Test fun expiry_does_not_hide_or_disable_ongoing_recording_controls() {
+        render(HomeUiState(auth = AuthState.SignedOut, phase = CapturePhase.RECORDING, pendingChunks = 1))
+        rule.onNodeWithTag("statusText").assertTextEquals("Recording")
+        rule.onNodeWithTag("uploadAuthBanner").assertIsDisplayed()
+        rule.onNodeWithTag("toggleButton").assertIsEnabled().performClick()
     }
 }

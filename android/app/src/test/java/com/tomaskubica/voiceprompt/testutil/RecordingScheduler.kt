@@ -27,7 +27,7 @@ class RecordingScheduler : UploadWorkScheduler {
         completes += clientId
     }
 
-    override fun retry(clientId: String, pendingIndices: List<Int>, hasComplete: Boolean) {
+    override suspend fun retry(clientId: String, pendingIndices: List<Int>, hasComplete: Boolean) {
         failWith?.let { throw it }
         retries += Triple(clientId, pendingIndices, hasComplete)
     }

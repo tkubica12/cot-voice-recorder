@@ -36,6 +36,16 @@ interface RecordingDao {
     @Query("SELECT * FROM recordings ORDER BY createdAtEpochMs DESC LIMIT :limit")
     suspend fun recent(limit: Int): List<RecordingEntity>
 
+    @Query(
+        """
+        SELECT * FROM recordings
+        WHERE localState NOT IN ('FAILED', 'COMPLETED')
+          AND UPPER(serverState) NOT IN ('FAILED', 'COMPLETED', 'TRANSCRIBING', 'REFINING')
+        ORDER BY createdAtEpochMs ASC
+        """,
+    )
+    suspend fun awaitingUpload(): List<RecordingEntity>
+
     @Query("SELECT recordingId FROM recordings WHERE clientRecordingId = :clientId")
     suspend fun recordingIdFor(clientId: String): String?
 

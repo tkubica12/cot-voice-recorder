@@ -19,6 +19,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.util.UUID
+import kotlinx.coroutines.runBlocking
 
 class AlwaysFailWorker(context: Context, params: WorkerParameters) : Worker(context, params) {
     override fun doWork(): Result = Result.failure()
@@ -131,7 +132,7 @@ class UploadSchedulerPolicyTest {
         assertThat(wm.getWorkInfosForUniqueWork("rec-b").get()).hasSize(1)
     }
 
-    @Test fun retry_replaces_the_chain_and_re_enqueues_pending_work() {
+    @Test fun retry_replaces_the_chain_and_re_enqueues_pending_work() = runBlocking {
         val scheduler = UploadScheduler(context)
         val clientId = "cid-retry"
         scheduler.startChain(clientId)
@@ -140,7 +141,11 @@ class UploadSchedulerPolicyTest {
         scheduler.retry(clientId, pendingIndices = listOf(0, 1), hasComplete = true)
 
         val infos = wm.getWorkInfosForUniqueWork("rec-$clientId").get()
-        // Replaced chain: create + (create,chunk0) + (create,chunk1) + (create,complete).
-        assertThat(infos.count { it.state != WorkInfo.State.CANCELLED }).isEqualTo(7)
+        // One atomic replacement: create -> chunk0 -> chunk1 -> complete, with fresh backoff.
+        val pending = infos.filter { it.state != WorkInfo.State.CANCELLED }
+        assertThat(pending).hasSize(4)
+        assertThat(pending.map { it.runAttemptCount }).containsExactly(0, 0, 0, 0)
+        assertThat(pending.count { it.state == WorkInfo.State.ENQUEUED }).isEqualTo(1)
+        assertThat(pending.count { it.state == WorkInfo.State.BLOCKED }).isEqualTo(3)
     }
 }

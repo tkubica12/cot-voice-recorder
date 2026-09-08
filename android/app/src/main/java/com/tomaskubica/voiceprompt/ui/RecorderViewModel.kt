@@ -16,6 +16,7 @@ import com.tomaskubica.voiceprompt.data.api.ApiResult
 import com.tomaskubica.voiceprompt.data.api.TranscriptSummaryDto
 import com.tomaskubica.voiceprompt.data.db.RecordingEntity
 import com.tomaskubica.voiceprompt.data.model.LocalRecordingState
+import com.tomaskubica.voiceprompt.data.model.Outcome
 import com.tomaskubica.voiceprompt.data.model.ServerRecordingState
 import com.tomaskubica.voiceprompt.service.CapturePhase
 import com.tomaskubica.voiceprompt.service.RecorderState
@@ -38,6 +39,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
 
 data class HomeUiState(
     val warmup: WarmupState = WarmupState.CHECKING,
@@ -49,9 +51,15 @@ data class HomeUiState(
     val activeRecording: RecordingEntity? = null,
     /** Set when a user-initiated retry could not even be scheduled; no audio was lost. */
     val retryError: String? = null,
+    val signingIn: Boolean = false,
 ) {
     val isRecording: Boolean get() = phase == CapturePhase.RECORDING
     val isStopping: Boolean get() = phase == CapturePhase.STOPPING
+    val uploadAuthRequired: Boolean get() = auth !is AuthState.SignedIn &&
+        (pendingChunks > 0 || activeRecording?.let {
+            it.localState == LocalRecordingState.COMPLETING.name &&
+                it.serverState.uppercase() in setOf("UNKNOWN", "RECORDING", "UPLOADING")
+        } == true)
 }
 
 data class HistoryUiState(
@@ -72,6 +80,9 @@ class RecorderViewModel @JvmOverloads constructor(
     val backendUrl: StateFlow<String> = backendUrlState.asStateFlow()
 
     private val retryErrorState = MutableStateFlow<String?>(null)
+    private val signingInState = MutableStateFlow(false)
+    private val signInGate = Mutex()
+    private var startupSignInAttempted = false
 
     private val captureInfo = combine(
         RecorderState.phase,
@@ -126,6 +137,7 @@ class RecorderViewModel @JvmOverloads constructor(
             activeRecording = active,
         )
     }.combine(retryErrorState) { state, retryError -> state.copy(retryError = retryError) }
+        .combine(signingInState) { state, signingIn -> state.copy(signingIn = signingIn) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), HomeUiState())
 
     private val _history = MutableStateFlow(HistoryUiState())
@@ -154,12 +166,40 @@ class RecorderViewModel @JvmOverloads constructor(
     fun refreshWarmup() = viewModelScope.launch { container.warmup.probe() }
 
     // ------------------------------------------------------------------ auth
-    fun trySilentSignIn(context: Context) = viewModelScope.launch {
-        container.authManager.trySilentSignIn(context)
+    fun refreshAuthState() = container.authManager.refreshState()
+
+    fun trySilentSignIn(context: Context) = authenticate(context, silent = true)
+
+    fun signIn(activityContext: Context) = authenticate(activityContext, silent = false)
+
+    private fun authenticate(context: Context, silent: Boolean) = viewModelScope.launch {
+        if (!signInGate.tryLock()) return@launch
+        try {
+            if (silent && startupSignInAttempted) return@launch
+            startupSignInAttempted = true
+            signingInState.value = true
+            val signedIn = if (silent) {
+                container.authManager.trySilentSignIn(context)
+            } else {
+                container.authManager.explicitSignIn(context)
+            }
+            if (signedIn) {
+                container.authNotifier.clear()
+                resumeUploadsNow()
+            }
+        } finally {
+            signingInState.value = false
+            signInGate.unlock()
+        }
     }
 
-    fun signIn(activityContext: Context) = viewModelScope.launch {
-        container.authManager.explicitSignIn(activityContext)
+    fun resumeUploads() = viewModelScope.launch { resumeUploadsNow() }
+
+    private suspend fun resumeUploadsNow() {
+        retryErrorState.value = null
+        if (idToken() == null) return
+        val outcome = container.retryCoordinator.resumeAfterSignIn()
+        if (outcome is RetryOutcome.Failed) retryErrorState.value = outcome.reason
     }
 
     fun signOut() = viewModelScope.launch { container.authManager.signOut() }
@@ -194,7 +234,10 @@ class RecorderViewModel @JvmOverloads constructor(
                 )
                 state in TERMINAL_SERVER_STATES
             }
-            else -> false
+            else -> {
+                handleAuthFailure(res.outcome)
+                false
+            }
         }
     }
 
@@ -225,8 +268,10 @@ class RecorderViewModel @JvmOverloads constructor(
         when (val res = container.api.listTranscripts(token.idToken, cursor = null, limit = 50)) {
             is ApiResult.Success ->
                 _history.value = HistoryUiState(loading = false, items = res.body.items)
-            is ApiResult.Failure ->
+            is ApiResult.Failure -> {
+                handleAuthFailure(res.outcome)
                 _history.value = HistoryUiState(loading = false, error = "http_${res.code}")
+            }
             is ApiResult.NetworkError ->
                 _history.value = HistoryUiState(loading = false, error = "network")
         }
@@ -242,7 +287,10 @@ class RecorderViewModel @JvmOverloads constructor(
                     clip.setPrimaryClip(ClipData.newPlainText("transcript", res.body.body))
                     onDone(true)
                 }
-                else -> onDone(false)
+                else -> {
+                    handleAuthFailure(res.outcome)
+                    onDone(false)
+                }
             }
         }
 
@@ -252,7 +300,17 @@ class RecorderViewModel @JvmOverloads constructor(
      */
     private suspend fun idToken(): StoredToken? = when (val result = container.authTokens.idToken()) {
         is TokenResult.Valid -> result.token
-        TokenResult.AuthNeeded, TokenResult.Unavailable -> null
+        TokenResult.AuthNeeded, TokenResult.Unavailable -> {
+            refreshAuthState()
+            null
+        }
+    }
+
+    private suspend fun handleAuthFailure(outcome: Outcome) {
+        if (outcome == Outcome.AUTH_NEEDED) {
+            container.authTokens.invalidate()
+            refreshAuthState()
+        }
     }
 
     private companion object {

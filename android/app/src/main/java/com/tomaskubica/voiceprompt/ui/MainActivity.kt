@@ -26,6 +26,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -35,6 +38,8 @@ import com.tomaskubica.voiceprompt.ui.screens.HistoryScreen
 import com.tomaskubica.voiceprompt.ui.screens.HomeScreen
 import com.tomaskubica.voiceprompt.ui.screens.SettingsScreen
 import com.tomaskubica.voiceprompt.ui.theme.VoicePromptTheme
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -62,6 +67,16 @@ private fun AppRoot(vm: RecorderViewModel = viewModel()) {
     val ui by vm.uiState.collectAsStateWithLifecycle()
     val backendUrl by vm.backendUrl.collectAsState()
     val historyState by vm.history.collectAsState()
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    LaunchedEffect(lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            while (isActive) {
+                vm.refreshAuthState()
+                delay(1_000)
+            }
+        }
+    }
 
     var showPermanentDenied by remember { mutableStateOf(false) }
     var pendingStart by remember { mutableStateOf(false) }
@@ -121,6 +136,8 @@ private fun AppRoot(vm: RecorderViewModel = viewModel()) {
                 onRetry = { vm.retryRecording(it) },
                 onOpenSettings = { navController.navigate("settings") },
                 onOpenHistory = { navController.navigate("history") },
+                onSignIn = { vm.signIn(context) },
+                onResumeUploads = { vm.resumeUploads() },
             )
         }
         composable("settings") {
@@ -131,6 +148,7 @@ private fun AppRoot(vm: RecorderViewModel = viewModel()) {
                 onSaveBackendUrl = { vm.saveBackendUrl(it) },
                 onSignIn = { vm.signIn(context) },
                 onSignOut = { vm.signOut() },
+                signingIn = ui.signingIn,
                 onBack = { navController.popBackStack() },
                 quickRecordNotification = SettingsStore(context).quickRecordNotification,
                 onQuickRecordNotificationChange = { enabled ->

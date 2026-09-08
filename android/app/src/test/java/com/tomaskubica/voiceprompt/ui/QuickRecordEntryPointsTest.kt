@@ -12,11 +12,30 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import com.tomaskubica.voiceprompt.work.AndroidAuthNotifier
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
 class QuickRecordEntryPointsTest {
     private val app: Application = ApplicationProvider.getApplicationContext()
+
+    @Test fun auth_and_quick_record_notifications_do_not_replace_or_cancel_each_other() {
+        shadowOf(app).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        val manager = app.getSystemService(NotificationManager::class.java)
+        val auth = AndroidAuthNotifier(app)
+        SettingsStore(app).quickRecordNotification = true
+        QuickRecordEntryPoints.refreshNotification(app)
+        auth.signInRequired()
+        QuickRecordEntryPoints.refreshNotification(app)
+        assertThat(manager.activeNotifications.map { it.notification.channelId })
+            .containsExactly("auth", "quick_record")
+        auth.clear()
+        assertThat(manager.activeNotifications.single().notification.channelId).isEqualTo("quick_record")
+        auth.signInRequired()
+        SettingsStore(app).quickRecordNotification = false
+        QuickRecordEntryPoints.refreshNotification(app)
+        assertThat(manager.activeNotifications.single().notification.channelId).isEqualTo("auth")
+    }
 
     @Test fun shortcut_targets_quick_screen_with_explicit_start_action() {
         QuickRecordEntryPoints.registerShortcut(app)

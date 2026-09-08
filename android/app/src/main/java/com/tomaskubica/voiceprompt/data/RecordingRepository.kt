@@ -11,6 +11,8 @@ import com.tomaskubica.voiceprompt.data.model.ChunkUploadState
 import com.tomaskubica.voiceprompt.data.model.LocalRecordingState
 import com.tomaskubica.voiceprompt.data.model.ServerRecordingState
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.time.Instant
 
 /**
@@ -24,6 +26,14 @@ class RecordingRepository(
     private val fileStore: ChunkFileStore,
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
+    private val uploadScheduling = Mutex()
+
+    // A chain rebuild must not race capture appending a new chunk or its completion.
+    suspend fun <T> withUploadScheduling(action: suspend () -> T): T =
+        uploadScheduling.withLock { action() }
+
+    suspend fun recordingsAwaitingUpload(): List<RecordingEntity> = recordingDao.awaitingUpload()
+
     // -------------------------------------------------------------- recordings
     suspend fun createLocalRecording(
         clientRecordingId: String,

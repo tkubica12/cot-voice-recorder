@@ -13,6 +13,7 @@ import com.tomaskubica.voiceprompt.BuildConfig
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -32,6 +33,8 @@ sealed interface AuthState {
 interface AuthController {
     val state: StateFlow<AuthState>
     val isConfigured: Boolean
+
+    fun refreshState()
 
     suspend fun trySilentSignIn(context: Context): Boolean
 
@@ -66,14 +69,18 @@ class AuthManager(
 
     private fun initialState(): AuthState = when {
         webClientId.isBlank() -> AuthState.Unavailable
-        else -> tokenStore.peek()?.let { AuthState.SignedIn(it.email) } ?: AuthState.SignedOut
+        else -> tokenStore.currentValidToken()?.let { AuthState.SignedIn(it.email) } ?: AuthState.SignedOut
     }
 
     /** Recompute state from the stored token (e.g. after expiry). */
-    fun refreshState() {
+    override fun refreshState() {
         if (!isConfigured) { _state.value = AuthState.Unavailable; return }
         val token = tokenStore.currentValidToken()
-        _state.value = if (token != null) AuthState.SignedIn(token.email) else AuthState.SignedOut
+        if (token != null) {
+            _state.value = AuthState.SignedIn(token.email)
+        } else if (_state.value !is AuthState.Error) {
+            _state.value = AuthState.SignedOut
+        }
     }
 
     /**
@@ -119,7 +126,7 @@ class AuthManager(
     override suspend fun explicitSignIn(context: Context): Boolean {
         if (!isConfigured) { _state.value = AuthState.Unavailable; return false }
         val option = GetSignInWithGoogleOption.Builder(webClientId).build()
-        return runCredentialRequest(context, option)
+        return startupRestoreGate.withLock { runCredentialRequest(context, option) }
     }
 
     private suspend fun runCredentialRequest(
@@ -137,15 +144,21 @@ class AuthManager(
                     GoogleIdTokenCredential.createFrom(cred.data),
                 )
                 tokenStore.save(stored)
+                if (tokenStore.currentValidToken() == null) {
+                    _state.value = AuthState.Error("The sign-in token has expired. Please try again.")
+                    return false
+                }
                 _state.value = AuthState.SignedIn(stored.email)
                 true
             } else {
                 _state.value = AuthState.Error("Unexpected credential type")
                 false
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (_: NoCredentialException) {
             // No stored/authorized account; not an error for silent path.
-            if (tokenStore.peek() == null) _state.value = AuthState.SignedOut
+            _state.value = AuthState.SignedOut
             false
         } catch (e: GetCredentialException) {
             _state.value = AuthState.Error(e.javaClass.simpleName)

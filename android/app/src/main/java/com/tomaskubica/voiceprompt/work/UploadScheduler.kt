@@ -9,6 +9,7 @@ import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequest
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
+import androidx.work.await
 import java.time.Duration
 
 /** Scheduling seam so capture logic can be unit tested without WorkManager. */
@@ -19,7 +20,7 @@ interface UploadWorkScheduler {
 
     fun enqueueComplete(clientId: String)
 
-    fun retry(clientId: String, pendingIndices: List<Int>, hasComplete: Boolean)
+    suspend fun retry(clientId: String, pendingIndices: List<Int>, hasComplete: Boolean)
 }
 
 /**
@@ -110,11 +111,21 @@ class UploadScheduler(context: Context) : UploadWorkScheduler {
     }
 
     /** User-initiated retry: rebuild the whole chain, replacing any cancelled/failed one. */
-    override fun retry(clientId: String, pendingIndices: List<Int>, hasComplete: Boolean) {
-        wm.beginUniqueWork(uniqueName(clientId), UploadWorkPolicy.RETRY, createRequest(clientId))
-            .enqueue()
-        pendingIndices.forEach { enqueueChunk(clientId, it) }
-        if (hasComplete) enqueueComplete(clientId)
+    override suspend fun retry(clientId: String, pendingIndices: List<Int>, hasComplete: Boolean) {
+        var chain = wm.beginUniqueWork(
+            uniqueName(clientId), UploadWorkPolicy.RETRY, createRequest(clientId),
+        )
+        pendingIndices.forEach { index ->
+            chain = chain.then(request<UploadChunkWorker>(
+                Data.Builder().putString(KEY_CLIENT_ID, clientId).putInt(KEY_INDEX, index).build(),
+            ))
+        }
+        if (hasComplete) {
+            chain = chain.then(request<CompleteWorker>(
+                Data.Builder().putString(KEY_CLIENT_ID, clientId).build(),
+            ))
+        }
+        chain.enqueue().await()
     }
 
     companion object {
