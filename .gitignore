@@ -228,6 +228,7 @@ uv-cache/
 # ---------------------------------------------------------------------------
 .gradle/
 android/.gradle/
+android/.kotlin/
 **/build/
 android/local.properties
 local.properties
