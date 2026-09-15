@@ -205,7 +205,7 @@ var registries = [
 ]
 
 // --------------------------------------------------------------- API app
-// Public external HTTPS ingress; HTTP scale-to-zero (KEDA http rule).
+// Public external HTTPS ingress; one warm API replica for low-latency dictation.
 resource apiApp 'Microsoft.App/containerApps@2025-01-01' = {
   name: 'ca-api'
   location: location
@@ -270,7 +270,7 @@ resource apiApp 'Microsoft.App/containerApps@2025-01-01' = {
         }
       ]
       scale: {
-        minReplicas: 0
+        minReplicas: 1
         maxReplicas: 2
         rules: [
           {

@@ -113,3 +113,21 @@ class ServiceUnavailableError(ProblemError):
     status = 503
     code = "service-unavailable"
     title = "Service unavailable"
+
+
+class TooManyRequestsError(ProblemError):
+    status = 429
+    code = "too-many-requests"
+    title = "Too many requests"
+
+
+class BadGatewayError(ProblemError):
+    status = 502
+    code = "bad-gateway"
+    title = "Bad gateway"
+
+
+class GatewayTimeoutError(ProblemError):
+    status = 504
+    code = "gateway-timeout"
+    title = "Gateway timeout"

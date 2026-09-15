@@ -27,7 +27,7 @@ rg-cot-voice-recorder (Sweden Central)
 ├── id-cotvr-<token>       user-assigned managed identity (SHARED by all runtime apps)
 ├── log-cotvr-<token>      Log Analytics (Container Apps logs)
 ├── cae-cotvr              Container Apps env — VNet-integrated, EXTERNAL ingress
-│   ├── ca-api             API, external HTTPS ingress, HTTP scale 0→2
+│   ├── ca-api             API, external HTTPS ingress, HTTP scale 1→2 (warm for dictation)
 │   ├── ca-worker          no ingress, KEDA azure-queue (MI) scale 0→2
 │   └── caj-cleanup        scheduled Job, hourly cron `0 * * * *`
 └── (cross-RG) Cognitive Services User on ai-services/tomaskubica-foundry-resource

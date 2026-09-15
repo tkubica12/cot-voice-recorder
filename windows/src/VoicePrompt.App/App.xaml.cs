@@ -20,6 +20,7 @@ public partial class App : Application
     private AppHost? _host;
     private TrayIconHost? _tray;
     private MainWindow? _window;
+    private DictationController? _dictation;
     private bool _exiting;
 
     protected override void OnStartup(StartupEventArgs e)
@@ -83,6 +84,7 @@ public partial class App : Application
 
         SystemEvents.PowerModeChanged += OnPowerModeChanged;
         SystemEvents.SessionEnding += OnSessionEnding;
+        SystemEvents.SessionSwitch += OnSessionSwitch;
 
         _host.Realtime.StateChanged += state =>
             Dispatcher.BeginInvoke(() => _tray?.SetStatusText(state.ToString()));
@@ -94,6 +96,17 @@ public partial class App : Application
         _tray.SetStatusText(_host.OAuthConfigured ? "Starting" : "Not configured");
 
         _host.Start();
+        _dictation = new DictationController(_host, _tray, Dispatcher);
+        try
+        {
+            _dictation.Configure();
+        }
+        catch (Exception ex)
+        {
+            _host.Log.Warn($"dictation: shortcut registration failed ({ex.GetType().Name})");
+            _tray.Notify("Dictation shortcut unavailable", "Choose another shortcut in Settings.",
+                Core.Notifications.NotificationKind.Warning);
+        }
 
         if (!_host.OAuthConfigured)
         {
@@ -113,7 +126,7 @@ public partial class App : Application
 
         if (_window is null)
         {
-            _window = new MainWindow(_host);
+            _window = new MainWindow(_host, _dictation!);
             _window.PauseStateChanged += paused => _tray?.SetPausedChecked(paused);
         }
 
@@ -153,6 +166,7 @@ public partial class App : Application
         switch (e.Mode)
         {
             case PowerModes.Suspend:
+                Dispatcher.BeginInvoke(() => _dictation?.Cancel());
                 _host?.Realtime.Suspend();
                 break;
             case PowerModes.Resume:
@@ -161,7 +175,15 @@ public partial class App : Application
         }
     }
 
-    private void OnSessionEnding(object sender, SessionEndingEventArgs e) => ExitApplication();
+    private void OnSessionEnding(object sender, SessionEndingEventArgs e) =>
+        Dispatcher.BeginInvoke(ExitApplication);
+
+    private void OnSessionSwitch(object sender, SessionSwitchEventArgs e)
+    {
+        if (e.Reason is SessionSwitchReason.SessionLock or SessionSwitchReason.SessionLogoff
+            or SessionSwitchReason.RemoteDisconnect or SessionSwitchReason.ConsoleDisconnect)
+            Dispatcher.BeginInvoke(() => _dictation?.Cancel());
+    }
 
     private void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
     {
@@ -178,7 +200,7 @@ public partial class App : Application
         e.Handled = true;
     }
 
-    private void ExitApplication()
+    private async void ExitApplication()
     {
         if (_exiting)
         {
@@ -186,6 +208,8 @@ public partial class App : Application
         }
 
         _exiting = true;
+        if (_dictation is not null)
+            await _dictation.DisposeAsync();
         Shutdown(0);
     }
 
@@ -193,6 +217,7 @@ public partial class App : Application
     {
         SystemEvents.PowerModeChanged -= OnPowerModeChanged;
         SystemEvents.SessionEnding -= OnSessionEnding;
+        SystemEvents.SessionSwitch -= OnSessionSwitch;
 
         if (_host is not null)
         {

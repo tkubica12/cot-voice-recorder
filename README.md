@@ -7,6 +7,26 @@ wrong interface. Record a long, unstructured train of thought on Android, let th
 transcribe and lightly clean it up, then paste the result from the Windows clipboard into
 GitHub Copilot, Copilot, Claude, or any other AI tool.
 
+**Windows dictation:** hold **Ctrl+Alt+Space** while speaking, then release to paste into the
+current app. The tiny recording indicator never takes focus; **Esc** cancels. MAI transcribes
+short chunks in Azure while you speak, without the Android queue/refinement pipeline.
+See the [dictation architecture and operating guide](docs/windows-dictation.md).
+
+## Downloads
+
+Download installers from the [latest GitHub release](https://github.com/tkubica12/cot-voice-recorder/releases/latest):
+
+- [Windows x64 installer](https://github.com/tkubica12/cot-voice-recorder/releases/latest/download/VoicePrompt-Setup.exe)
+  (requires .NET 8 Desktop Runtime; not code-signed).
+- [Signed Android APK](https://github.com/tkubica12/cot-voice-recorder/releases/latest/download/VoicePrompt-Android.apk)
+  (Android 10 or newer).
+- [SHA-256 checksums](https://github.com/tkubica12/cot-voice-recorder/releases/latest/download/SHA256SUMS.txt).
+
+The public Windows installer does not bundle local OAuth configuration, tokens or credentials.
+Existing configured installations retain their configuration; new installations need the
+[Desktop OAuth setup](docs/google-oauth.md). The hosted backend still restricts access to
+its configured account allowlist. See the release notes for known dictation limitations.
+
 > **Status:** the complete Android → Azure → Windows flow is live and tested, including
 > recording while the phone is locked and automatic delivery to the clipboard.
 

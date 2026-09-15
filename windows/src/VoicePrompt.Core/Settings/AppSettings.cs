@@ -19,6 +19,15 @@ public sealed class AppSettings
     [JsonPropertyName("auto_start")]
     public bool AutoStart { get; set; }
 
+    [JsonPropertyName("dictation_enabled")]
+    public bool DictationEnabled { get; set; } = true;
+
+    [JsonPropertyName("dictation_shortcut")]
+    public string DictationShortcut { get; set; } = "Ctrl+Alt+Space";
+
+    [JsonPropertyName("dictation_language")]
+    public string DictationLanguage { get; set; } = "auto";
+
     public const string DefaultBackendBaseUrl =
         "https://ca-api.ambitiousdesert-517ec9ed.swedencentral.azurecontainerapps.io";
 
@@ -27,6 +36,9 @@ public sealed class AppSettings
         BackendBaseUrl = BackendBaseUrl,
         NotificationsPaused = NotificationsPaused,
         AutoStart = AutoStart,
+        DictationEnabled = DictationEnabled,
+        DictationShortcut = DictationShortcut,
+        DictationLanguage = DictationLanguage,
     };
 
     /// <summary>Normalize and validate the backend URL, falling back to the default.</summary>

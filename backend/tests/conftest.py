@@ -148,8 +148,22 @@ def verifier() -> StaticTokenVerifier:
 
 
 @pytest.fixture
-def client(context: ServiceContext, verifier: StaticTokenVerifier) -> Iterator[TestClient]:
-    app = create_app(settings=context.settings, context=context, verifier=verifier)
+def dictation_transcriber() -> FakeTranscriber:
+    return FakeTranscriber()
+
+
+@pytest.fixture
+def client(
+    context: ServiceContext,
+    verifier: StaticTokenVerifier,
+    dictation_transcriber: FakeTranscriber,
+) -> Iterator[TestClient]:
+    app = create_app(
+        settings=context.settings,
+        context=context,
+        verifier=verifier,
+        dictation_transcriber=dictation_transcriber,
+    )
     with TestClient(app) as test_client:
         yield test_client
 

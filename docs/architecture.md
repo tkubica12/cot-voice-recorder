@@ -37,7 +37,7 @@ flowchart LR
   end
 
   subgraph VNET[Application VNet]
-    subgraph Cloud[Azure Container Apps · FastAPI · min replicas 0]
+    subgraph Cloud[Azure Container Apps · FastAPI · API min replicas 1]
       API["REST API /v1"]
       W[Chunk & finalize workers]
       CLEAN[Scheduled cleanup job]
@@ -278,7 +278,7 @@ flowchart TB
   Services user role), and ACR image pull. The same identity is shared by all three
   runtime components so RBAC, ACR pull, and KEDA queue authorization are pre-created and
   deterministic. Those components are **three separate Azure Container Apps resources**:
-  the external-ingress **API** app (HTTP scale-to-zero), a no-ingress **worker** app
+  the external-ingress **API** app (one warm replica for low-latency dictation), a no-ingress **worker** app
   scaled from zero on the private Storage queue via managed identity, and a **scheduled
   cleanup job** that runs hourly — rather than running API and worker in one process.
 - **Private Storage networking.** The external-ingress Container Apps environment is injected

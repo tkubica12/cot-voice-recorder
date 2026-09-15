@@ -17,7 +17,7 @@
 ; ---------------------------------------------------------------------------
 
 #define AppName        "VoicePrompt"
-#define AppVersion     "1.0.0"
+#define AppVersion     "1.2.0"
 #define AppPublisher   "tomaskubica"
 #define AppExeName     "VoicePrompt.exe"
 #define AppId          "{{9C1E7A54-3E77-4B27-9E4A-3A5C1E2C0B41}"
@@ -32,8 +32,10 @@
 
 ; The Desktop OAuth client JSON is optional at build time.
 #define DesktopClientJson "staging\google-desktop-client.json"
+#ifndef PublicRelease
 #if FileExists(AddBackslash(SourcePath) + DesktopClientJson)
   #define HaveDesktopClient
+#endif
 #endif
 
 [Setup]
@@ -76,7 +78,7 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription
 [Files]
 Source: "{#SourceDir}\{#AppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\*.dll";         DestDir: "{app}"; Flags: ignoreversion
-Source: "{#SourceDir}\*.json";        DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\*.json";        DestDir: "{app}"; Excludes: "google-desktop-client.json,*client_secret*.json"; Flags: ignoreversion
 Source: "{#SourceDir}\Assets\*";      DestDir: "{app}\Assets"; Flags: ignoreversion recursesubdirs createallsubdirs
 #ifdef HaveDesktopClient
 ; Sensitive operational config: the Desktop OAuth client only. Never the Android/Web

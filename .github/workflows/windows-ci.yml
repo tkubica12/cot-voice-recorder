@@ -58,6 +58,9 @@ jobs:
           dotnet publish src/VoicePrompt.App/VoicePrompt.App.csproj
           -c Release -r win-x64 --self-contained false -o publish/win-x64
 
+      - name: Native dictation smoke (no microphone capture or global paste)
+        run: dotnet run --project tools/DictationProbe/DictationProbe.csproj -c Release
+
       - name: Verify no OAuth client JSON was packaged
         shell: pwsh
         run: |

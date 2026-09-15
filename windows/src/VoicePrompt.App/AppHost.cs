@@ -21,15 +21,16 @@ namespace VoicePrompt.App;
 /// <see cref="AuthState.NotConfigured"/>, the realtime loop stays idle, and the UI explains
 /// what is missing. This keeps CI and first-run-before-configuration safe.
 /// </summary>
-public sealed class AppHost : IAsyncDisposable
+public sealed class AppHost : IAsyncDisposable, IDictationHost
 {
-    public const string AppVersion = "1.0.0";
+    public const string AppVersion = "1.2.0";
 
     private static readonly TimeSpan CleanupInterval = TimeSpan.FromMinutes(30);
 
     private readonly CancellationTokenSource _shutdown = new();
     private readonly HttpClient _apiHttp;
     private readonly HttpClient _tokenHttp;
+    private HttpClient? _dictationHttp;
     private readonly bool _firstRun;
     private Task? _cleanupLoop;
 
@@ -78,6 +79,11 @@ public sealed class AppHost : IAsyncDisposable
     public TranscriptCoordinator Coordinator { get; }
     public RealtimeClient Realtime { get; }
     public IAutoStartManager AutoStart { get; }
+    public ApiClient DictationApi { get; private set; } = null!;
+    public bool DictationBusy { get; set; }
+    bool IDictationHost.CanDictate => Auth.Status.CanCallBackend;
+    Task<string> IDictationHost.TranscribeAsync(byte[] wav, string language, CancellationToken ct) =>
+        DictationApi.TranscribeDictationAsync(wav, language, ct);
 
     /// <summary>False when no Desktop OAuth client JSON was found (safe unconfigured state).</summary>
     public bool OAuthConfigured { get; }
@@ -116,13 +122,15 @@ public sealed class AppHost : IAsyncDisposable
         };
         apiHttp.DefaultRequestHeaders.UserAgent.ParseAdd($"VoicePrompt/{AppVersion}");
 
-        var api = new ApiClient(apiHttp, new AuthBackendCredentials(auth));
+        var api = new ApiClient(apiHttp, new AuthBackendCredentials(auth),
+            baseUrl: () => new Uri(settings.BackendBaseUrl + "/"));
         var history = new HistoryStore(paths.HistoryFile, fs, clock);
         var clipboard = new ClipboardCopier(clipboardWriter ?? new StaClipboardWriter());
 
+        AppHost? host = null;
         var coordinator = new TranscriptCoordinator(
             api, history, clipboard, notifier, clock,
-            notificationsPaused: () => settings.NotificationsPaused,
+            notificationsPaused: () => settings.NotificationsPaused || host?.DictationBusy == true,
             log: log);
 
         var realtime = new RealtimeClient(
@@ -136,9 +144,14 @@ public sealed class AppHost : IAsyncDisposable
         var autoStart = new RegistryAutoStartManager(
             Environment.ProcessPath ?? AppContext.BaseDirectory, log);
 
-        return new AppHost(
+        host = new AppHost(
             paths, log, clock, settings, settingsStore, auth, api, apiHttp, tokenHttp,
             history, coordinator, realtime, autoStart, desktopConfig is not null, firstRun);
+        host._dictationHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(25) };
+        host.DictationApi = new ApiClient(host._dictationHttp, new AuthBackendCredentials(auth),
+            new ApiRetryOptions { MaxRetries = 1 },
+            baseUrl: () => new Uri(settings.BackendBaseUrl + "/"));
+        return host;
     }
 
     /// <summary>Start background work: history retention sweep and the realtime connection.</summary>
@@ -177,6 +190,8 @@ public sealed class AppHost : IAsyncDisposable
     /// <summary>Apply a new backend base URL and force the realtime loop to renegotiate.</summary>
     public void UpdateBackendUrl(string url)
     {
+        if (DictationBusy)
+            throw new InvalidOperationException("Stop dictation before changing the backend.");
         var normalized = AppSettings.NormalizeBaseUrl(url);
         if (string.Equals(normalized, Settings.BackendBaseUrl, StringComparison.OrdinalIgnoreCase)
             && _apiHttp.BaseAddress is not null)
@@ -186,7 +201,6 @@ public sealed class AppHost : IAsyncDisposable
 
         Settings.BackendBaseUrl = normalized;
         SaveSettings();
-        _apiHttp.BaseAddress = new Uri(normalized + "/");
         Log.Info("host: backend URL updated");
         Realtime.Reconnect();
     }
@@ -237,6 +251,7 @@ public sealed class AppHost : IAsyncDisposable
         }
 
         _apiHttp.Dispose();
+        _dictationHttp?.Dispose();
         _tokenHttp.Dispose();
         _shutdown.Dispose();
         Log.Info("host: stopped");

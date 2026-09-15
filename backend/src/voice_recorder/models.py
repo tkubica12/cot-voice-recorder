@@ -18,6 +18,10 @@ class HealthStatus(StrictModel):
     status: Literal["ok", "not_ready"]
 
 
+class DictationResult(StrictModel):
+    text: str
+
+
 class ClientInfo(StrictModel):
     platform: Literal["android", "windows"]
     app_version: str | None = None

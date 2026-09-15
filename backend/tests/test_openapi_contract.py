@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 from voice_recorder.services.context import ServiceContext
 from voice_recorder.services.pipeline import finalize
 
-from .conftest import chunk_headers, drain, unique_wav
+from .conftest import chunk_headers, drain, make_wav, unique_wav
 from .jsonschema_lite import (
     assert_keywords_supported,
     assert_refs_resolve,
@@ -213,3 +213,42 @@ def test_problem_response_matches_schema(
 def test_health_responses_match_schema(client: TestClient, spec: dict[str, Any]) -> None:
     for path in ("/health/live", "/health/ready"):
         assert_valid(client.get(path).json(), "HealthStatus", spec)
+
+
+def test_dictation_response_and_limits_match_schema(
+    client: TestClient, auth: dict[str, str], spec: dict[str, Any]
+) -> None:
+    from voice_recorder.services.dictation import MAX_BODY_BYTES
+
+    path = "/v1/dictation/transcribe"
+    operation = spec["paths"][path]["post"]
+    language = operation["parameters"][0]["schema"]
+    assert language == {"type": "string", "enum": ["auto", "cs", "en"], "default": "auto"}
+    assert operation["requestBody"]["content"]["audio/wav"]["schema"]["maxLength"] == MAX_BODY_BYTES
+    generated = client.get("/openapi.json").json()["paths"][path]["post"]
+    assert generated["requestBody"] == operation["requestBody"]
+    assert generated["operationId"] == operation["operationId"]
+    assert operation.get("security", spec["security"]) == [{"googleIdToken": []}]
+    assert set(operation["responses"]) == {
+        "200",
+        "401",
+        "403",
+        "413",
+        "415",
+        "422",
+        "429",
+        "502",
+        "503",
+        "504",
+    }
+    response = client.post(path, headers={**auth, "Content-Type": "audio/wav"}, content=make_wav())
+    assert response.status_code == 200
+    assert_valid(response.json(), "DictationResult", spec)
+    assert (
+        response.headers["Cache-Control"]
+        == (operation["responses"]["200"]["headers"]["Cache-Control"]["schema"]["const"])
+    )
+    for content, status in [(b"", 422), (bytes(MAX_BODY_BYTES + 1), 413)]:
+        response = client.post(path, headers={**auth, "Content-Type": "audio/wav"}, content=content)
+        assert response.status_code == status
+        assert_valid(response.json(), "Problem", spec)

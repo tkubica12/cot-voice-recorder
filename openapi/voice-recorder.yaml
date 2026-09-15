@@ -11,6 +11,10 @@ info:
     by default), stores a short-lived transcript, and notifies the Windows tray app over
     Azure Web PubSub.
 
+    Windows can also send short dictation WAV batches directly to MAI through the
+    authenticated backend, receiving clean text without storage, refinement, queues,
+    or Web PubSub.
+
     ## Conventions
     - **IDs** are UUIDs (string, format `uuid`).
     - **Timestamps** are ISO 8601 / RFC 3339 UTC strings (format `date-time`).
@@ -37,6 +41,8 @@ security:
   - googleIdToken: []
 
 tags:
+  - name: dictation
+    description: Ephemeral low-latency Windows dictation.
   - name: recordings
     description: Recording session lifecycle and chunk upload.
   - name: transcripts
@@ -90,6 +96,114 @@ paths:
                 $ref: "#/components/schemas/HealthStatus"
               example:
                 status: not_ready
+
+  /v1/dictation/transcribe:
+    post:
+      operationId: transcribeDictation
+      tags: [dictation]
+      summary: Transcribe a short WAV batch directly to clean text.
+      description: |
+        Requires the standard Google ID token and allowlisted user. Sends audio to
+        the existing MAI Azure Speech provider with enhanced mode and clean style.
+        `auto` omits locales for multilingual recognition; no glossary is sent.
+        Use `auto` for Czech, English, or mixed-language speech. The backend returns
+        source-language provider text without translating it. Explicit `cs` or `en`
+        force a single input-language hint, not a translation target. No translation
+        task, target language, or custom prompt is sent to MAI. Clean style removes
+        fillers and formats speech; it does not request translation.
+        No recording, storage, queue, refinement, history, or realtime event is created.
+        Audio/text/provider error bodies/tokens are not logged. All handled responses
+        have `Cache-Control: no-store`.
+
+        The body must be a complete RIFF/WAVE PCM file (format code 1), mono, 16 kHz,
+        16-bit, with one nonempty data chunk of at most 320000 bytes (10 seconds).
+        Total size is bounded to 324096 bytes while streaming, including WAV headers.
+        Chunk lengths, RIFF size, byte rate, and frame alignment must be consistent.
+        Compressed content encoding is not supported; audio is never truncated.
+
+        Clients should cut nonoverlapping batches on silence at <=8 seconds, allow
+        at most two in-flight requests, and apply text in capture order. The backend
+        allows four concurrent dictation calls per process and rejects excess calls
+        immediately with 429. The response deadline and upstream HTTP timeout are
+        20 seconds. Cancelled/timed-out calls hold capacity until synchronous work ends.
+        There are no server-side model retries or fallback models; a client retry is
+        a new transcription request, not an idempotent replay.
+      parameters:
+        - name: language
+          in: query
+          required: false
+          description: |
+            Input-language hint. Use auto to detect Czech, English, and mixed-language
+            speech without forcing either language. Not an output-language selector.
+          schema:
+            type: string
+            enum: [auto, cs, en]
+            default: auto
+      requestBody:
+        required: true
+        content:
+          audio/wav:
+            schema:
+              type: string
+              format: binary
+              maxLength: 324096
+      responses:
+        "200":
+          description: Transcription text; empty text is a valid no-speech result.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DictationResult"
+              example:
+                text: "Text to paste."
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "413":
+          description: Total WAV request exceeds 324096 bytes.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "429":
+          description: All four per-process dictation slots are occupied.
+          headers:
+            Retry-After:
+              schema:
+                type: string
+                const: "1"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "502":
+          description: Provider rejected the request, failed, or returned a malformed response.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "503":
+          description: Transient provider failure or MAI Azure Speech not configured.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "504":
+          description: The 20-second dictation response deadline elapsed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
 
   /v1/recordings:
     post:
@@ -627,6 +741,15 @@ components:
                 message: must be greater than or equal to 1
 
   schemas:
+    DictationResult:
+      type: object
+      additionalProperties: false
+      required: [text]
+      properties:
+        text:
+          type: string
+          description: Clean transcription text, or empty for a valid no-speech result.
+
     HealthStatus:
       type: object
       additionalProperties: false

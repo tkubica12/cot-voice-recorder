@@ -4,10 +4,12 @@ using System.Globalization;
 using System.Net.Http;
 using System.Windows;
 using System.Windows.Input;
+using VoicePrompt.App.Services;
 using VoicePrompt.Core.Api;
 using VoicePrompt.Core.Auth;
 using VoicePrompt.Core.Clipboard;
 using VoicePrompt.Core.History;
+using VoicePrompt.Core.Infrastructure;
 using VoicePrompt.Core.Realtime;
 using KeyEventArgs = System.Windows.Input.KeyEventArgs;
 using MessageBox = System.Windows.MessageBox;
@@ -35,21 +37,26 @@ public partial class MainWindow : Window
     public static readonly RoutedCommand RefreshCommand = new(nameof(RefreshCommand), typeof(MainWindow));
 
     private readonly AppHost _host;
+    private readonly DictationController _dictation;
     private readonly ObservableCollection<HistoryRow> _rows = new();
 
-    public MainWindow(AppHost host)
+    public MainWindow(AppHost host, DictationController dictation)
     {
         _host = host;
+        _dictation = dictation;
         InitializeComponent();
 
         HistoryList.ItemsSource = _rows;
         BackendUrlBox.Text = _host.Settings.BackendBaseUrl;
         AutoStartCheck.IsChecked = _host.Settings.AutoStart;
         PauseCheck.IsChecked = _host.Settings.NotificationsPaused;
+        DictationEnabledCheck.IsChecked = _host.Settings.DictationEnabled;
+        DictationShortcutBox.Text = _host.Settings.DictationShortcut;
+        DictationLanguageBox.SelectedIndex = _host.Settings.DictationLanguage switch { "cs" => 1, "en" => 2, _ => 0 };
         AboutText.Text =
             $"VoicePrompt {AppHost.AppVersion} · .NET 8 · framework-dependent x64\n" +
             $"Local data: {_host.Paths.Root}\n" +
-            "Transcripts are cached locally for 48 hours. Audio is never stored on this machine.";
+            "Transcripts are cached locally for 48 hours. Dictation audio stays in memory and is sent to MAI in Azure; it is not saved to disk.";
 
         CommandBindings.Add(new CommandBinding(HideWindowCommand, (_, _) => HideToTray()));
         CommandBindings.Add(new CommandBinding(RefreshCommand, (_, _) => _ = RefreshFromBackendAsync()));
@@ -300,6 +307,11 @@ public partial class MainWindow : Window
 
     private void OnApplyUrl(object sender, RoutedEventArgs e)
     {
+        if (_dictation.IsBusy)
+        {
+            BackendHealthText.Text = "Stop dictation before changing the backend.";
+            return;
+        }
         _host.UpdateBackendUrl(BackendUrlBox.Text);
         BackendUrlBox.Text = _host.Settings.BackendBaseUrl;
         BackendHealthText.Text = "Backend URL saved.";
@@ -367,6 +379,7 @@ public partial class MainWindow : Window
 
     private void OnSignOut(object sender, RoutedEventArgs e)
     {
+        _dictation.Cancel();
         _host.Auth.SignOut();
         RenderAuthStatus(_host.Auth.Status);
         _host.Realtime.Reconnect();
@@ -383,6 +396,41 @@ public partial class MainWindow : Window
 
         _host.Settings.AutoStart = enabled;
         _host.SaveSettings();
+    }
+
+    private void OnApplyDictation(object sender, RoutedEventArgs e)
+    {
+        if (_dictation.IsBusy)
+        {
+            DictationStatusText.Text = "Stop dictation before changing its settings.";
+            return;
+        }
+        var before = _host.Settings.Clone();
+        try
+        {
+            _host.Settings.DictationEnabled = DictationEnabledCheck.IsChecked == true;
+            _host.Settings.DictationShortcut = DictationShortcutBox.Text.Trim();
+            _host.Settings.DictationLanguage = DictationLanguageBox.SelectedIndex switch { 1 => "cs", 2 => "en", _ => "auto" };
+            _dictation.Configure();
+            _host.SaveSettings();
+            DictationStatusText.Text = _host.Settings.DictationEnabled
+                ? $"Ready: hold {_host.Settings.DictationShortcut} to speak; release to paste. Esc cancels."
+                : "Dictation disabled.";
+        }
+        catch (Exception ex)
+        {
+            _host.Settings.DictationEnabled = before.DictationEnabled;
+            _host.Settings.DictationShortcut = before.DictationShortcut;
+            _host.Settings.DictationLanguage = before.DictationLanguage;
+            _host.Log.Warn($"dictation: settings failed ({ex.GetType().Name})");
+            DictationStatusText.Text = "Could not save dictation settings. Use an available shortcut including Ctrl or Alt.";
+            try { _dictation.Configure(); }
+            catch (Exception restoreError)
+            {
+                _host.Log.Warn($"dictation: shortcut restore failed ({restoreError.GetType().Name})");
+                DictationStatusText.Text = "Shortcut unavailable. Choose another shortcut and Apply.";
+            }
+        }
     }
 
     private void OnPauseChanged(object sender, RoutedEventArgs e)

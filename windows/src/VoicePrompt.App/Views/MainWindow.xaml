@@ -170,6 +170,26 @@
 
             <Separator Margin="0,18" Background="{StaticResource LineBrush}" />
 
+            <TextBlock Style="{StaticResource SectionHeader}" Text="Local dictation with cloud MAI" />
+            <CheckBox x:Name="DictationEnabledCheck" Content="Enable global dictation shortcut"
+                      AutomationProperties.Name="Enable dictation" />
+            <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap"
+                       Text="Hold the shortcut while speaking into the default microphone; release to transcribe and paste. Esc cancels. Audio is sent to MAI in Azure while you speak, not stored on disk. A small indicator never takes focus. Maximum five minutes per dictation." />
+            <TextBlock Style="{StaticResource Caption}" Text="Shortcut (for example Ctrl+Alt+Space)" Margin="0,8,0,4" />
+            <TextBox x:Name="DictationShortcutBox" AutomationProperties.Name="Dictation shortcut" />
+            <TextBlock Style="{StaticResource Caption}" Text="Recognition language" Margin="0,8,0,4" />
+            <ComboBox x:Name="DictationLanguageBox" AutomationProperties.Name="Dictation language">
+              <ComboBoxItem Content="Automatic (including Czech / English switching)" />
+              <ComboBoxItem Content="Czech" />
+              <ComboBoxItem Content="English" />
+            </ComboBox>
+            <Button Content="Apply dictation settings" Click="OnApplyDictation"
+                    HorizontalAlignment="Left" Margin="0,8,0,0" />
+            <TextBlock x:Name="DictationStatusText" Style="{StaticResource Caption}" TextWrapping="Wrap"
+                       Margin="0,6,0,0" Text="Default: Ctrl+Alt+Space. Keep the same input focused until the indicator disappears. Dictation text remains in History and on the clipboard; automatic paste is skipped if focus changes." />
+
+            <Separator Margin="0,18" Background="{StaticResource LineBrush}" />
+
             <TextBlock Style="{StaticResource SectionHeader}" Text="About" />
             <TextBlock x:Name="AboutText" Style="{StaticResource Caption}" TextWrapping="Wrap" />
           </StackPanel>

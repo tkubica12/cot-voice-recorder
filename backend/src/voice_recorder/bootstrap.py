@@ -126,6 +126,30 @@ def _build_ai(settings: Settings, credential: Any) -> tuple[Transcriber, Refiner
     return transcriber, FoundryRefiner(client)
 
 
+def build_dictation_transcriber(settings: Settings) -> Transcriber | None:
+    """Build only for the API; never reuse the worker's verbatim/long-timeout client."""
+    if settings.use_fake_ai and settings.environment != "production":
+        return FakeTranscriber()
+    if (
+        settings.transcribe_provider != "azure_speech"
+        or not settings.speech_model.startswith("MAI-Transcribe-")
+        or not settings.speech_endpoint
+    ):
+        return None
+    from .ai.speech import AzureSpeechTranscriber
+    from .services.dictation import TIMEOUT_SECONDS
+
+    return AzureSpeechTranscriber(
+        settings.speech_endpoint,
+        _credential(),
+        model=settings.speech_model,
+        api_version=settings.speech_api_version,
+        transcribe_style="clean",
+        timeout_seconds=TIMEOUT_SECONDS,
+        strict_response=True,
+    )
+
+
 def _build_realtime(settings: Settings, credential: Any) -> RealtimeGateway:
     if settings.use_fake_realtime or not settings.webpubsub_endpoint:
         return InMemoryRealtimeGateway(hub=settings.webpubsub_hub, group=settings.webpubsub_group)

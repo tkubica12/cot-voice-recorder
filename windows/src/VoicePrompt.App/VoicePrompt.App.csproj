@@ -4,6 +4,7 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
+    <InvariantGlobalization>false</InvariantGlobalization>
     <UseWindowsForms>true</UseWindowsForms>
     <RootNamespace>VoicePrompt.App</RootNamespace>
     <AssemblyName>VoicePrompt</AssemblyName>
@@ -20,6 +21,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\VoicePrompt.Core\VoicePrompt.Core.csproj" />
+    <PackageReference Include="NAudio.WinMM" Version="2.2.1" />
   </ItemGroup>
 
   <ItemGroup>

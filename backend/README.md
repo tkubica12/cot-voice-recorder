@@ -1,7 +1,7 @@
 # backend/ — Cloud backend
 
 **Owner:** backend component.
-**Tech:** Python 3.13 · FastAPI · uv · Azure Container Apps (min replicas 0), managed identity only.
+**Tech:** Python 3.13 · FastAPI · uv · Azure Container Apps (API min replicas 1, worker 0), managed identity only.
 
 The stateless API and workers that orchestrate the recorder: authenticate the user,
 accept recording sessions and audio chunks, transcribe Czech with `MAI-Transcribe-2`
@@ -122,6 +122,79 @@ settings.
 
 ## Behavior notes / contract clarifications
 
+### Low-latency Windows dictation
+
+`POST /v1/dictation/transcribe?language=auto` accepts **raw `audio/wav`** (not
+multipart or JSON) and returns `200 application/json` with exactly `{"text": "..."}`.
+The existing Google ID-token authentication and single-user allowlist are required;
+there is no anonymous dictation route. Local fake auth still requires its dev bearer
+token. `language` defaults to `auto`; the only explicit alternatives are `cs` and
+`en`. Automatic mode omits Speech `locales`, allowing multilingual recognition.
+Use `auto` for Czech, English, or mixed-language speech. Explicit `cs` and `en` are
+strong **single input-language hints**, not output/translation languages; the backend
+does not infer either from desktop culture or the Android `VR_TRANSCRIBE_LANGUAGE`.
+Dictation returns the provider's source-language text without translation or refinement.
+It sends neither a translation task, target language, nor a custom prompt.
+
+Microsoft's [MAI guide](https://learn.microsoft.com/azure/ai-services/speech-service/mai-transcribe)
+documents automatic multilingual detection when `locales` is omitted and supports
+only one locale when supplied (do not send `["cs", "en"]`). `clean` removes fillers
+and formats speech; it is not a translation mode. The
+[feature matrix](https://learn.microsoft.com/azure/ai-services/speech-service/llm-speech#feature-availability)
+lists translation and custom prompts as unsupported by MAI-Transcribe-2. If Czech
+speech produces English, first verify that the client actually sends `auto`, not
+`en`. An incorrect result with `auto` can still be a provider recognition error;
+request-shape tests do not prove live language-identification accuracy.
+
+- Audio must be a complete RIFF/WAVE file with one nonempty data chunk, uncompressed
+  PCM format code 1, **16 kHz, 16-bit, mono**, and **at most 10 seconds** (320,000 PCM
+  bytes). The total request limit is **324,096 bytes**, allowing 4 KiB of container
+  overhead at the maximum duration. RIFF/chunk lengths, frame alignment, and PCM byte
+  rate are checked; truncated/duplicate chunks and empty audio are rejected. Size is
+  enforced while streaming even without `Content-Length`. Content encoding other
+  than identity is not accepted. Audio is never silently shortened.
+- Clients should send nonoverlapping batches **at most 8 seconds**, cut on silence,
+  with **at most two requests in flight** and preserve capture order when pasting
+  responses. No recording creation, completion call, digest, or chunk index is needed.
+- A separate MAI Azure Speech client uses `enhancedMode`, the configured MAI model
+  (default `MAI-Transcribe-2`), `clean` style, and a **20-second HTTP timeout**. A
+  **20-second response deadline** also covers token acquisition and the synchronous
+  call. There are no automatic transcription retries or fallback models. Existing
+  Android transcription keeps its Czech default, glossary, verbatim style, and
+  configured long timeout; dictation sends no glossary or refinement prompt.
+- Each API process permits **four concurrent dictation calls** on dedicated threads;
+  excess work gets immediate `429` with `Retry-After: 1`, not an unbounded queue.
+  A timed-out or cancelled request retains its slot until the actual underlying
+  call ends, because Python cannot cancel a running synchronous HTTP call. Shutdown
+  drains these calls off the event loop before closing the Speech client.
+- Errors are RFC 9457 `application/problem+json`: `401`/`403` authentication,
+  `413` total body size, `415` media/content encoding, `422` malformed/empty WAV,
+  duration, format, or language, `429` capacity, `502` provider rejection or malformed
+  response, `503` transient provider failure or unsupported configuration, and `504`
+  response deadline. A valid provider no-speech result returns `{"text": ""}`.
+  Upstream error details are not returned or logged. Client retries are new model
+  calls: the endpoint is not idempotent and a timeout does not prove upstream failure.
+- Dictation requires `VR_TRANSCRIBE_PROVIDER=azure_speech`, a configured
+  `VR_SPEECH_ENDPOINT`, and a `MAI-Transcribe-*` model, otherwise it returns `503`.
+  `VR_USE_FAKE_AI=true` is supported only in the existing gated local/test mode.
+  Speech authentication remains backend managed identity; no Azure key goes to Windows.
+
+**Privacy:** audio and text are held transiently in process memory and sent only to
+the configured Speech service for transcription. Dictation does not use Blob/Table
+storage, queues, recording history, refiners, or Web PubSub. Responses, including
+handled errors, carry `Cache-Control: no-store`. Application logs contain only safe
+error categories/statuses, never dictation audio, text, provider error bodies, or tokens.
+This is application-level nonpersistence, not a claim about the upstream provider's
+own retention policies.
+
+**Idle cost:** `infra/modules/apps.bicep` now keeps **one API replica warm** to remove
+API scale-from-zero latency. This introduces a **fixed ongoing idle compute cost**
+relative to scale-to-zero (subject to Azure billing allowances); it does not guarantee
+an upstream Speech latency. Worker minimum replicas remain zero, with no change to
+worker scaling or cleanup.
+
+### Durable recordings
+
 - **Finalization trigger.** The refinement finalization runs exactly once, after all
   expected chunk transcripts exist (guarded by an ETag-checked `finalize_enqueued`
   flag). To detect chunks that never arrive, `POST /complete` also schedules a delayed
@@ -130,5 +203,5 @@ settings.
   `missing_chunks` once the grace window elapses. Duplicate finalize deliveries are
   idempotent (deterministic `transcript_id`, state guards).
 - **Chunk digest mismatch** (body does not match `Content-Digest`) returns `422`.
-- No OpenAPI shapes or status codes were changed; the above only clarifies timing the
-  contract left unspecified.
+- Existing recording OpenAPI shapes and status codes are unchanged; dictation is an
+  independent additive endpoint.

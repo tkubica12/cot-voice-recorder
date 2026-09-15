@@ -18,7 +18,7 @@ async def read_bounded_body(request: Request, max_bytes: int) -> bytes:
         raise PayloadTooLargeError(f"Chunk exceeds the {max_bytes} byte limit.")
     buffer = bytearray()
     async for chunk in request.stream():
-        buffer.extend(chunk)
-        if len(buffer) > max_bytes:
+        if len(buffer) + len(chunk) > max_bytes:
             raise PayloadTooLargeError(f"Chunk exceeds the {max_bytes} byte limit.")
+        buffer.extend(chunk)
     return bytes(buffer)

@@ -8,6 +8,13 @@ connection** (the backend is never polled) and when a `transcript.completed` eve
 fetches the transcript, copies it to the clipboard, and shows a tray notification. A compact
 settings/history window lists recent transcripts; selecting an old one copies it again.
 
+Version 1.2 uses **push-to-talk Windows dictation**: hold **Ctrl+Alt+Space**, speak into the default
+microphone, and release to paste into the focused app. A tiny, non-activating indicator
+shows recording/transcription; **Esc** cancels. Audio is transcribed by **MAI-Transcribe-2
+in Azure**, not an offline model. Settings offers enable/disable, shortcut and language;
+automatic language detection is the default.
+The updated backend is required. See [dictation design, safeguards, tests and rollback](../docs/windows-dictation.md).
+
 - **Contract:** [`../openapi/voice-recorder.yaml`](../openapi/voice-recorder.yaml).
 - **Behaviour:** [`../docs/architecture.md`](../docs/architecture.md).
 - **OAuth setup:** [`../docs/google-oauth.md`](../docs/google-oauth.md).
@@ -59,7 +66,7 @@ the realtime loop stays idle, and no placeholder credentials are minted. This is
 state CI builds and tests in.
 
 Other settings live in `%LOCALAPPDATA%\VoicePrompt\settings.json` and are editable in the
-window (backend URL, auto-start, pause notifications).
+window (backend URL, auto-start, pause notifications, dictation shortcut/language).
 
 ## Build
 
@@ -100,6 +107,8 @@ live Google or Azure calls.
 cd windows/installer
 & "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" /Q VoicePrompt.iss
 # -> windows/installer/output/VoicePrompt-Setup.exe
+# Public GitHub release: exclude locally staged OAuth configuration.
+& "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" /Q /DPublicRelease=1 VoicePrompt.iss
 ```
 
 The installer is **per-user and non-Store**:
@@ -112,11 +121,16 @@ The installer is **per-user and non-Store**:
   deliberately creates **no** Startup-folder shortcut, and removes a legacy one left by earlier
   builds, so the tray app can never be launched twice at sign-in and the toggle always reflects
   reality,
-- bundles **only** the Desktop OAuth client JSON (never the Android or Web client, never the
-  `.secrets/` folder),
+- private builds can bundle the locally staged Desktop OAuth client JSON; **public releases**
+  built with `/DPublicRelease=1` omit it entirely (never package tokens, signing keys, the
+  Android/Web client JSON, or the `.secrets/` folder),
 - checks for the .NET 8 Desktop Runtime and links to the download if missing,
 - asks a running instance to exit first (`VoicePrompt.exe --quit`) so upgrades never force-kill,
 - **preserves user data** in `%LOCALAPPDATA%\VoicePrompt` across upgrade *and* uninstall.
+
+The [GitHub release](https://github.com/tkubica12/cot-voice-recorder/releases/latest) provides
+`VoicePrompt-Setup.exe` and SHA-256 checksums. New users must configure Desktop OAuth
+before signing in; upgrading an already configured installation preserves that setup.
 
 Silent install / uninstall:
 
@@ -143,6 +157,10 @@ Silent install / uninstall:
   paused**. <kbd>Esc</kbd> hides the window; <kbd>F5</kbd> refreshes history from the backend.
 - **Pause notifications:** transcripts are still fetched and cached, but nothing is copied
   automatically and no toast is shown.
+- **Dictation:** works independently of notification pause. Keep the same target focused;
+  a window/focus change skips auto-paste and leaves text on the clipboard and in History.
+  Allow desktop microphone access in Windows privacy settings. Five-minute limit per session.
+  Dictation capture never saves audio to disk, and no model credentials are installed locally.
 
 ## How it works
 

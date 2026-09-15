@@ -5,7 +5,7 @@ using VoicePrompt.Core.Infrastructure;
 namespace VoicePrompt.Core.History;
 
 /// <summary>
-/// One locally cached transcript. Text only — the app never stores or receives audio.
+/// One locally cached transcript. Text only; dictation audio is never persisted.
 /// </summary>
 public sealed class HistoryEntry
 {

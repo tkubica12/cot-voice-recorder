@@ -24,17 +24,40 @@ public sealed class ApiClient
     private readonly IBackendCredentials _credentials;
     private readonly ApiRetryOptions _retry;
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
+    private readonly Func<Uri>? _baseUrl;
 
     public ApiClient(
         HttpClient http,
         IBackendCredentials credentials,
         ApiRetryOptions? retry = null,
-        Func<TimeSpan, CancellationToken, Task>? delay = null)
+        Func<TimeSpan, CancellationToken, Task>? delay = null,
+        Func<Uri>? baseUrl = null)
     {
         _http = http;
         _credentials = credentials;
         _retry = retry ?? new ApiRetryOptions();
         _delay = delay ?? Task.Delay;
+        _baseUrl = baseUrl;
+    }
+
+    public async Task<string> TranscribeDictationAsync(byte[] wav, string language, CancellationToken ct)
+    {
+        var result = await SendAsync<DictationResponse>(
+            HttpMethod.Post, "/v1/dictation/transcribe?language=" + Uri.EscapeDataString(language),
+            null, ct, () =>
+            {
+                var content = new ByteArrayContent(wav);
+                content.Headers.ContentType = new MediaTypeHeaderValue("audio/wav");
+                return content;
+            }).ConfigureAwait(false);
+        return result.Text ?? throw new ApiException(
+            ApiErrorKind.Unexpected, 200, null, "Missing dictation text.");
+    }
+
+    private sealed class DictationResponse
+    {
+        [System.Text.Json.Serialization.JsonPropertyName("text")]
+        public string? Text { get; init; }
     }
 
     public async Task<NegotiateResponse> NegotiateAsync(string? platform, string? appVersion, CancellationToken ct)
@@ -71,7 +94,9 @@ public sealed class ApiClient
         return SendAsync<TranscriptListPage>(HttpMethod.Get, path, null, ct);
     }
 
-    private async Task<T> SendAsync<T>(HttpMethod method, string path, string? jsonBody, CancellationToken ct)
+    private async Task<T> SendAsync<T>(
+        HttpMethod method, string path, string? jsonBody, CancellationToken ct,
+        Func<HttpContent>? bodyFactory = null)
     {
         var refreshedOnce = false;
         var attempt = 0;
@@ -86,9 +111,14 @@ public sealed class ApiClient
                 throw new ApiException(ApiErrorKind.Unauthorized, 401, null, "Not signed in.");
             }
 
-            using var request = new HttpRequestMessage(method, path);
+            using var request = new HttpRequestMessage(
+                method, _baseUrl is null ? new Uri(path, UriKind.Relative) : new Uri(_baseUrl(), path));
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-            if (jsonBody is not null)
+            if (bodyFactory is not null)
+            {
+                request.Content = bodyFactory();
+            }
+            else if (jsonBody is not null)
             {
                 request.Content = new StringContent(jsonBody, Encoding.UTF8, "application/json");
             }

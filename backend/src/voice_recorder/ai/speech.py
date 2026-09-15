@@ -32,6 +32,7 @@ class AzureSpeechTranscriber:
         transcribe_style: str,
         timeout_seconds: float,
         client: httpx.Client | None = None,
+        strict_response: bool = False,
     ) -> None:
         self._url = f"{endpoint.rstrip('/')}/speechtotext/transcriptions:transcribe"
         self._credential = credential
@@ -40,16 +41,21 @@ class AzureSpeechTranscriber:
         self._transcribe_style = transcribe_style
         self._timeout = timeout_seconds
         self._client = client or httpx.Client()
+        self._strict_response = strict_response
+
+    def close(self) -> None:
+        self._client.close()
 
     def transcribe(self, audio: bytes, *, hints: TranscriptionHints) -> str:
         definition: dict[str, Any] = {
-            "locales": [hints.language],
             "enhancedMode": {
                 "enabled": True,
                 "model": self._model,
                 "modelOptions": {"transcribeStyle": self._transcribe_style},
             },
         }
+        if hints.language != "auto":
+            definition["locales"] = [hints.language]
         if hints.phrases:
             definition["phraseList"] = {"phrases": list(hints.phrases)}
 
@@ -72,7 +78,7 @@ class AzureSpeechTranscriber:
         except (httpx.TimeoutException, httpx.TransportError, ClientAuthenticationError) as exc:
             raise TranscriptionError(str(exc)) from exc
 
-        if response.status_code >= 400:
+        if response.status_code >= 400 or (self._strict_response and not response.is_success):
             message = f"Azure Speech returned HTTP {response.status_code}: {response.text[:500]}"
             if response.status_code in _TRANSIENT_STATUS:
                 raise TranscriptionError(message)
@@ -83,6 +89,11 @@ class AzureSpeechTranscriber:
             combined = payload["combinedPhrases"]
             if not isinstance(combined, list):
                 raise TypeError("combinedPhrases must be a list")
+            if self._strict_response and any(
+                not isinstance(phrase, dict) or not isinstance(phrase.get("text"), str)
+                for phrase in combined
+            ):
+                raise TypeError("combinedPhrases entries must contain text")
             texts = [
                 phrase["text"].strip()
                 for phrase in combined

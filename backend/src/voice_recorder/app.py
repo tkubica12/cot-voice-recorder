@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -11,6 +12,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from .ai.protocols import Transcriber
+from .ai.speech import AzureSpeechTranscriber
 from .auth import TokenVerifier
 from .config import Settings, get_settings
 from .logging_config import configure_logging, get_logger, set_trace_id
@@ -18,8 +21,9 @@ from .problems import (
     ProblemError,
     ValidationProblemError,
 )
-from .routers import health, realtime, recordings, transcripts
+from .routers import dictation, health, realtime, recordings, transcripts
 from .services.context import ServiceContext
+from .services.dictation import DictationService
 
 logger = get_logger(__name__)
 
@@ -49,6 +53,7 @@ def create_app(
     settings: Settings | None = None,
     context: ServiceContext | None = None,
     verifier: TokenVerifier | None = None,
+    dictation_transcriber: Transcriber | None = None,
 ) -> FastAPI:
     settings = settings or (context.settings if context else get_settings())
     configure_logging(settings.log_level)
@@ -64,12 +69,24 @@ def create_app(
             app.state.context = build_context(settings)
             app.state.verifier = build_token_verifier(settings)
         app.state.settings = settings
+        from .bootstrap import build_dictation_transcriber
+
+        dictation_client = (
+            dictation_transcriber
+            if dictation_transcriber is not None
+            else build_dictation_transcriber(settings)
+        )
+        dictation_service = DictationService(dictation_client)
+        app.state.dictation = dictation_service
         app.state.ready = True
         logger.info("startup_complete", extra={"environment": settings.environment})
         try:
             yield
         finally:
             app.state.ready = False
+            await asyncio.to_thread(dictation_service.close)
+            if isinstance(dictation_client, AzureSpeechTranscriber):
+                dictation_client.close()
             logger.info("shutdown_complete")
 
     app = FastAPI(
@@ -89,6 +106,8 @@ def create_app(
         finally:
             pass
         response.headers["X-Request-Id"] = trace_id
+        if request.url.path == "/v1/dictation/transcribe":
+            response.headers["Cache-Control"] = "no-store"
         return response
 
     @app.exception_handler(ProblemError)
@@ -130,6 +149,7 @@ def create_app(
     app.include_router(recordings.router)
     app.include_router(transcripts.router)
     app.include_router(realtime.router)
+    app.include_router(dictation.router)
     return app
 
 
