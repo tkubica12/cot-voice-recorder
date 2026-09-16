@@ -5,7 +5,7 @@ using VoicePrompt.Core.Infrastructure;
 namespace VoicePrompt.Core.History;
 
 /// <summary>
-/// One locally cached transcript. Text only; dictation audio is never persisted.
+/// One locally cached transcript. Audio lives separately in the encrypted recovery journal.
 /// </summary>
 public sealed class HistoryEntry
 {
@@ -13,6 +13,10 @@ public sealed class HistoryEntry
     [JsonPropertyName("recording_id")] public string RecordingId { get; init; } = "";
     [JsonPropertyName("preview")] public string Preview { get; init; } = "";
     [JsonPropertyName("body")] public string Body { get; init; } = "";
+    [JsonPropertyName("raw_body")] public string? RawBody { get; init; }
+    [JsonPropertyName("refinement_fallback_blocks")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public int RefinementFallbackBlocks { get; init; }
     [JsonPropertyName("completed_at")] public DateTimeOffset CompletedAt { get; init; }
     [JsonPropertyName("cached_at")] public DateTimeOffset CachedAt { get; init; }
     [JsonPropertyName("character_count")] public int CharacterCount { get; init; }
@@ -125,6 +129,18 @@ public sealed class HistoryStore
         Changed?.Invoke();
     }
 
+    public void Remove(string transcriptId)
+    {
+        lock (_gate)
+        {
+            var items = LoadLocked();
+            var kept = items.Where(e => !string.Equals(e.TranscriptId, transcriptId, StringComparison.Ordinal)).ToList();
+            if (kept.Count == items.Count) return;
+            SaveLocked(kept);
+        }
+        Changed?.Invoke();
+    }
+
     private static List<HistoryEntry> Live(
         IEnumerable<HistoryEntry> items, DateTimeOffset now, TimeSpan retention, int max) =>
         items
@@ -162,7 +178,7 @@ public sealed class HistoryStore
 
     private void SaveLocked(List<HistoryEntry> items)
     {
-        _cache = items;
         _fs.AtomicWrite(_path, JsonSerializer.Serialize(items, Options));
+        _cache = items;
     }
 }

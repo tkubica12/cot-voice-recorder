@@ -20,6 +20,31 @@ namespace VoicePrompt.Core.Tests.Integration;
 /// </summary>
 public class EndToEndFlowTests
 {
+    [Fact]
+    public async Task Copy_original_uses_raw_local_text_without_network_or_automatic_paste()
+    {
+        await using var h = new Harness().Build();
+        h.History.Add(new HistoryEntry
+        {
+            TranscriptId = "dictation-raw", Body = "Cleaned.", RawBody = "Raw raw.",
+            CompletedAt = h.Clock.UtcNow,
+        });
+        Assert.Equal(ClipboardCopyResult.Copied,
+            await h.Coordinator.CopyOriginalAsync("dictation-raw", CancellationToken.None));
+        Assert.Equal("Raw raw.", h.Clipboard.LastText);
+        Assert.Empty(h.Handler.Requests);
+        Assert.Equal(ClipboardCopyResult.Copied,
+            await h.Coordinator.CopyAsync("dictation-raw", CancellationToken.None));
+        Assert.Equal("Cleaned.", h.Clipboard.LastText);
+        Assert.Equal(ClipboardCopyResult.Empty,
+            await h.Coordinator.CopyOriginalAsync("missing", CancellationToken.None));
+        h.History.Add(new HistoryEntry { TranscriptId = "legacy", Body = "Normal cached text.", CompletedAt = h.Clock.UtcNow });
+        Assert.Equal(ClipboardCopyResult.Empty,
+            await h.Coordinator.CopyOriginalAsync("legacy", CancellationToken.None));
+        Assert.Equal("Cleaned.", h.Clipboard.LastText);
+        Assert.Empty(h.Handler.Requests);
+    }
+
     private const string TranscriptBody = "Připomeň mi zítra ráno zavolat doktorovi ohledně výsledků.";
 
     private const string TranscriptJson = $$"""

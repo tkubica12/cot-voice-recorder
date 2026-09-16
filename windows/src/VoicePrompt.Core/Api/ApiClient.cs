@@ -1,7 +1,10 @@
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Text.Encodings.Web;
+using System.Text.Unicode;
 using VoicePrompt.Core.Infrastructure;
+using VoicePrompt.Core.Dictation;
 
 namespace VoicePrompt.Core.Api;
 
@@ -20,6 +23,10 @@ public sealed class ApiRetryOptions
 /// </summary>
 public sealed class ApiClient
 {
+    private static readonly JsonSerializerOptions DictationJson = new()
+    {
+        Encoder = JavaScriptEncoder.Create(UnicodeRanges.All),
+    };
     private readonly HttpClient _http;
     private readonly IBackendCredentials _credentials;
     private readonly ApiRetryOptions _retry;
@@ -60,6 +67,47 @@ public sealed class ApiClient
         public string? Text { get; init; }
     }
 
+    private sealed class RefinementResponse
+    {
+        [System.Text.Json.Serialization.JsonPropertyName("text")]
+        public string? Text { get; init; }
+        [System.Text.Json.Serialization.JsonPropertyName("edits")]
+        public RefinementEditResponse?[]? Edits { get; init; }
+    }
+
+    private sealed class RefinementEditResponse
+    {
+        [System.Text.Json.Serialization.JsonPropertyName("original")]
+        public string? Original { get; init; }
+        [System.Text.Json.Serialization.JsonPropertyName("replacement")]
+        public string? Replacement { get; init; }
+    }
+
+    public async Task<DictationRefinement> RefineDictationAsync(string text, string previousText, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(text) || text.Length > 4000)
+            throw new ArgumentException("Dictation refinement requires a nonempty block of at most 4000 characters.", nameof(text));
+        if (previousText is null || previousText.Length > 8000)
+            throw new ArgumentException("Dictation context must be at most 8000 characters.", nameof(previousText));
+        var payload = JsonSerializer.Serialize(new { text, previous_text = previousText }, DictationJson);
+        if (Encoding.UTF8.GetByteCount(payload) > 32 * 1024)
+            throw new ArgumentException("Dictation refinement payload exceeds 32 KiB.", nameof(text));
+        var result = await SendAsync<RefinementResponse>(
+            HttpMethod.Post, "/v1/dictation/refine", payload, ct, maxRetries: 0).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(result.Text) || result.Text.Length > 4000
+            || result.Edits is null || result.Edits.Length > 64)
+            throw new ApiException(ApiErrorKind.Unexpected, 200, null, "Invalid dictation refinement patch response. Update the backend.");
+        var edits = new List<DictationEdit>();
+        foreach (var edit in result.Edits)
+        {
+            if (edit is null || string.IsNullOrEmpty(edit.Original) || edit.Original.Length > 512
+                || edit.Replacement is null || edit.Replacement.Length > 512)
+                throw new ApiException(ApiErrorKind.Unexpected, 200, null, "Invalid dictation refinement edit.");
+            edits.Add(new(edit.Original, edit.Replacement));
+        }
+        return new(result.Text, edits);
+    }
+
     public async Task<NegotiateResponse> NegotiateAsync(string? platform, string? appVersion, CancellationToken ct)
     {
         var payload = JsonSerializer.Serialize(new
@@ -96,10 +144,11 @@ public sealed class ApiClient
 
     private async Task<T> SendAsync<T>(
         HttpMethod method, string path, string? jsonBody, CancellationToken ct,
-        Func<HttpContent>? bodyFactory = null)
+        Func<HttpContent>? bodyFactory = null, int? maxRetries = null)
     {
         var refreshedOnce = false;
         var attempt = 0;
+        var retryLimit = maxRetries ?? _retry.MaxRetries;
 
         while (true)
         {
@@ -131,7 +180,7 @@ public sealed class ApiClient
             catch (TaskCanceledException) when (!ct.IsCancellationRequested)
             {
                 // HttpClient timeout — treat as retryable.
-                if (attempt++ < _retry.MaxRetries)
+                if (attempt++ < retryLimit)
                 {
                     await _delay(_retry.Backoff(attempt), ct).ConfigureAwait(false);
                     continue;
@@ -141,7 +190,7 @@ public sealed class ApiClient
             }
             catch (HttpRequestException ex)
             {
-                if (attempt++ < _retry.MaxRetries)
+                if (attempt++ < retryLimit)
                 {
                     await _delay(_retry.Backoff(attempt), ct).ConfigureAwait(false);
                     continue;
@@ -175,7 +224,7 @@ public sealed class ApiClient
                     }
                 }
 
-                if (kind == ApiErrorKind.Retryable && attempt < _retry.MaxRetries)
+                if (kind == ApiErrorKind.Retryable && attempt < retryLimit)
                 {
                     attempt++;
                     await _delay(_retry.Backoff(attempt), ct).ConfigureAwait(false);

@@ -11,16 +11,27 @@ settings/history window lists recent transcripts; selecting an old one copies it
 **Windows dictation:** hold **Ctrl+Alt+Space**, speak into the default microphone, and release
 to paste. Current source adds **Ctrl+Alt+Shift+Space** for hands-free start/stop; focus the
 destination before stopping (it is selected at stop, not start). Both shortcuts are configurable.
-A fixed-size, non-activating overlay shows recent recognized words and saved/transcribed progress.
+A compact, non-activating overlay shows only the recording state and three lines of recent
+recognized text, without saved/transcribed/pending counters or AI progress details.
 **Esc** discards. Long sessions no longer stop at five minutes: audio checkpoints are encrypted
 with current-user DPAPI about every two seconds, with a 48-hour recovery retention and a
 256 MiB recovery-store limit. Cloud failures retain a durable backlog. Open **Recovery** to
 finish interrupted audio into History, without automatic paste. Clipboard/History are the
-normal paste fallback. **MAI-Transcribe-2 in Azure** uses `clean` style with no additional LLM
-cleanup call; automatic language detection remains the default.
+normal paste fallback. **MAI-Transcribe-2 in Azure** uses `clean` style; automatic language
+detection remains the default.
 Windows **1.3.1** includes long-session recovery, hands-free mode and improved short-word
 deduplication at overlapping chunk boundaries. Repetitions inside individual chunks are left
 unchanged; this is not an LLM rewrite.
+**New in 1.4.2:** optional **Polish dictation with GPT-5.6 Luna** in
+Settings is off by default. It sends small text blocks and preceding context through the
+authenticated backend while capture continues, using overlapping text windows rather than
+audio-chunk boundaries or a whole-transcript rewrite. The overlay shows recent text.
+Stop schedules no new AI request and never waits for AI; available edits are
+combined with the original ending after MAI finishes. Short dictations may remain entirely
+original. This normal unprocessed tail does not produce a failure warning. History reports
+actual AI failures and offers **Copy original** alongside normal copying.
+Both versions are in the existing unencrypted, 48-hour local text cache. AI can still make
+mistakes; Recovery restores raw MAI text without running cleanup or pasting.
 The updated backend is required. See [dictation design, safeguards, tests and rollback](../docs/windows-dictation.md).
 
 - **Contract:** [`../openapi/voice-recorder.yaml`](../openapi/voice-recorder.yaml).
@@ -74,7 +85,8 @@ the realtime loop stays idle, and no placeholder credentials are minted. This is
 state CI builds and tests in.
 
 Other settings live in `%LOCALAPPDATA%\VoicePrompt\settings.json` and are editable in the
-window (backend URL, auto-start, pause notifications, dictation shortcut/language).
+window (backend URL, auto-start, pause notifications, dictation shortcuts/language and
+optional AI cleanup). Apply dictation settings while no session is running.
 
 ## Build
 
@@ -162,13 +174,17 @@ Silent install / uninstall:
   for the redirect and validates the `state` value. No embedded web view is ever used.
 - **History:** double-click, <kbd>Enter</kbd>, or <kbd>Ctrl</kbd>+<kbd>C</kbd> copies the
   selected transcript. *Copy latest* and manual copies work **even while notifications are
-  paused**. <kbd>Esc</kbd> hides the window; <kbd>F5</kbd> refreshes history from the backend.
+  paused**. For AI-processed dictation, **Copy original** copies the unpolished MAI text
+  without another model request or automatic paste. <kbd>Esc</kbd> hides the window;
+  <kbd>F5</kbd> refreshes history from the backend.
 - **Pause notifications:** transcripts are still fetched and cached, but nothing is copied
   automatically and no toast is shown.
 - **Dictation:** works independently of notification pause. Keep the same target focused;
   a window/focus change skips auto-paste and leaves text on the clipboard and in History.
-  Allow desktop microphone access in Windows privacy settings. Five-minute limit per session.
-  Dictation capture never saves audio to disk, and no model credentials are installed locally.
+  Allow desktop microphone access in Windows privacy settings. No five-minute session limit;
+  audio checkpoints are encrypted on disk until completion/discard/expiry. No model credentials
+  are installed locally. Optional AI cleanup requires the updated backend endpoint; an old
+  backend keeps raw text and reports incomplete cleanup rather than blocking dictation.
 
 ## How it works
 
@@ -190,7 +206,8 @@ Silent install / uninstall:
   only.
 - **API rules.** Exactly one refresh + retry on `401`; `403` is terminal; `429`/`5xx`/timeouts /
   network errors retry with bounded backoff; error bodies are parsed as RFC 9457
-  `application/problem+json`.
+  `application/problem+json`. Optional dictation cleanup deliberately has no transient retries;
+  only the existing one-time authentication refresh remains.
 - **Cache.** `history.json` under LocalAppData, written atomically (temp file + replace), pruned
   to the newest 200 entries and a **48-hour** retention window on startup and every 30 minutes.
   **No audio is ever stored.**

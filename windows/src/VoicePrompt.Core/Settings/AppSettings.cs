@@ -31,6 +31,9 @@ public sealed class AppSettings
     [JsonPropertyName("dictation_language")]
     public string DictationLanguage { get; set; } = "auto";
 
+    [JsonPropertyName("dictation_refinement_enabled")]
+    public bool DictationRefinementEnabled { get; set; }
+
     public const string DefaultBackendBaseUrl =
         "https://ca-api.ambitiousdesert-517ec9ed.swedencentral.azurecontainerapps.io";
 
@@ -43,6 +46,7 @@ public sealed class AppSettings
         DictationShortcut = DictationShortcut,
         DictationToggleShortcut = DictationToggleShortcut,
         DictationLanguage = DictationLanguage,
+        DictationRefinementEnabled = DictationRefinementEnabled,
     };
 
     /// <summary>Normalize and validate the backend URL, falling back to the default.</summary>

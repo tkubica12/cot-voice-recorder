@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from fastapi.testclient import TestClient
 
-from voice_recorder.ai.fakes import FakeRefiner, FakeTranscriber
+from voice_recorder.ai.fakes import FakeDictationRefiner, FakeRefiner, FakeTranscriber
 from voice_recorder.app import create_app
 from voice_recorder.auth import AuthenticatedUser, StaticTokenVerifier
 from voice_recorder.config import Settings
@@ -163,6 +163,7 @@ def client(
         context=context,
         verifier=verifier,
         dictation_transcriber=dictation_transcriber,
+        dictation_refiner=FakeDictationRefiner(),
     )
     with TestClient(app) as test_client:
         yield test_client

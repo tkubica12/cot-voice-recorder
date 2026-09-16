@@ -23,6 +23,7 @@ public sealed class HistoryRow
     public required string TranscriptId { get; init; }
     public required string Preview { get; init; }
     public required string Meta { get; init; }
+    public bool HasOriginal { get; init; }
 
     /// <summary>Announced by screen readers for the list item.</summary>
     public override string ToString() => $"{Preview}. {Meta}";
@@ -52,6 +53,7 @@ public partial class MainWindow : Window
         AutoStartCheck.IsChecked = _host.Settings.AutoStart;
         PauseCheck.IsChecked = _host.Settings.NotificationsPaused;
         DictationEnabledCheck.IsChecked = _host.Settings.DictationEnabled;
+        DictationRefinementCheck.IsChecked = _host.Settings.DictationRefinementEnabled;
         DictationShortcutBox.Text = _host.Settings.DictationShortcut;
         DictationToggleShortcutBox.Text = _host.Settings.DictationToggleShortcut;
         DictationLanguageBox.SelectedIndex = _host.Settings.DictationLanguage switch { "cs" => 1, "en" => 2, _ => 0 };
@@ -59,6 +61,7 @@ public partial class MainWindow : Window
             $"VoicePrompt {AppHost.AppVersion} · .NET 8 · framework-dependent x64\n" +
             $"Local data: {_host.Paths.Root}\n" +
             "Transcripts are cached locally for 48 hours. Dictation audio is sent to MAI in Azure. "
+            + "Optional AI cleanup sends text and context to the backend's cloud LLM. Both text versions remain in the existing unencrypted History cache. "
             + "Recovery audio/text is encrypted with Windows DPAPI for this user, retained for 48 hours, and removed after successful completion or explicit discard.";
 
         CommandBindings.Add(new CommandBinding(HideWindowCommand, (_, _) => HideToTray()));
@@ -188,7 +191,9 @@ public partial class MainWindow : Window
         {
             TranscriptId = entry.TranscriptId,
             Preview = string.IsNullOrWhiteSpace(entry.Preview) ? "(no preview)" : entry.Preview,
-            Meta = $"{local:g} · {entry.CharacterCount} chars · {remaining}",
+            Meta = $"{local:g} · {entry.CharacterCount} chars · {remaining}"
+                + (entry.RawBody is null ? "" : entry.RefinementFallbackBlocks > 0 ? " · AI errors; original available" : " · Background AI; ending may be original"),
+            HasOriginal = entry.RawBody is not null,
         };
     }
 
@@ -211,6 +216,18 @@ public partial class MainWindow : Window
     }
 
     private void OnCopySelected(object sender, RoutedEventArgs e) => _ = CopySelectedAsync();
+
+    private void OnHistorySelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (CopyOriginalButton is not null)
+            CopyOriginalButton.IsEnabled = HistoryList.SelectedItem is HistoryRow { HasOriginal: true };
+    }
+
+    private async void OnCopyOriginal(object sender, RoutedEventArgs e)
+    {
+        if (HistoryList.SelectedItem is HistoryRow { HasOriginal: true } row)
+            ReportCopy(await _host.Coordinator.CopyOriginalAsync(row.TranscriptId, CancellationToken.None));
+    }
 
     private async Task CopySelectedAsync()
     {
@@ -416,6 +433,7 @@ public partial class MainWindow : Window
         try
         {
             _host.Settings.DictationEnabled = DictationEnabledCheck.IsChecked == true;
+            _host.Settings.DictationRefinementEnabled = DictationRefinementCheck.IsChecked == true;
             _host.Settings.DictationShortcut = DictationShortcutBox.Text.Trim();
             _host.Settings.DictationToggleShortcut = DictationToggleShortcutBox.Text.Trim();
             _host.Settings.DictationLanguage = DictationLanguageBox.SelectedIndex switch { 1 => "cs", 2 => "en", _ => "auto" };
@@ -431,6 +449,7 @@ public partial class MainWindow : Window
             _host.Settings.DictationShortcut = before.DictationShortcut;
             _host.Settings.DictationToggleShortcut = before.DictationToggleShortcut;
             _host.Settings.DictationLanguage = before.DictationLanguage;
+            _host.Settings.DictationRefinementEnabled = before.DictationRefinementEnabled;
             _host.Log.Warn($"dictation: settings failed ({ex.GetType().Name})");
             DictationStatusText.Text = "Could not save dictation settings. Use an available shortcut including Ctrl or Alt.";
             try { _dictation.Configure(); }

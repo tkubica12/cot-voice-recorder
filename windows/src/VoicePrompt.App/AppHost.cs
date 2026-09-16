@@ -24,7 +24,7 @@ namespace VoicePrompt.App;
 /// </summary>
 public sealed class AppHost : IAsyncDisposable, IDictationHost
 {
-    public const string AppVersion = "1.3.1";
+    public const string AppVersion = "1.4.2";
 
     private static readonly TimeSpan CleanupInterval = TimeSpan.FromMinutes(30);
 
@@ -32,6 +32,7 @@ public sealed class AppHost : IAsyncDisposable, IDictationHost
     private readonly HttpClient _apiHttp;
     private readonly HttpClient _tokenHttp;
     private HttpClient? _dictationHttp;
+    private HttpClient? _refinementHttp;
     private readonly bool _firstRun;
     private Task? _cleanupLoop;
 
@@ -81,12 +82,15 @@ public sealed class AppHost : IAsyncDisposable, IDictationHost
     public RealtimeClient Realtime { get; }
     public IAutoStartManager AutoStart { get; }
     public ApiClient DictationApi { get; private set; } = null!;
+    public ApiClient DictationRefinementApi { get; private set; } = null!;
     public bool DictationBusy { get; set; }
     public RecoveryStore Recovery { get; private set; } = null!;
     public string RecoveryContext => Settings.BackendBaseUrl + "\n" + Auth.Status.Email;
     bool IDictationHost.CanDictate => Auth.Status.CanCallBackend;
     Task<string> IDictationHost.TranscribeAsync(byte[] wav, string language, CancellationToken ct) =>
         DictationApi.TranscribeDictationAsync(wav, language, ct);
+    Task<DictationRefinement> IDictationHost.RefineAsync(string text, string previousText, CancellationToken ct) =>
+        DictationRefinementApi.RefineDictationAsync(text, previousText, ct);
 
     /// <summary>False when no Desktop OAuth client JSON was found (safe unconfigured state).</summary>
     public bool OAuthConfigured { get; }
@@ -154,6 +158,10 @@ public sealed class AppHost : IAsyncDisposable, IDictationHost
         host.Recovery = new RecoveryStore(paths.RecoveryDirectory, protector, clock);
         host.DictationApi = new ApiClient(host._dictationHttp, new AuthBackendCredentials(auth),
             new ApiRetryOptions { MaxRetries = 1 },
+            baseUrl: () => new Uri(settings.BackendBaseUrl + "/"));
+        host._refinementHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(9) };
+        host.DictationRefinementApi = new ApiClient(host._refinementHttp, new AuthBackendCredentials(auth),
+            new ApiRetryOptions { MaxRetries = 0 },
             baseUrl: () => new Uri(settings.BackendBaseUrl + "/"));
         return host;
     }
@@ -257,6 +265,7 @@ public sealed class AppHost : IAsyncDisposable, IDictationHost
 
         _apiHttp.Dispose();
         _dictationHttp?.Dispose();
+        _refinementHttp?.Dispose();
         _tokenHttp.Dispose();
         _shutdown.Dispose();
         Log.Info("host: stopped");

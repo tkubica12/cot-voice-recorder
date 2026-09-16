@@ -30,12 +30,8 @@ public sealed class DictationIndicator : Window
     private readonly TextBlock _preview = new()
     {
         Foreground = Brushes.White, FontSize = 14, TextWrapping = TextWrapping.Wrap,
-        TextTrimming = TextTrimming.CharacterEllipsis, Height = 62, Margin = new Thickness(12, 8, 12, 4),
-    };
-    private readonly TextBlock _status = new()
-    {
-        Foreground = Brushes.LightGray, FontSize = 11, TextWrapping = TextWrapping.Wrap,
-        Margin = new Thickness(12, 0, 12, 8),
+        TextTrimming = TextTrimming.CharacterEllipsis, Height = 60, LineHeight = 20,
+        LineStackingStrategy = LineStackingStrategy.BlockLineHeight, Margin = new Thickness(12, 8, 12, 12),
     };
     private readonly DispatcherTimer _dismiss = new() { Interval = TimeSpan.FromMilliseconds(900) };
 
@@ -43,7 +39,7 @@ public sealed class DictationIndicator : Window
     {
         Title = "VoicePrompt dictation";
         Width = 440;
-        Height = 142;
+        Height = 112;
         WindowStyle = WindowStyle.None;
         ResizeMode = ResizeMode.NoResize;
         ShowInTaskbar = false;
@@ -58,7 +54,6 @@ public sealed class DictationIndicator : Window
         var panel = new StackPanel();
         panel.Children.Add(header);
         panel.Children.Add(_preview);
-        panel.Children.Add(_status);
         _dismiss.Tick += (_, _) => { _dismiss.Stop(); Hide(); };
         Content = new Border
         {
@@ -74,13 +69,12 @@ public sealed class DictationIndicator : Window
         };
     }
 
-    public void Present(string text, double level = 0, bool recording = true, string preview = "", string status = "",
+    public void Present(string text, double level = 0, bool recording = true, string preview = "",
         bool dismiss = false)
     {
         _dismiss.Stop();
         _text.Text = text;
         _preview.Text = string.IsNullOrWhiteSpace(preview) ? "Recognized words will appear here as you speak." : preview;
-        _status.Text = status;
         _dot.Fill = recording ? Brushes.OrangeRed : Brushes.DodgerBlue;
         _dot.Opacity = recording ? 0.5 + level * 0.5 : 1;
         var area = SystemParameters.WorkArea;

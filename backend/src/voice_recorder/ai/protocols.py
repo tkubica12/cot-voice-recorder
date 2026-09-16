@@ -39,3 +39,9 @@ class Transcriber(Protocol):
 
 class Refiner(Protocol):
     def refine(self, raw_text: str, *, deployment: str) -> str: ...
+
+
+class DictationRefiner(Protocol):
+    def propose_edits(self, text: str, *, previous_text: str) -> str: ...
+
+    def close(self) -> None: ...

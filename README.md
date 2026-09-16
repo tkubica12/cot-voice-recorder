@@ -8,15 +8,22 @@ transcribe and lightly clean it up, then paste the result from the Windows clipb
 GitHub Copilot, Copilot, Claude, or any other AI tool.
 
 **Windows dictation:** hold **Ctrl+Alt+Space** while speaking, then release to paste.
-The current source also supports **Ctrl+Alt+Shift+Space** to start/stop hands-free: switch
+Press **Ctrl+Alt+Shift+Space** to start/stop hands-free: switch
 windows freely, then focus the intended destination **before stopping**. The non-activating
 overlay previews recent words; **Esc** discards. MAI transcribes short chunks in Azure while
-you speak, without an extra LLM cleanup step. There is no five-minute stop: encrypted local
+you speak. There is no five-minute stop: encrypted local
 checkpoints and a **Recovery** tab protect long/interrupted dictations. Recovery never
 pastes automatically. Clipboard/History remain the fallback if paste is skipped.
 Windows **1.3.1** includes these features and improved overlap-boundary deduplication for
 short words such as "to" and "that". It does not remove repetitions inside individual chunks
 or use a separate LLM cleanup call.
+**New in Windows 1.4.2:** a compact overlay shows only the recording state and three lines
+of recent text, without saved/transcribed/pending counters. Settings offers optional
+**Polish dictation with GPT-5.6 Luna**, off by default. It cleans small text blocks while you
+speak using overlapping text windows spanning multiple audio chunks. Stop sends no new AI
+request and does not wait for AI: one final paste combines available edits with the original
+ending. Short dictations may remain entirely original; that is not an error. History keeps
+both versions with **Copy original**. This requires the updated backend and Windows build.
 See the [dictation architecture and operating guide](docs/windows-dictation.md).
 
 ## Downloads

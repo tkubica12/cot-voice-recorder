@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.Json;
 using VoicePrompt.Core.Api;
 using VoicePrompt.Core.Tests.Fakes;
 using Xunit;
@@ -104,6 +105,89 @@ public class ApiClientTests
     }
 
     // ------------------------------------------------------------------ happy paths
+
+    [Fact]
+    public async Task Dictation_refinement_sends_only_current_text_and_context_with_existing_auth()
+    {
+        var (client, handler, _) = Build(new FakeHttpMessageHandler()
+            .EnqueueJson(HttpStatusCode.OK, """{"text":"Keep port 8443.","edits":[{"original":"Keep keep","replacement":"Keep"}]}"""));
+        var result = await client.RefineDictationAsync("Keep keep port 8443.", "Previous sentence.", CancellationToken.None);
+        Assert.Equal("Keep port 8443.", result.Text);
+        Assert.Equal("Keep keep", Assert.Single(result.Edits).Original);
+        Assert.Equal("Keep", result.Edits[0].Replacement);
+        Assert.Equal("/v1/dictation/refine", handler.Requests.Single().RequestUri!.AbsolutePath);
+        Assert.Equal(HttpMethod.Post, handler.Requests.Single().Method);
+        Assert.Equal("token-1", handler.AuthorizationValues.Single());
+        using var body = JsonDocument.Parse(handler.RequestBodies.Single());
+        Assert.Equal(2, body.RootElement.EnumerateObject().Count());
+        Assert.Equal("Keep keep port 8443.", body.RootElement.GetProperty("text").GetString());
+        Assert.Equal("Previous sentence.", body.RootElement.GetProperty("previous_text").GetString());
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    [InlineData(HttpStatusCode.NotFound)]
+    public async Task Optional_refinement_never_retries_model_or_missing_route_errors(HttpStatusCode status)
+    {
+        var (client, handler, _) = Build(new FakeHttpMessageHandler().EnqueueJson(status, "{}"));
+        await Assert.ThrowsAsync<ApiException>(() => client.RefineDictationAsync("Raw text.", "", CancellationToken.None));
+        Assert.Single(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("""{"text":null}""")]
+    [InlineData("""{"text":""}""")]
+    [InlineData("""{"text":"  "}""")]
+    [InlineData("""{"text":"Raw text."}""")]
+    [InlineData("""{"text":"Raw text.","edits":null}""")]
+    [InlineData("""{"text":"Raw text.","edits":[null]}""")]
+    [InlineData("""{"text":"Raw text.","edits":[{"original":"","replacement":"x"}]}""")]
+    [InlineData("""{"text":"Raw text.","edits":[{"original":"Raw","replacement":null}]}""")]
+    public async Task Refinement_rejects_missing_or_empty_results(string response)
+    {
+        var (client, _, _) = Build(new FakeHttpMessageHandler().EnqueueJson(HttpStatusCode.OK, response));
+        await Assert.ThrowsAsync<ApiException>(() => client.RefineDictationAsync("Raw text.", "", CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Refinement_bounds_inputs_and_obeys_cancellation_before_sending()
+    {
+        var (client, handler, _) = Build();
+        await Assert.ThrowsAsync<ArgumentException>(() => client.RefineDictationAsync(new string('x', 4001), "", CancellationToken.None));
+        await Assert.ThrowsAsync<ArgumentException>(() => client.RefineDictationAsync("text", new string('x', 8001), CancellationToken.None));
+        await Assert.ThrowsAsync<ArgumentException>(() => client.RefineDictationAsync(" ", "", CancellationToken.None));
+        await Assert.ThrowsAsync<ArgumentException>(() => client.RefineDictationAsync(
+            new string('\u4e00', 4000), new string('\u4e00', 8000), CancellationToken.None));
+        using var cancel = new CancellationTokenSource();
+        cancel.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.RefineDictationAsync("text", "", cancel.Token));
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task Refinement_retains_one_401_refresh_without_transient_retries()
+    {
+        var (client, handler, credentials) = Build(new FakeHttpMessageHandler()
+            .EnqueueJson(HttpStatusCode.Unauthorized, "{}")
+            .EnqueueJson(HttpStatusCode.OK, """{"text":"Clean text.","edits":[{"original":"Raw","replacement":"Clean"}]}"""));
+        Assert.Equal("Clean text.", (await client.RefineDictationAsync("Raw text.", "", CancellationToken.None)).Text);
+        Assert.Equal(2, handler.Requests.Count);
+        Assert.Equal(handler.RequestBodies[0], handler.RequestBodies[1]);
+        Assert.Equal(1, credentials.RefreshCalls);
+    }
+
+    [Fact]
+    public async Task Refinement_does_not_retry_transport_failures()
+    {
+        foreach (var error in new Exception[] { new HttpRequestException("Offline"), new TaskCanceledException("Timeout") })
+        {
+            var (client, handler, _) = Build(new FakeHttpMessageHandler().EnqueueThrow(error));
+            await Assert.ThrowsAsync<ApiException>(() => client.RefineDictationAsync("Raw text.", "", CancellationToken.None));
+            Assert.Single(handler.Requests);
+        }
+    }
 
     [Fact]
     public async Task GetTranscriptAsync_deserialises_the_openapi_shape()

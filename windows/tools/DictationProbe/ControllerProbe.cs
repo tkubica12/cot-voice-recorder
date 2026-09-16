@@ -28,10 +28,11 @@ internal static class ControllerProbe
         var desktop = new ProbeDesktop();
         var clipboard = new ProbeClipboard();
         var targetSnapshots = 0;
+        var polishClock = new ProbeTimeProvider();
         await using var controller = new DictationController(host, notifications, Dispatcher.CurrentDispatcher,
             hotkey, () => { starts++; return capture = new ReplayCapture(); },
             (text, ct) => DictationDelivery.DeliverAsync(text, desktop, new ClipboardCopier(clipboard), ct),
-            () => { targetSnapshots++; return desktop; }, TimeSpan.FromMilliseconds(700));
+            () => { targetSnapshots++; return desktop; }, TimeSpan.FromMilliseconds(700), polishClock);
         controller.Configure();
 
         void Message(int id = 0x5640) => SendMessage(hotkey.Handle, 0x0312, new IntPtr(id),
@@ -188,6 +189,159 @@ internal static class ControllerProbe
         Require(desktop.Pastes == 3 && host.Recovery.List().Count == 0,
             "Paced capture was not delivered or left unfinished recovery data.");
         Console.WriteLine($"PASS controller: 12-second paced DPAPI capture, live preview, bounded checkpoints; stop-to-complete {tailLatency.ElapsedMilliseconds} ms (controlled transcription).");
+
+        Require(host.RefinementCalls == 0, "Default settings unexpectedly sent text for AI cleanup.");
+        host.Settings.DictationRefinementEnabled = true;
+        host.Refiner = (text, _, _) => Task.FromResult(Edit(text, "cloud.", "cloud!"));
+        var pastesBefore = desktop.Pastes;
+        var noticesBefore = notifications.Messages.Count;
+        controller.Start();
+        capture!.Emit(VoiceFrame());
+        controller.Stop();
+        await UntilAsync(() => !controller.IsBusy);
+        Require(host.RefinementCalls == 0 && clipboard.Text == ProbeHost.Transcript
+            && host.History.Latest()!.RefinementFallbackBlocks == 0
+            && notifications.Messages.Count == noticesBefore,
+            "Short dictation sent a final AI request or reported the normal raw tail as a failure.");
+
+        async Task StartBackgroundCapture()
+        {
+            var before = host.RefinementCalls;
+            controller.Start();
+            for (var frame = 0; frame < 165; frame++)
+            {
+                await Task.Run(() => capture!.Emit(VoiceFrame()));
+                await Task.Delay(10);
+            }
+            await UntilAsync(() => !string.IsNullOrEmpty(controller.PolishProgress?.Text));
+            polishClock.Advance(TimeSpan.FromSeconds(15));
+            await UntilAsync(() => host.RefinementCalls > before);
+            Require(controller.IsRecording, "Background request started after Stop.");
+        }
+
+        pastesBefore = desktop.Pastes;
+        await StartBackgroundCapture();
+        await UntilAsync(() => controller.PolishProgress?.Text.Contains("cloud!", StringComparison.Ordinal) == true);
+        var callsAtStop = host.RefinementCalls;
+        controller.Stop();
+        await UntilAsync(() => !controller.IsBusy);
+        Require(desktop.Pastes == pastesBefore + 1 && clipboard.Text == "Dictation through the cloud!",
+            "Refined dictation was not pasted exactly once.");
+        Require(host.History.Latest() is { RawBody: ProbeHost.Transcript, Body: "Dictation through the cloud!", RefinementFallbackBlocks: 0 },
+            "Raw and polished text were not both saved.");
+        Require(notifications.Messages.Count == noticesBefore, "Successful AI cleanup warned unexpectedly.");
+        Require(host.RefinementCalls == callsAtStop, "Stop sent a new AI request.");
+
+        host.Refiner = (_, _, _) => Task.FromException<DictationRefinement>(new HttpRequestException("Injected refinement failure."));
+        await StartBackgroundCapture();
+        await UntilAsync(() => controller.PolishProgress?.FallbackBlocks == 1);
+        controller.Stop();
+        await UntilAsync(() => !controller.IsBusy);
+        Require(clipboard.Text == ProbeHost.Transcript && host.History.Latest()!.RefinementFallbackBlocks == 1,
+            "AI failure lost the raw dictation or was not marked as fallback.");
+        Require(notifications.Messages.Count == noticesBefore + 1,
+            "AI failure did not produce exactly one aggregated warning.");
+
+        var late = new TaskCompletionSource<DictationRefinement>(TaskCreationOptions.RunContinuationsAsynchronously);
+        host.Refiner = (_, _, _) => late.Task;
+        await StartBackgroundCapture();
+        var callsBefore = host.RefinementCalls;
+        noticesBefore = notifications.Messages.Count;
+        var budget = Stopwatch.StartNew();
+        controller.Stop();
+        await UntilAsync(() => !controller.IsBusy);
+        Require(budget.Elapsed < TimeSpan.FromSeconds(1.5), "Stop waited for a stalled background LLM.");
+        Require(host.RefinementCalls == callsBefore && host.History.Latest()!.RefinementFallbackBlocks == 0
+            && notifications.Messages.Count == noticesBefore,
+            "Stop scheduled another request or reported unfinished work as an AI error.");
+        pastesBefore = desktop.Pastes;
+        var savedId = host.History.Latest()!.TranscriptId;
+        late.SetResult(Edit(ProbeHost.Transcript, "cloud.", "cloud!"));
+        await Task.Delay(100);
+        Require(desktop.Pastes == pastesBefore && clipboard.Text == ProbeHost.Transcript
+            && host.History.Get(savedId)!.Body == ProbeHost.Transcript,
+            "A late AI result changed the clipboard or persisted transcript.");
+        Console.WriteLine($"PASS controller: background-only cleanup, no request at Stop, expected raw tail without warning, stop {budget.ElapsedMilliseconds} ms, no late paste.");
+
+        var cancelled = new TaskCompletionSource<DictationRefinement>(TaskCreationOptions.RunContinuationsAsynchronously);
+        host.Refiner = (_, _, _) => cancelled.Task;
+        var historyBefore = host.History.All().Count;
+        await StartBackgroundCapture();
+        controller.Cancel();
+        await UntilAsync(() => !controller.IsBusy);
+        cancelled.SetResult(Edit(ProbeHost.Transcript, "cloud.", "cloud!"));
+        await Task.Delay(100);
+        Require(desktop.Pastes == pastesBefore && host.History.All().Count == historyBefore
+            && host.Recovery.List().Count == 0, "Escape during AI cleanup left text behind or pasted.");
+
+        var interrupted = new TaskCompletionSource<DictationRefinement>(TaskCreationOptions.RunContinuationsAsynchronously);
+        host.Refiner = (_, _, _) => interrupted.Task;
+        await StartBackgroundCapture();
+        host.RecoveryContext = "different account/backend";
+        await controller.InterruptAsync();
+        interrupted.SetResult(Edit(ProbeHost.Transcript, "cloud.", "cloud!"));
+        Require(desktop.Pastes == pastesBefore && host.Recovery.List().Count == 1,
+            "Account interruption during cleanup pasted or lost recoverable raw text.");
+        host.RecoveryContext = ProbeHost.DefaultContext;
+        callsBefore = host.RefinementCalls;
+        await controller.RecoverAsync(host.Recovery.List().Single().Id);
+        Require(host.RefinementCalls == callsBefore && host.History.Latest()!.RawBody is null
+            && desktop.Pastes == pastesBefore, "Explicit Recovery unexpectedly polished or pasted.");
+        Console.WriteLine("PASS controller: Escape discards while AI is pending; interruption preserves raw recovery; Recovery never sends AI cleanup.");
+
+        host.TranscriptResult = string.Join(" ", Enumerable.Range(1, 100).Select(i => $"word{i}")) + ".";
+        var background = new TaskCompletionSource<DictationRefinement>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var backgroundStarted = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var observedWhileListening = false;
+        host.Refiner = (text, previous, _) =>
+        {
+            observedWhileListening = controller.IsRecording;
+            Require(previous.Length <= 8000 && text.Length <= 4000, "Controller exceeded the text-block contract.");
+            backgroundStarted.TrySetResult(text);
+            return background.Task;
+        };
+        callsBefore = host.RefinementCalls;
+        pastesBefore = desktop.Pastes;
+        controller.Start();
+        for (var frame = 0; frame < 165; frame++)
+        {
+            await Task.Run(() => capture!.Emit(VoiceFrame()));
+            await Task.Delay(10);
+        }
+        await UntilAsync(() => backgroundStarted.Task.IsCompleted);
+        Require(observedWhileListening && controller.IsRecording && desktop.Pastes == pastesBefore,
+            "Text cleanup did not start during capture, or pasted before stop.");
+        background.SetResult(new(await backgroundStarted.Task, []));
+        host.Refiner = (text, _, _) => Task.FromResult(new DictationRefinement(text, []));
+        controller.Stop();
+        await UntilAsync(() => !controller.IsBusy);
+        Require(desktop.Pastes == pastesBefore + 1 && host.History.Latest()!.RawBody is not null,
+            "Background cleanup failed to produce one final history-backed delivery.");
+        Console.WriteLine("PASS controller: live ASR progress triggers AI cleanup while still Listening, without incremental paste.");
+
+        host.TranscriptResult = ProbeHost.Transcript;
+        host.FailNextHistoryWrite = true;
+        callsBefore = host.RefinementCalls;
+        pastesBefore = desktop.Pastes;
+        controller.Start();
+        capture!.Emit(VoiceFrame());
+        controller.Stop();
+        await UntilAsync(() => !controller.IsBusy);
+        Require(desktop.Pastes == pastesBefore && host.RefinementCalls == callsBefore
+            && host.Recovery.List().Count == 1, "Failed raw History save still polished/pasted or lost recovery.");
+        await controller.RecoverAsync(host.Recovery.List().Single().Id);
+
+        host.FailHistoryWriteAfter = 1;
+        controller.Start();
+        capture!.Emit(VoiceFrame());
+        controller.Stop();
+        await UntilAsync(() => !controller.IsBusy);
+        Require(desktop.Pastes == pastesBefore && host.Recovery.List().Count == 1
+            && host.ReadPersistedHistory().Latest()!.Body == ProbeHost.Transcript
+            && host.History.Latest()!.Body == ProbeHost.Transcript,
+            "Failed polished History save pasted unsaved text or hid the durable raw copy.");
+        await controller.RecoverAsync(host.Recovery.List().Single().Id);
+        Console.WriteLine("PASS controller: disk failures before and after AI prevent paste and retain durable raw recovery.");
     }
 
     internal static int RunEditor(byte[] pcm, Func<byte[], CancellationToken, Task<string>> transcribe)
@@ -287,6 +441,18 @@ internal static class ControllerProbe
         if (!condition) throw new InvalidOperationException(message);
     }
 
+    private static DictationRefinement Edit(string text, string original, string replacement) =>
+        new(text.Replace(original, replacement, StringComparison.Ordinal), [new(original, replacement)]);
+
+    private sealed class ProbeTimeProvider : TimeProvider
+    {
+        private long _ticks;
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+        public override long GetTimestamp() => Interlocked.Read(ref _ticks);
+        public override DateTimeOffset GetUtcNow() => DateTimeOffset.UnixEpoch.AddTicks(GetTimestamp());
+        public void Advance(TimeSpan elapsed) => Interlocked.Add(ref _ticks, elapsed.Ticks);
+    }
+
     private sealed class ReplayCapture : IWaveIn
     {
         public WaveFormat WaveFormat { get; set; } = new(16000, 16, 1);
@@ -314,11 +480,12 @@ internal static class ControllerProbe
         internal const string Transcript = "Dictation through the cloud.";
         private readonly string _root = Path.Combine(Path.GetTempPath(), "VoicePrompt-probe-" + Guid.NewGuid().ToString("N"));
         private readonly Func<byte[], CancellationToken, Task<string>>? _transcribe;
+        private readonly ProbeHistoryFiles _historyFiles = new();
         public ProbeHost(Func<byte[], CancellationToken, Task<string>>? transcribe = null)
         {
             _transcribe = transcribe;
             Directory.CreateDirectory(_root);
-            History = new HistoryStore(Path.Combine(_root, "history.json"), PhysicalFileSystem.Instance, Clock);
+            History = new HistoryStore(Path.Combine(_root, "history.json"), _historyFiles, Clock);
             Recovery = new RecoveryStore(Path.Combine(_root, "recovery"), new DpapiSecretProtector(), Clock);
         }
         public AppSettings Settings { get; } = new()
@@ -332,6 +499,14 @@ internal static class ControllerProbe
         public bool CanDictate => true;
         public bool DictationBusy { get; set; }
         public bool FailRequests { get; set; }
+        public bool FailNextHistoryWrite { set => _historyFiles.FailNextWrite = value; }
+        public int FailHistoryWriteAfter { set => _historyFiles.FailAfter = value; }
+        public HistoryStore ReadPersistedHistory() =>
+            new(Path.Combine(_root, "history.json"), PhysicalFileSystem.Instance, Clock);
+        public string TranscriptResult { get; set; } = Transcript;
+        public Func<string, string, CancellationToken, Task<DictationRefinement>>? Refiner { get; set; }
+        private int _refinementCalls;
+        public int RefinementCalls => Volatile.Read(ref _refinementCalls);
         public HistoryStore History { get; }
         public IClock Clock => SystemClock.Instance;
         public ILog Log => NullLog.Instance;
@@ -340,7 +515,12 @@ internal static class ControllerProbe
             if (_transcribe is not null) return await _transcribe(wav, ct);
             await Task.Delay(80, ct);
             if (FailRequests) throw new HttpRequestException("Injected transcription failure.");
-            return Transcript;
+            return TranscriptResult;
+        }
+        public Task<DictationRefinement> RefineAsync(string text, string previousText, CancellationToken ct)
+        {
+            Interlocked.Increment(ref _refinementCalls);
+            return Refiner?.Invoke(text, previousText, ct) ?? Task.FromResult(new DictationRefinement(text, []));
         }
         public void Dispose()
         {
@@ -348,6 +528,30 @@ internal static class ControllerProbe
             Directory.Delete(Path.Combine(_root, "recovery"));
             File.Delete(Path.Combine(_root, "history.json"));
             Directory.Delete(_root);
+        }
+    }
+
+    private sealed class ProbeHistoryFiles : IFileSystem
+    {
+        public bool FailNextWrite { get; set; }
+        public int FailAfter { get; set; } = -1;
+        private static PhysicalFileSystem Files => PhysicalFileSystem.Instance;
+        public bool FileExists(string path) => Files.FileExists(path);
+        public string ReadAllText(string path) => Files.ReadAllText(path);
+        public byte[] ReadAllBytes(string path) => Files.ReadAllBytes(path);
+        public void Delete(string path) => Files.Delete(path);
+        public void CreateDirectory(string path) => Files.CreateDirectory(path);
+        public void AtomicWrite(string path, string text) => AtomicWrite(path, System.Text.Encoding.UTF8.GetBytes(text));
+        public void AtomicWrite(string path, byte[] bytes)
+        {
+            if (FailNextWrite || FailAfter == 0)
+            {
+                FailNextWrite = false;
+                FailAfter = -1;
+                throw new IOException("Injected History disk failure.");
+            }
+            if (FailAfter > 0) FailAfter--;
+            Files.AtomicWrite(path, bytes);
         }
     }
 

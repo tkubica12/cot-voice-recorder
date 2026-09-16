@@ -12,7 +12,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from .ai.protocols import Transcriber
+from .ai.protocols import DictationRefiner, Transcriber
 from .ai.speech import AzureSpeechTranscriber
 from .auth import TokenVerifier
 from .config import Settings, get_settings
@@ -24,6 +24,7 @@ from .problems import (
 from .routers import dictation, health, realtime, recordings, transcripts
 from .services.context import ServiceContext
 from .services.dictation import DictationService
+from .services.dictation_refinement import DictationRefinementService
 
 logger = get_logger(__name__)
 
@@ -54,6 +55,7 @@ def create_app(
     context: ServiceContext | None = None,
     verifier: TokenVerifier | None = None,
     dictation_transcriber: Transcriber | None = None,
+    dictation_refiner: DictationRefiner | None = None,
 ) -> FastAPI:
     settings = settings or (context.settings if context else get_settings())
     configure_logging(settings.log_level)
@@ -69,7 +71,7 @@ def create_app(
             app.state.context = build_context(settings)
             app.state.verifier = build_token_verifier(settings)
         app.state.settings = settings
-        from .bootstrap import build_dictation_transcriber
+        from .bootstrap import build_dictation_refiner, build_dictation_transcriber
 
         dictation_client = (
             dictation_transcriber
@@ -78,12 +80,19 @@ def create_app(
         )
         dictation_service = DictationService(dictation_client)
         app.state.dictation = dictation_service
+        refinement_service = DictationRefinementService(
+            dictation_refiner
+            if dictation_refiner is not None
+            else build_dictation_refiner(settings)
+        )
+        app.state.dictation_refinement = refinement_service
         app.state.ready = True
         logger.info("startup_complete", extra={"environment": settings.environment})
         try:
             yield
         finally:
             app.state.ready = False
+            await asyncio.to_thread(refinement_service.close)
             await asyncio.to_thread(dictation_service.close)
             if isinstance(dictation_client, AzureSpeechTranscriber):
                 dictation_client.close()
@@ -106,7 +115,7 @@ def create_app(
         finally:
             pass
         response.headers["X-Request-Id"] = trace_id
-        if request.url.path == "/v1/dictation/transcribe":
+        if request.url.path in {"/v1/dictation/transcribe", "/v1/dictation/refine"}:
             response.headers["Cache-Control"] = "no-store"
         return response
 

@@ -11,6 +11,74 @@ public class HistoryStoreTests
 {
     private const string Path = @"C:\state\history.json";
 
+    [Fact]
+    public void Original_and_refined_text_round_trip_and_expire_together()
+    {
+        var (store, fs, clock) = Build();
+        store.Add(new HistoryEntry
+        {
+            TranscriptId = "dictation-a", Body = "Clean text.", RawBody = "Clean clean text.",
+            RefinementFallbackBlocks = 2, CompletedAt = clock.UtcNow, CachedAt = clock.UtcNow,
+        });
+        var reloaded = new HistoryStore(Path, fs, clock);
+        Assert.Equal("Clean clean text.", reloaded.Latest()!.RawBody);
+        Assert.Equal("Clean text.", reloaded.Latest()!.Body);
+        Assert.Equal(2, reloaded.Latest()!.RefinementFallbackBlocks);
+        clock.Advance(TimeSpan.FromHours(49));
+        Assert.Equal(1, reloaded.Cleanup());
+        Assert.DoesNotContain("Clean clean", fs.ReadAllText(Path));
+    }
+
+    [Fact]
+    public void Removing_cancelled_dictation_keeps_other_history_and_both_versions_are_removed()
+    {
+        var (store, fs, clock) = Build();
+        store.Add(Entry("keep", clock.UtcNow));
+        store.Add(new HistoryEntry
+        {
+            TranscriptId = "cancel", Body = "cleaned", RawBody = "original", CompletedAt = clock.UtcNow,
+        });
+        var changes = 0;
+        store.Changed += () => changes++;
+        store.Remove("cancel");
+        store.Remove("missing");
+        Assert.Equal(1, changes);
+        Assert.Equal("keep", new HistoryStore(Path, fs, clock).All().Single().TranscriptId);
+        Assert.DoesNotContain("original", fs.ReadAllText(Path));
+    }
+
+    [Fact]
+    public void Refinement_setting_is_opt_in_and_survives_clone_and_reload()
+    {
+        var fs = new FakeFileSystem();
+        var store = new SettingsStore(@"C:\state\settings.json", fs);
+        Assert.False(store.Load().DictationRefinementEnabled);
+        fs.Seed(@"C:\state\settings.json", """{"dictation_enabled":true}""");
+        Assert.False(store.Load().DictationRefinementEnabled);
+        var settings = store.Load();
+        settings.DictationRefinementEnabled = true;
+        store.Save(settings.Clone());
+        Assert.True(store.Load().DictationRefinementEnabled);
+    }
+
+    [Fact]
+    public void Failed_polish_save_or_cancel_removal_keeps_the_durable_raw_entry_visible()
+    {
+        var (store, fs, clock) = Build();
+        store.Add(new HistoryEntry { TranscriptId = "raw", Body = "Original.", CompletedAt = clock.UtcNow });
+        fs.FailNextWrite = new IOException("Injected disk failure.");
+        Assert.Throws<IOException>(() => store.Add(new HistoryEntry
+        {
+            TranscriptId = "raw", Body = "Changed.", RawBody = "Original.", CompletedAt = clock.UtcNow,
+        }));
+        Assert.Equal("Original.", store.Get("raw")!.Body);
+        Assert.Equal("Original.", new HistoryStore(Path, fs, clock).Get("raw")!.Body);
+        fs.FailNextWrite = new IOException("Injected disk failure.");
+        Assert.Throws<IOException>(() => store.Remove("raw"));
+        Assert.NotNull(store.Get("raw"));
+        Assert.NotNull(new HistoryStore(Path, fs, clock).Get("raw"));
+    }
+
     private static HistoryEntry Entry(string id, DateTimeOffset completedAt, string body = "body") => new()
     {
         TranscriptId = id,

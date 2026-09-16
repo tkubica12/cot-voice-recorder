@@ -7,6 +7,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .dictation_edits import MAX_EDIT_CHARS, MAX_EDITS, MAX_PREVIOUS_CHARS, MAX_TEXT_CHARS
+
 RefineModel = Literal["gpt-5.6-luna", "gpt-5.6-terra"]
 
 
@@ -20,6 +22,21 @@ class HealthStatus(StrictModel):
 
 class DictationResult(StrictModel):
     text: str
+
+
+class DictationEdit(StrictModel):
+    original: str = Field(..., min_length=1, max_length=MAX_EDIT_CHARS)
+    replacement: str = Field(..., max_length=MAX_EDIT_CHARS)
+
+
+class DictationRefineResult(StrictModel):
+    text: str
+    edits: list[DictationEdit] = Field(..., max_length=MAX_EDITS)
+
+
+class DictationRefineRequest(StrictModel):
+    text: str = Field(..., strict=True, min_length=1, max_length=MAX_TEXT_CHARS, pattern=r"\S")
+    previous_text: str = Field("", strict=True, max_length=MAX_PREVIOUS_CHARS)
 
 
 class ClientInfo(StrictModel):

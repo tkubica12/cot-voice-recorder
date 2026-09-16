@@ -27,6 +27,8 @@ internal static class Program
             return HotkeyBurst(args[1]);
         if (args.Length == 2 && args[0] == "--live")
             return LiveAsync(args[1]).GetAwaiter().GetResult();
+        if (args.Length == 1 && args[0] == "--refine-live")
+            return RefineLiveAsync().GetAwaiter().GetResult();
         if (args.Length == 1 && args[0] == "--microphone")
             return MicrophoneAsync().GetAwaiter().GetResult();
         if (args.Length == 2 && args[0] == "--editor-live")
@@ -46,7 +48,7 @@ internal static class Program
         var hotkeysOnly = args.Length == 1 && args[0] == "--hotkeys";
         if (args.Length != 0 && !hotkeysOnly)
         {
-            Console.Error.WriteLine("Usage: DictationProbe [--live synthetic.wav | --microphone | --editor-live synthetic.wav | --hotkeys | --hotkey-burst app.dll]");
+            Console.Error.WriteLine("Usage: DictationProbe [--live synthetic.wav | --refine-live | --microphone | --editor-live synthetic.wav | --hotkeys | --hotkey-burst app.dll]");
             return 2;
         }
         try
@@ -67,6 +69,17 @@ internal static class Program
             var focus = GetForegroundWindow();
             var indicator = new DictationIndicator();
             indicator.Present("Dictation test", 0.5);
+            Require(indicator.Content is System.Windows.Controls.Border
+                {
+                    Child: System.Windows.Controls.StackPanel { Children.Count: 2 } panel
+                }
+                && panel.Children[0] is System.Windows.Controls.StackPanel
+                && panel.Children[1] is System.Windows.Controls.TextBlock
+                {
+                    Height: 60, LineHeight: 20, TextWrapping: TextWrapping.Wrap
+                }
+                && indicator.Height == 112,
+                "Indicator must contain only a recording header and a three-line preview, without a diagnostic footer.");
             var hwnd = new WindowInteropHelper(indicator).Handle;
             var style = GetWindowLongPtr(hwnd, -20).ToInt64();
             Require((style & 0x08000000) != 0, "Indicator is not NOACTIVATE.");
@@ -493,6 +506,66 @@ internal static class Program
         {
             Console.Error.WriteLine($"FAIL live {ex.GetType().Name}"
                 + (ex is ApiException api ? $" HTTP={api.StatusCode}" : $": {ex.Message}"));
+            return 1;
+        }
+    }
+
+    private static async Task<int> RefineLiveAsync()
+    {
+        try
+        {
+            using var live = new LiveConnection();
+            var samples = new[]
+            {
+                (Text: "Dnes nasad\u00edme novou verzi aplikace novou verzi aplikace na portu 8443. P\u0159ihl\u00e1\u0161en\u00ed ponech\u00e1me zapnut\u00e9.",
+                    Repeated: "novou verzi aplikace"),
+                (Text: "We will deploy the new version the new version on port 8443. Do not disable authentication.",
+                    Repeated: "the new version"),
+            };
+            var changes = 0;
+            foreach (var sample in samples)
+            {
+                var elapsed = Stopwatch.StartNew();
+                var response = await live.Api.RefineDictationAsync(sample.Text, "", CancellationToken.None);
+                var cleaned = response.Text;
+                Require(cleaned.Contains("8443", StringComparison.Ordinal), "Cleanup changed a protected port.");
+                Require(cleaned.Split(sample.Repeated, StringSplitOptions.None).Length == 2,
+                    "Cleanup did not remove the synthetic repeated phrase exactly once.");
+                if (!string.Equals(sample.Text, cleaned, StringComparison.Ordinal)) changes++;
+                Console.WriteLine($"PASS authenticated deployed seam deduplication: elapsed-ms={elapsed.ElapsedMilliseconds}; edits={response.Edits.Count}; chars={cleaned.Length}");
+            }
+            Require(changes > 0, "Neither synthetic sample was changed; model editing was not demonstrated.");
+            const string backgroundText =
+                "Thiss is a synthetic dictation for a deployment test. We are checking that cleanup starts "
+                + "while someone is still speaking, instead of waiting for the entire recording to finish. "
+                + "Keep port 8443 unchanged and do not disable authentication. The original text must remain "
+                + "available when a model request fails. We want one final paste, with no delayed replacement "
+                + "after it has already arrived in the editor. These sentences contain no private information "
+                + "and describe only a fictional example for testing.";
+            await using var polisher = new DictationPolisher(live.Api.RefineDictationAsync);
+            var firstWindow = string.Join(" ", backgroundText.Split(' ').Take(75)) + " ";
+            polisher.Update(firstWindow);
+            var recording = Stopwatch.StartNew();
+            while (polisher.Progress.SuccessfulBlocks == 0 && polisher.Progress.FallbackBlocks == 0
+                && recording.Elapsed < TimeSpan.FromSeconds(9))
+                await Task.Delay(50);
+            Require(polisher.Progress.SuccessfulBlocks > 0, "No real background model response completed before Stop.");
+            var tail = Stopwatch.StartNew();
+            polisher.StopScheduling();
+            var result = await polisher.CompleteAsync(backgroundText + " This is the final sentence.",
+                CancellationToken.None);
+            Require(result.Text.Contains("8443", StringComparison.Ordinal)
+                && result.RawText == backgroundText + " This is the final sentence.",
+                "Deployed background cleanup lost source text or a protected literal.");
+            Require(tail.Elapsed < TimeSpan.FromMilliseconds(250), "Background cleanup added a final wait.");
+            Require(result.FallbackBlocks == 0, $"Unexpected background cleanup failure: {result.LastFailure}");
+            Console.WriteLine($"PASS deployed background cleanup: stop-to-ready-ms={tail.ElapsedMilliseconds}; successful-windows={result.SuccessfulBlocks}; raw-tail-words={result.UnprocessedWords}; fallback-blocks={result.FallbackBlocks}; no clipboard/history writes.");
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"FAIL deployed refinement {ex.GetType().Name}"
+                + (ex is ApiException api ? $" HTTP={api.StatusCode}" : ""));
             return 1;
         }
     }

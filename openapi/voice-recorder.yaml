@@ -12,8 +12,8 @@ info:
     Azure Web PubSub.
 
     Windows can also send short dictation WAV batches directly to MAI through the
-    authenticated backend, receiving clean text without storage, refinement, queues,
-    or Web PubSub.
+    authenticated backend, receiving clean text without storage, queues, or Web PubSub.
+    An independent optional endpoint polishes only a supplied current text block.
 
     ## Conventions
     - **IDs** are UUIDs (string, format `uuid`).
@@ -200,6 +200,121 @@ paths:
                 $ref: "#/components/schemas/Problem"
         "504":
           description: The 20-second dictation response deadline elapsed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /v1/dictation/refine:
+    post:
+      operationId: refineDictation
+      tags: [dictation]
+      summary: Optionally polish the current dictation block with validated exact edits.
+      description: |
+        Requires the existing Google ID token and allowlisted user. The current text
+        is required, nonblank, at most 4000 Unicode characters. previous_text is
+        optional (default empty), read-only preceding context, at most 8000 characters.
+        The UTF-8 JSON body is bounded to 32768 bytes before parsing. Unknown fields,
+        duplicate JSON keys, invalid UTF-8 and compressed content encoding are rejected.
+        Line breaks, tabs and leading/trailing whitespace on each line are preserved.
+        Ordinary internal spaces may change with word corrections/deletions, never
+        by whitespace-only edits. Request text is never truncated or normalized.
+
+        Uses the configured Foundry default refinement deployment (gpt-5.6-luna),
+        API 2024-10-21 and reasoning_effort=none, with backend managed identity.
+        One model call per request, no automatic retries or fallback models, two
+        concurrent calls per API process and an 8-second response deadline. Capacity
+        remains occupied after timeout/cancellation until synchronous work finishes.
+
+        The model returns at most 64 small exact current-only edits, each anchor and
+        replacement at most 256 characters, never a whole rewritten response.
+        All anchors must be unique in the original, even counting overlapping
+        matches, and edits cannot overlap. Malformed/truncated output, changed numeric
+        literals/technical identifiers/boundary whitespace or line structure, new letter scripts, empty meaningful
+        output and newly duplicated long text/context echoes fail atomically with 502.
+        Semantic preservation is prompted, not a proof of equivalence.
+        Primary objective: remove unintended repeated words/phrases at ASR chunk seams
+        (including a repeat spanning previous_text and text, deleting only from text).
+        Preserve intentional repetitions/counting and ambiguous speech. No stylistic
+        rewriting, synonym substitution or guessing missing words.
+        Intended for opt-in background rolling windows, not the raw paste critical path.
+
+        Returns text together with the same validated exact edits used to construct it.
+        Each edit has original and replacement strings, with no character positions.
+        Anchors refer to the ORIGINAL request text, are unique including overlapping
+        occurrences, and are ordered by original location; apply atomically against
+        that snapshot, never sequentially search modified output. Unchanged results
+        have edits: []. Existing text-only clients may ignore the additional field.
+
+        Both text fields are untrusted data, not model instructions. No storage, queues,
+        recording history or realtime events are used. No input/output/provider bodies
+        or credentials are logged. Diagnostics include only fixed rejection categories,
+        request outcomes and elapsed milliseconds. All handled responses have Cache-Control: no-store.
+        Nonpersistence describes this application, not upstream provider retention.
+        This does not alter transcription or Android recording refinement. Clients must
+        retain raw text on failure, including 404 on servers without this optional route.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DictationRefineRequest"
+      responses:
+        "200":
+          description: Validated current block and exact original-anchor edits; unchanged text has an empty edits array.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DictationRefineResult"
+              example:
+                text: "This is a test."
+                edits:
+                  - original: " is is"
+                    replacement: " is"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "413":
+          description: JSON request body exceeds 32768 bytes.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "429":
+          description: Both per-process refinement slots are occupied.
+          headers:
+            Retry-After:
+              schema:
+                type: string
+                const: "1"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "502":
+          description: Rejected model request or unsafe, malformed or incomplete edits.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "503":
+          description: Transient provider failure or refinement not configured.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "504":
+          description: The 8-second refinement response deadline elapsed.
           content:
             application/problem+json:
               schema:
@@ -741,6 +856,47 @@ components:
                 message: must be greater than or equal to 1
 
   schemas:
+    DictationEdit:
+      type: object
+      additionalProperties: false
+      required: [original, replacement]
+      properties:
+        original:
+          type: string
+          minLength: 1
+          maxLength: 256
+        replacement:
+          type: string
+          maxLength: 256
+
+    DictationRefineResult:
+      type: object
+      additionalProperties: false
+      required: [text, edits]
+      properties:
+        text:
+          type: string
+        edits:
+          type: array
+          maxItems: 64
+          items:
+            $ref: "#/components/schemas/DictationEdit"
+
+    DictationRefineRequest:
+      type: object
+      additionalProperties: false
+      required: [text]
+      properties:
+        text:
+          type: string
+          minLength: 1
+          maxLength: 4000
+          pattern: '\S'
+        previous_text:
+          type: string
+          maxLength: 8000
+          default: ""
+
     DictationResult:
       type: object
       additionalProperties: false

@@ -10,7 +10,9 @@ Android's durable recording/cleanup workflow remains separate and unchanged.
 The desktop sends short WAV requests to `POST /v1/dictation/transcribe`, authenticated
 with the same Google ID token as the existing API. The API invokes MAI directly using its
 user-assigned managed identity and private Speech endpoint. No Blob, Table, Queue,
-worker, refinement model, or Web PubSub operation is on the dictation critical path.
+worker or Web PubSub operation is on the dictation critical path. Optional text polishing
+uses a separate bounded request to `POST /v1/dictation/refine` while capture continues;
+it is disabled by default and requires the updated API and desktop build.
 Successful dictation text is saved to Windows' existing 48-hour history, not cloud history.
 
 ### Why this path
@@ -47,12 +49,12 @@ Express's advertised subsecond platform startup is not an end-to-end transcripti
   Version 1.3.1 also matches single short words (such as "to", "that", or "go"); earlier
   versions intentionally kept one-word matches shorter than eight characters. Matching is
   limited to the immediately preceding chunk; an empty result breaks that adjacency.
-  Repetitions inside a chunk are not sanitized. This heuristic cannot guarantee a perfect
+  Without optional AI polishing, repetitions inside a chunk are not sanitized. This heuristic cannot guarantee a perfect
   seam when the model recognizes overlap differently, and can remove an intentional repeat
   that happens to match across an overlapping boundary. It does not correct recognition
   mistakes or add an LLM/network request.
 - Use MAI's `clean` style with automatic multilingual recognition by default. Czech and English
-  can be forced in Settings. There is no separate LLM cleanup round trip.
+  can be forced in Settings. There is no separate LLM cleanup round trip by default.
 - Each desktop request has a 25-second timeout and at most one transient retry, plus the
   existing one-time token refresh on 401. The API has a 20-second response deadline, four
   model-call slots per process and no hidden model retry. Timeout slots remain occupied
@@ -139,21 +141,170 @@ remaining work saved for a later retry. Escape stops recovery without deleting i
 Corrupt/unreadable entries remain visible for explicit discard rather than silently disappearing.
 History IDs are derived from the recovery ID so retrying finalization replaces the same item.
 
-## Optional LLM polishing (not enabled)
+## Optional LLM polishing (off by default)
 
-Windows dictation uses MAI's `clean` transcription style and local overlap deduplication, not
-the Android worker's separate refinement model. A second LLM can improve fillers, repetitions
+Windows 1.4.2 includes **Polish dictation with GPT-5.6 Luna** in Settings.
+It is opt-in and was not included in the 1.3.1 installer. With it disabled,
+Windows uses only MAI's `clean` transcription style and local overlap deduplication.
+The Android worker's refinement pipeline is unchanged. A second LLM can improve fillers, repetitions
 and punctuation, but can also alter names, numbers, code or meaning; seeing full context does
 not guarantee perfect correction. Streaming tokens alone does not make a full five-minute
 rewrite complete within one or two seconds.
 
-Before adding this to the fast path, benchmark MAI-only against background, sentence-aware
-polishing windows (for example 30-60 seconds of new text with preceding context and a small
-uncommitted tail). Preserve the raw transcript, allow a strict stop-time budget with raw-text
-fallback, and never replace text after it has been pasted. Compare end-to-end stop-to-ready
-p50/p95, corrections versus meaning-changing edits, Czech/English switching, names/numbers,
-and short versus five-minute recordings. These are proposed experiments, not measured model
-latency or a promise that a particular small model can meet the budget.
+### Measured Luna comparison (2026-09-16)
+
+Actual Azure inference was measured with deployment `gpt-5.6-luna`, returned model
+`gpt-5.6-luna-2026-07-09`, API version `2024-10-21`, `reasoning_effort=none`,
+streaming usage enabled, two concurrent requests, and no SDK retries. Reported reasoning
+tokens were zero. The existing resource is in Sweden Central with GlobalStandard deployment;
+this is not a claim that inference was region-pinned. Local Entra authentication was warmed
+separately. Production configuration, credentials and content filters were not changed.
+
+The fictional Czech/English corpus contains 146, 732 and 2,973 words for nominal 1/5/20-minute
+profiles, approximately 146-149 words/minute. This is **text cleanup, not an audio/MAI accuracy
+benchmark**. Direct Windows-to-Foundry request timings exclude the production API hop, MAI's
+remaining transcription, clipboard and UI delivery. No private recording was uploaded.
+
+| Strategy | 1-minute profile | 5-minute profile | 20-minute profile |
+|---|---:|---:|---:|
+| Rewrite all text after stop | 2.69 s | 9.94 s | 34.79 s |
+| Return exact edits for all text after stop | 1.63 s | 2.37 s | 3.81 s valid; another response rejected |
+| Rewrite 30-second blocks during recording | 1.64 s | 2.28 s | 2.70 s, with raw fallback |
+| Rewrite 6-second fragments with lookahead | 3.86 s | 1.62 s | 1.61 s, with raw fallback |
+| Return exact edits for 30-second blocks during recording | 1.27 s | 1.61 s, with raw fallback | 1.65 s, with raw fallback |
+
+The first two rows are **measured complete-request times**, medians of three samples per
+length except the long edit-patch case. Whole-rewrite ranges were 2.64-3.24, 9.02-10.45 and
+34.34-35.95 seconds. Long patches produced one valid response in 3.81 seconds and one
+invalid response in 5.86 seconds; the third case was excluded as described below.
+The first token of the long rewrites arrived in 1.36-1.47 seconds, but the complete
+transcript took roughly 35 seconds. Streaming the first token is not fast completion.
+
+The background rows are **simulated stop-to-ready times using actual per-request durations**,
+not real 20-minute microphone trials. Arrivals are spaced by 30 or 6 seconds, with two model
+slots; lookahead releases two final jobs at stop. There was no simulated queue backlog.
+Adding an assumed one-second MAI arrival lag adds one second to these estimates; that
+assumption is not a new MAI measurement. Raw fallback means retaining an original block
+when refinement failed, was excluded, or returned an invalid edit, not losing that block.
+Excluded requests are assigned zero processing time in this fallback simulation.
+These prefix samples are not independent repeated long-session trials or a reliable p95.
+
+**Quality changed the recommendation.** Short-fragment rewriting was fast but unsafe to
+adopt as tested: it echoed read-only context into several outputs, creating new duplicated
+passages. The assembled long output contained 52 excess repeated eight-word windows
+(overlapping diagnostics, not 52 independent incidents) and an unexpected CJK insertion.
+This happened despite explicit instructions to edit only the current fragment. A real-paced
+60-second text-arrival replay completed 1.86 seconds after stop, confirming the timing
+approach but not rescuing that strategy's observed quality problems.
+
+The incremental edit-patch follow-up measured 37 model responses: median 1.36 seconds,
+range 0.96-3.25 seconds, descriptive nearest-rank p95 2.30 seconds across different blocks.
+Of those, **35 passed exact-anchor validation and two were rejected** because the model
+invented `H m` where the source contained `Hm`. Three quote-containing context blocks were
+excluded. With original-text fallback for those five blocks, the assembled output preserved
+all protected literals, removed 35 of the 40 planted filler groups, and introduced no
+detected long duplicates or new scripts. All returned patches were manually inspected;
+the three explicit numerical corrections and the legitimate `had had` / `that that`
+examples remained intact. This is a small, deliberately constructed corpus, not proof of
+general ASR-error correction or guaranteed meaning preservation. A separate, real-paced
+60-second patch-block replay then completed **1.98 seconds after stop**, with both patches
+passing validation; its earlier background call took 3.10 seconds without delaying capture.
+This measures actual wall-clock scheduling and model responses, still not microphone-to-paste.
+
+Whole rewrites also illustrate why literal diagnostics require inspection: `16000 Hz`
+became `16 000 Hz`, and quote/capitalization changes triggered a literal check without
+removing the negation. Block rewriting translated the technical word `exception` to its Czech
+equivalent. These are not invented numerical values, but exact technical spelling and
+mixed-language preservation need stronger controls if that is the desired contract.
+
+**Provider failure is a normal fallback path.** Five short-fragment requests were rejected
+with Azure's `content_filter` policy error around a quoted fictional instruction. No filter
+was disabled, blocked input retried, or content disguised. The initial benchmark stopped
+at its five-failure guard, then resumed only remaining safe cases with the same prompts.
+Three remaining standard-matrix cases and three incremental-patch cases containing that
+context were explicitly excluded and reported, not counted as successful refinements.
+The initial abort could have allowed up to two already-started calls to finish without
+recording their results; subsequent harness runs drain and retain in-flight results.
+All reported samples come from persisted responses, not inferred results of those calls.
+
+The standard matrix recorded 258 requests (five rejected), and the patch-block follow-up
+recorded 38 including warmup; paced trials are stored separately. Nested prefixes and
+repeated prompts produced cache hits: the two matrices reported 230,768 input tokens,
+42,088 output tokens and 28,225 cached input tokens, excluding paced trials and the initial
+access probe. These are usage observations, not a dollar-cost estimate or an uncached
+latency guarantee.
+
+The reproducible harness and offline safeguards are in
+`backend\tools\benchmark_refinement.py` and `backend\tests\test_refinement_benchmark.py`;
+the synthetic corpus is `backend\tests\fixtures\refinement_benchmark.json`.
+See [benchmark commands](../backend/README.md#opt-in-dictation-refinement-benchmark).
+Full request records, prompts, model outputs, assembled transcripts and summaries for this
+run are retained in the session artifacts `llm-benchmark-01` and `llm-benchmark-patch30`.
+
+### Implemented integration
+
+The desktop uses **background edit patches**, not a full rewrite at stop or unrestricted
+six-second rewriting. MAI's short audio chunks and immediate preview stay unchanged.
+The polisher operates on overlapping text windows spanning multiple audio chunks. It
+dispatches on sufficient new text or 12 seconds of pending-text age, rather than waiting
+only for a word threshold. The normal window target is roughly 75 words (about 30 seconds,
+depending on speaking rate); the last 15 raw words remain editable in the next window.
+Each request is capped at 4,000 characters and carries up to 150 preceding raw words
+(at most 8,000 characters) as read-only context. JSON requests are capped at 32 KiB.
+Only one physical request runs at a time, with no queue of stale snapshots. Its result
+is tied to exact source-text positions, so incoming text is never replaced accidentally.
+An eight-second request deadline keeps the previous available edits and original text
+on failure. The physical slot stays occupied until an uncooperative call actually exits.
+When catching up after a stall, the latest window also has a 30-second raw-text arrival-age
+limit. Skipped unprocessed older text stays verbatim and is reported as a real backlog
+fallback; aging already processed overlap is not an error. Accepted edits persist across
+empty later edit responses. An explicit intersecting edit supersedes an older correction.
+
+The API asks Luna for exact replacement edits, not a new transcript. It applies them only
+against the immutable source block with unique, nonoverlapping exact anchors, without fuzzy
+repair. All edits are validated atomically; invalid anchors, service rejection, timeout,
+or suspicious changes to literals, scripts or repeated passages produce an explicit error,
+and the desktop keeps the original text or previously accepted edits. The response includes
+both assembled text and the exact validated original/replacement edits, so the desktop can
+retain edit provenance across rolling windows. Ordinary spaces may change when removing
+unintentional duplicate words or fillers; paragraph and boundary whitespace is protected.
+Structural validation does not prove semantic correctness. Earlier committed context is
+not retrospectively rewritten when a correction arrives much later; preserve the explicit
+correction and history instead. If ASR changes an already published prefix, the desktop
+invalidates earlier edits and keeps that session raw rather than mixing text revisions.
+
+At stop, **no new AI request is scheduled and there is no final AI wait**. Already running
+work may finish while the remaining MAI audio is transcribed, but cannot launch another
+request. Raw MAI text is written to History first. The result is then frozen immediately,
+combining available edits with original text elsewhere. There is one final paste and no
+late clipboard/history replacement. Remaining MAI work, local storage, clipboard access
+and modifier-key release still take time; this does not promise fully polished output.
+
+The primary prompt objective is removing clear accidental repetitions across the text
+window and its preceding context. It preserves intentional emphasis/counting, prohibits
+stylistic rewrites and guessing missing content, and permits only unambiguous ASR fixes.
+This cannot reconstruct words the speech recognizer omitted.
+
+The compact, non-activating overlay shows only the stable recording/finishing state and a
+three-line recent-text preview. Version 1.4.2 removes saved/transcribed/pending counters and
+AI diagnostic details from the popup; diagnostics remain in logs and History, and actionable
+failures still produce notifications. A normal unprocessed ending, or a short recording
+that never dispatched AI, is not counted as a failure and never produces a warning.
+Real request/validation failures produce one aggregated warning, not per-block notifications.
+History saves the assembled and raw text together, does not claim the entire transcript was
+checked, and exposes **Copy original**. Both versions share the existing
+unencrypted 48-hour/200-entry cache. Intermediate AI edits exist only in memory; the encrypted
+recovery journal always preserves raw ASR data. Explicit Recovery restores raw text without
+AI calls or automatic paste. Escape during capture or finishing discards the temporary raw
+History entry as well as the journal; interruption/sign-out keeps recoverable raw data.
+
+Calls stay behind the existing authenticated API and managed identity. The benchmark's
+developer Azure CLI access is not a desktop authentication architecture; do not distribute
+Foundry keys or add a queue/worker to the interactive path. The API performs no transcript
+storage for this route. Model/transient failures are not retried by either client or API;
+the desktop retains its one-time 401 token refresh. Already-sent cloud requests cannot be
+recalled, but cancelled or late results cannot affect delivery. **Deployment, release and
+installation are separate from this source implementation.**
 
 ## Verification
 
@@ -162,6 +313,7 @@ dotnet test windows\tests\VoicePrompt.Core.Tests\VoicePrompt.Core.Tests.csproj -
 dotnet run --project windows\tools\DictationProbe\DictationProbe.csproj -c Release
 dotnet run --project windows\tools\DictationProbe\DictationProbe.csproj -c Release -- --microphone
 dotnet run --project windows\tools\DictationProbe\DictationProbe.csproj -c Release -- --live <synthetic.wav>
+dotnet run --project windows\tools\DictationProbe\DictationProbe.csproj -c Release -- --refine-live
 dotnet run --project windows\tools\DictationProbe\DictationProbe.csproj -c Release -- --editor-live <synthetic.wav>
 ```
 
@@ -209,6 +361,104 @@ installed successfully, preserving existing settings and OAuth configuration. Ve
 distributed alongside it remains the unchanged signed 1.2.0 build.
 Release 1.3.1 passed the expanded **309-test** core suite and the native/controller probes,
 including short-word stitching in preview, final text and reopened recovery results.
+
+### Background-only rolling-window validation (2026-09-16)
+
+The Windows core suite passed 377 tests before the final empty-overlap retention adjustment;
+all 48 rolling-polisher and twenty-minute integration cases passed after that adjustment.
+The twenty-minute case uses virtual time, synthetic six-second ASR arrivals and the actual
+typed HTTP client with a deterministic patch server. It verifies ordered content, bounded
+requests, retained corrections and no request or wait at Stop; it is not an ASR accuracy
+benchmark or a twenty-minute live model recording.
+
+Native/controller probes passed short-dictation raw-only behavior without warning,
+background edits while Listening, one final History-backed paste, no new request at Stop,
+ignored late results, genuine error reporting, Escape/account interruption, raw Recovery
+and History disk failures. With a deliberately stalled LLM, controlled stop-to-completion
+was 366 ms, including remaining synthetic transcription and local persistence. The separate
+12-second real-paced encrypted checkpoint scenario completed 254 ms after Stop. Neither
+measurement is a promise about actual microphone or network latency.
+
+### Rolling deployment and local installation (2026-09-16)
+
+Windows **1.4.1** was installed locally after approval, preserving settings and Desktop OAuth
+configuration. The installed executable and application/core DLLs match the published build;
+the restarted tray process was responsive. The user's existing AI-enabled setting was retained.
+The public-installer SHA-256 is
+`a978711ac6f5acdc6a55fafad3ebf10a9b8721d387222da6397b13313e7a3fe3`.
+This installation is not a new GitHub release.
+
+API revision `ca-api--rolling-141-20260916` is healthy, with one replica and 100% traffic.
+The source-only image reuses the previous locked runtime without dependency changes:
+`crcotvrspddxkti.azurecr.io/voice-recorder-backend@sha256:cc2b24f540a592a1f03d8aeee46ff95f16a831e73ac34586b4988e551568d9eb`.
+The prior API rollback image is
+`crcotvrspddxkti.azurecr.io/voice-recorder-backend@sha256:aa95893f17309322db7b7f6c73b9dec1a40fab9629db146bff5a980cc91cb87b`.
+Readiness returned 200; anonymous refinement still returned 401.
+
+The final backend suite passed **438 tests**, with three opt-in live tests skipped;
+Ruff and mypy passed. Separate real-Luna probes removed a synthetic duplicate phrase in
+both Czech and English while preserving port 8443. The deployed Windows-client rerun took
+2,428/2,432 ms respectively. A separate real background response completed before Stop;
+final assembly took **2 ms**, with one successful window, ten raw tail words and zero
+fallback errors. An earlier oversized single-snapshot probe correctly reported a backlog
+fallback; the final probe uses a bounded first window and verifies no unexpected fallback.
+
+These are small synthetic text checks, not microphone/MAI accuracy guarantees. A stricter
+Czech repetition spanning read-only previous context and current text was intermittent in
+the backend live evaluation. Keeping overlap editable reduces reliance on that case, but
+does not guarantee every repetition is removed. See the backend README for the live test
+commands and limitations. No private user recordings or History were resubmitted.
+
+### Earlier two-second-budget validation (superseded by background-only scheduling)
+
+The added core tests cover block boundaries, bounded raw context, concurrency, queue overload,
+request timeout, one total finishing deadline, cancellation-ignoring delegates, immutable
+completion and changed-prefix fallback. API/client tests cover payload bounds, authentication,
+no transient model retries, invalid results and raw-history persistence. Native/controller
+probes additionally exercise raw History before the final AI response, fallback warnings,
+two-second finishing, ignored late results, explicit discard and raw-only Recovery, using
+controlled transcription/refinement and a test clipboard. These checks do not substitute
+for human acceptance of AI meaning preservation on real microphone input.
+The current implementation passed **355 Windows core tests** and the native/controller
+probe, including starting cleanup before capture stops and injected disk failures before
+and after the AI response. A controlled cancellation-ignoring request finished with raw
+fallback in 2.34 seconds from stop (including final capture/ASR and probe polling overhead);
+the independent AI waiting budget is two seconds. The Windows app/probe build succeeded.
+The backend suite passed **399 tests**, with two opt-in/environment-dependent tests skipped;
+Ruff and mypy passed. A separate opt-in local-API test called actual
+`gpt-5.6-luna-2026-07-09`: Czech completed in **6.925 seconds**, English in **1.977 seconds**,
+both HTTP 200 with zero reasoning tokens. The English sample's spelling was repaired.
+These are two local-API samples with developer Azure authentication, not deployed
+microphone-to-paste measurements. Cold authentication/model latency can exceed the desktop's
+final two-second budget, so a short dictation may legitimately keep its original text.
+Background requests can finish earlier while the user is still speaking. Source validation
+was followed by the separately approved deployment and installation below.
+
+### Deployed polishing and local installation (2026-09-16)
+
+Windows **1.4.0** was installed locally, preserving the settings file and existing OAuth
+configuration. The installed executable and application/core assemblies match the published
+build, and the tray process was restarted. AI cleanup remains **off by default**; enable
+**Polish dictation with GPT-5.6 Luna** in Settings and apply the dictation settings to test it.
+This local installation is not a new GitHub release.
+
+API revision `ca-api--polish-20260916-1135` is healthy with one warm replica and all API
+traffic. Image `dictation-polish-20260916-1135` has digest
+`sha256:aa95893f17309322db7b7f6c73b9dec1a40fab9629db146bff5a980cc91cb87b`.
+It layers the current backend source over the immutable previously deployed runtime;
+dependencies, worker/cleanup images, networking and identities were not changed. The
+previous API image remains `dictation-20260915-095616`, digest
+`sha256:9fb4d0cb7336c93bf94197cd4e2122d65c15ff8267e95371446b2a4e72988fe6`.
+Readiness returned 200 and anonymous refinement returned 401.
+
+The opt-in `--refine-live` probe uses the desktop API client and existing Google sign-in,
+sends only built-in synthetic text, and does not write clipboard or History. Through the
+deployed API, Czech and English requests took 4,114 and 2,092 ms; the Czech text was left
+unchanged and the English spelling sample was corrected. A separate background-polisher
+trial finished **1,550 ms** after its simulated stop, with zero raw-fallback blocks.
+This is text-arrival scheduling, not a real microphone-to-editor latency measurement.
+The existing synthetic MAI probe also passed: three two-chunk runs took 1,947 / 863 / 641 ms,
+and real-paced synthetic capture completed transcription 466 ms after stop.
 
 Manual end-to-end acceptance: focus an ordinary text editor, hold the shortcut, speak Czech/English,
 release, verify text once; repeat with Escape and with another window selected, checking

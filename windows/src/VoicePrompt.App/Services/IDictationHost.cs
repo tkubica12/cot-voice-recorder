@@ -16,4 +16,5 @@ internal interface IDictationHost
     RecoveryStore Recovery { get; }
     string RecoveryContext { get; }
     Task<string> TranscribeAsync(byte[] wav, string language, CancellationToken ct);
+    Task<DictationRefinement> RefineAsync(string text, string previousText, CancellationToken ct);
 }

@@ -252,3 +252,98 @@ def test_dictation_response_and_limits_match_schema(
         response = client.post(path, headers={**auth, "Content-Type": "audio/wav"}, content=content)
         assert response.status_code == status
         assert_valid(response.json(), "Problem", spec)
+
+
+def test_dictation_refinement_contract(
+    client: TestClient, auth: dict[str, str], spec: dict[str, Any]
+) -> None:
+    from voice_recorder.models import DictationRefineRequest
+    from voice_recorder.services.dictation_refinement import MAX_BODY_BYTES
+
+    path = "/v1/dictation/refine"
+    operation = spec["paths"][path]["post"]
+    schema = spec["components"]["schemas"]["DictationRefineRequest"]
+    actual = DictationRefineRequest.model_json_schema()
+    assert {key: value for key, value in actual.items() if key != "title"} == {
+        **schema,
+        "properties": {
+            name: {**value, "title": actual["properties"][name]["title"]}
+            for name, value in schema["properties"].items()
+        },
+    }
+    generated = client.get("/openapi.json").json()["paths"][path]["post"]
+    assert generated["requestBody"]["content"]["application/json"]["schema"] == actual
+    assert generated["operationId"] == operation["operationId"]
+    assert (
+        generated["responses"]["200"]["content"]["application/json"]["schema"]
+        == operation["responses"]["200"]["content"]["application/json"]["schema"]
+        == {"$ref": "#/components/schemas/DictationRefineResult"}
+    )
+    generated_schemas = client.get("/openapi.json").json()["components"]["schemas"]
+    for name in ("DictationEdit", "DictationRefineResult"):
+        response_schema = generated_schemas[name]
+        assert {key: value for key, value in response_schema.items() if key != "title"} == {
+            **spec["components"]["schemas"][name],
+            "properties": {
+                field: {**field_schema, "title": response_schema["properties"][field]["title"]}
+                for field, field_schema in spec["components"]["schemas"][name]["properties"].items()
+            },
+        }
+    assert operation.get("security", spec["security"]) == [{"googleIdToken": []}]
+    assert set(operation["responses"]) == {
+        "200",
+        "401",
+        "403",
+        "413",
+        "415",
+        "422",
+        "429",
+        "502",
+        "503",
+        "504",
+    }
+    for payload in [{"text": "Hello."}, {"text": "Ahoj.", "previous_text": "Earlier."}]:
+        assert_valid(payload, "DictationRefineRequest", spec)
+        response = client.post(path, json=payload, headers=auth)
+        assert response.status_code == 200
+        assert_valid(response.json(), "DictationRefineResult", spec)
+        assert response.json()["edits"] == []
+        assert response.headers["cache-control"] == "no-store"
+    for payload in [
+        {"text": ""},
+        {"text": " \n"},
+        {"text": "a" * 4001},
+        {"text": "a", "previous_text": "b" * 8001},
+        {"text": "a", "extra": True},
+    ]:
+        assert validate(payload, schema, spec)
+        response = client.post(path, json=payload, headers=auth)
+        assert response.status_code == 422
+        assert_valid(response.json(), "Problem", spec)
+    response = client.post(
+        path,
+        content=b" " * (MAX_BODY_BYTES + 1),
+        headers={**auth, "Content-Type": "application/json"},
+    )
+    assert response.status_code == 413
+    assert_valid(response.json(), "Problem", spec)
+
+
+def test_dictation_edit_response_contract_rejects_missing_or_unbounded_edits(
+    spec: dict[str, Any],
+) -> None:
+    schema = spec["components"]["schemas"]["DictationRefineResult"]
+    for response in [
+        {"text": "hello"},
+        {"text": "hello", "edits": [{"original": "", "replacement": "hello"}]},
+        {"text": "hello", "edits": [{"original": "a" * 257, "replacement": "hello"}]},
+        {"text": "hello", "edits": [{"original": "helo", "replacement": "b" * 257}]},
+        {"text": "hello", "edits": [{"original": "helo", "replacement": "hello", "start": 0}]},
+        {"text": "hello", "edits": [{"original": "helo", "replacement": "hello"}] * 65},
+    ]:
+        assert validate(response, schema, spec)
+    assert_valid(
+        {"text": "a test.", "edits": [{"original": "This is ", "replacement": ""}]},
+        "DictationRefineResult",
+        spec,
+    )

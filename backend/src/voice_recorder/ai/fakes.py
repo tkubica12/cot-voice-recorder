@@ -41,3 +41,13 @@ class FakeRefiner:
             return self.mapping[raw_text]
         tokens = [t for t in (_normalize_token(w) for w in raw_text.split()) if t]
         return " ".join(tokens)
+
+
+class FakeDictationRefiner:
+    """No-op polishing for explicitly gated local fake mode."""
+
+    def propose_edits(self, text: str, *, previous_text: str) -> str:
+        return '{"edits":[]}'
+
+    def close(self) -> None:
+        pass

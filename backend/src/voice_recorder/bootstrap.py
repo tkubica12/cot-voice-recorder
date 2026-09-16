@@ -9,9 +9,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from .ai.fakes import FakeRefiner, FakeTranscriber
+from .ai.fakes import FakeDictationRefiner, FakeRefiner, FakeTranscriber
 from .ai.foundry import FoundryRefiner, FoundryTranscriber
-from .ai.protocols import Refiner, Transcriber
+from .ai.protocols import DictationRefiner, Refiner, Transcriber
 from .auth import GoogleTokenVerifier, StaticTokenVerifier, TokenVerifier
 from .clock import Clock, SystemClock
 from .config import Settings
@@ -147,6 +147,35 @@ def build_dictation_transcriber(settings: Settings) -> Transcriber | None:
         transcribe_style="clean",
         timeout_seconds=TIMEOUT_SECONDS,
         strict_response=True,
+    )
+
+
+def build_dictation_refiner(settings: Settings) -> DictationRefiner | None:
+    """Dedicated client: no hidden SDK retries or worker timeout changes."""
+    if settings.use_fake_ai and settings.environment != "production":
+        return FakeDictationRefiner()
+    if not settings.foundry_endpoint or not settings.refine_deployment_default:
+        return None
+    from azure.identity import get_bearer_token_provider
+    from openai import AzureOpenAI
+
+    from .ai.dictation_refinement import FoundryDictationRefiner
+    from .services.dictation_refinement import TIMEOUT_SECONDS
+
+    credential = _credential()
+    try:
+        client = AzureOpenAI(
+            azure_endpoint=settings.foundry_endpoint,
+            azure_ad_token_provider=get_bearer_token_provider(credential, settings.foundry_scope),
+            api_version=settings.foundry_api_version,
+            max_retries=0,
+            timeout=TIMEOUT_SECONDS,
+        )
+    except Exception:
+        credential.close()
+        raise
+    return FoundryDictationRefiner(
+        client, settings.refine_deployment_default, credential=credential
     )
 
 

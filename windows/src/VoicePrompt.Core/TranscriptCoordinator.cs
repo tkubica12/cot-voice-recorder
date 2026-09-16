@@ -148,6 +148,14 @@ public sealed class TranscriptCoordinator
             : _clipboard.CopyAsync(entry.Body, ct);
     }
 
+    public Task<ClipboardCopyResult> CopyOriginalAsync(string transcriptId, CancellationToken ct)
+    {
+        var original = _history.Get(transcriptId)?.RawBody;
+        return original is null
+            ? Task.FromResult(ClipboardCopyResult.Empty)
+            : _clipboard.CopyAsync(original, ct);
+    }
+
     private TranscriptHandlingResult Finish(TranscriptHandlingResult result)
     {
         Handled?.Invoke(result);
