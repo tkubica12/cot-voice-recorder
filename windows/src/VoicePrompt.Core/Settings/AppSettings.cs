@@ -25,6 +25,9 @@ public sealed class AppSettings
     [JsonPropertyName("dictation_shortcut")]
     public string DictationShortcut { get; set; } = "Ctrl+Alt+Space";
 
+    [JsonPropertyName("dictation_toggle_shortcut")]
+    public string DictationToggleShortcut { get; set; } = "Ctrl+Alt+Shift+Space";
+
     [JsonPropertyName("dictation_language")]
     public string DictationLanguage { get; set; } = "auto";
 
@@ -38,6 +41,7 @@ public sealed class AppSettings
         AutoStart = AutoStart,
         DictationEnabled = DictationEnabled,
         DictationShortcut = DictationShortcut,
+        DictationToggleShortcut = DictationToggleShortcut,
         DictationLanguage = DictationLanguage,
     };
 

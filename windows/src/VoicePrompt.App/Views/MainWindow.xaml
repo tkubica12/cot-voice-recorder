@@ -120,6 +120,38 @@
         </Grid>
       </TabItem>
 
+      <TabItem Header="_Recovery">
+        <Grid Margin="0,12,0,0">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+          </Grid.RowDefinitions>
+          <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,0,0,8"
+                     Text="Interrupted dictations are encrypted for this Windows user and retained for 48 hours. Recover finishes cloud transcription into History; it never pastes automatically. Use the original account and backend. Recovery storage is limited to 256 MiB." />
+          <ListBox x:Name="RecoveryList" Grid.Row="1" AutomationProperties.Name="Recoverable dictations">
+            <ListBox.ItemTemplate>
+              <DataTemplate>
+                <StackPanel>
+                  <TextBlock Text="{Binding UpdatedAt, StringFormat={}{0:g}}" />
+                  <TextBlock Text="{Binding PendingChunks, StringFormat={}{0} sealed chunks pending (recovery also finishes the audio tail)}" />
+                  <TextBlock Text="{Binding Language, StringFormat={}Language: {0}}" />
+                  <TextBlock Text="{Binding Error}" TextWrapping="Wrap" />
+                </StackPanel>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+          <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,8,0,0">
+            <Button x:Name="RecoverButton" Content="Recover to History" Click="OnRecover" />
+            <Button Content="Refresh" Click="OnRefreshRecovery" Margin="8,0,0,0" />
+            <Button Content="Discard selected" Click="OnDiscardRecovery" Margin="8,0,0,0" />
+          </StackPanel>
+          <TextBlock x:Name="RecoveryStatusText" Grid.Row="3" Style="{StaticResource Caption}"
+                     TextWrapping="Wrap" Margin="0,8,0,0" />
+        </Grid>
+      </TabItem>
+
       <!-- ============================ Settings ============================ -->
       <TabItem Header="_Settings">
         <ScrollViewer Margin="0,12,0,0" VerticalScrollBarVisibility="Auto"
@@ -174,9 +206,11 @@
             <CheckBox x:Name="DictationEnabledCheck" Content="Enable global dictation shortcut"
                       AutomationProperties.Name="Enable dictation" />
             <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap"
-                       Text="Hold the shortcut while speaking into the default microphone; release to transcribe and paste. Esc cancels. Audio is sent to MAI in Azure while you speak, not stored on disk. A small indicator never takes focus. Maximum five minutes per dictation." />
+                       Text="Hold to talk and release to finish, or use the hands-free shortcut to start/stop. Esc discards. There is no five-minute stop. MAI transcribes in the background; a non-activating overlay previews recent words. Encrypted local checkpoints are saved about every two seconds for crash recovery (48-hour retention, 256 MiB storage limit)." />
             <TextBlock Style="{StaticResource Caption}" Text="Shortcut (for example Ctrl+Alt+Space)" Margin="0,8,0,4" />
             <TextBox x:Name="DictationShortcutBox" AutomationProperties.Name="Dictation shortcut" />
+            <TextBlock Style="{StaticResource Caption}" Text="Hands-free start/stop shortcut" Margin="0,8,0,4" />
+            <TextBox x:Name="DictationToggleShortcutBox" AutomationProperties.Name="Hands-free dictation shortcut" />
             <TextBlock Style="{StaticResource Caption}" Text="Recognition language" Margin="0,8,0,4" />
             <ComboBox x:Name="DictationLanguageBox" AutomationProperties.Name="Dictation language">
               <ComboBoxItem Content="Automatic (including Czech / English switching)" />
@@ -186,7 +220,7 @@
             <Button Content="Apply dictation settings" Click="OnApplyDictation"
                     HorizontalAlignment="Left" Margin="0,8,0,0" />
             <TextBlock x:Name="DictationStatusText" Style="{StaticResource Caption}" TextWrapping="Wrap"
-                       Margin="0,6,0,0" Text="Default: Ctrl+Alt+Space. Keep the same input focused until the indicator disappears. Dictation text remains in History and on the clipboard; automatic paste is skipped if focus changes." />
+                       Margin="0,6,0,0" Text="Hold: Ctrl+Alt+Space. Hands-free: Ctrl+Alt+Shift+Space. Hands-free allows switching windows: focus your destination BEFORE stopping. Paste targets the window focused at stop; it may paste into the wrong input if you choose the wrong window. Changing focus while finishing skips paste. Clipboard/History remain the fallback." />
 
             <Separator Margin="0,18" Background="{StaticResource LineBrush}" />
 

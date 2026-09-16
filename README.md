@@ -7,9 +7,16 @@ wrong interface. Record a long, unstructured train of thought on Android, let th
 transcribe and lightly clean it up, then paste the result from the Windows clipboard into
 GitHub Copilot, Copilot, Claude, or any other AI tool.
 
-**Windows dictation:** hold **Ctrl+Alt+Space** while speaking, then release to paste into the
-current app. The tiny recording indicator never takes focus; **Esc** cancels. MAI transcribes
-short chunks in Azure while you speak, without the Android queue/refinement pipeline.
+**Windows dictation:** hold **Ctrl+Alt+Space** while speaking, then release to paste.
+The current source also supports **Ctrl+Alt+Shift+Space** to start/stop hands-free: switch
+windows freely, then focus the intended destination **before stopping**. The non-activating
+overlay previews recent words; **Esc** discards. MAI transcribes short chunks in Azure while
+you speak, without an extra LLM cleanup step. There is no five-minute stop: encrypted local
+checkpoints and a **Recovery** tab protect long/interrupted dictations. Recovery never
+pastes automatically. Clipboard/History remain the fallback if paste is skipped.
+Windows **1.3.1** includes these features and improved overlap-boundary deduplication for
+short words such as "to" and "that". It does not remove repetitions inside individual chunks
+or use a separate LLM cleanup call.
 See the [dictation architecture and operating guide](docs/windows-dictation.md).
 
 ## Downloads

@@ -43,25 +43,27 @@ internal static class Program
                 return 1;
             }
         }
-        if (args.Length != 0)
+        var hotkeysOnly = args.Length == 1 && args[0] == "--hotkeys";
+        if (args.Length != 0 && !hotkeysOnly)
         {
-            Console.Error.WriteLine("Usage: DictationProbe [--live synthetic.wav | --microphone | --editor-live synthetic.wav | --hotkey-burst app.dll]");
+            Console.Error.WriteLine("Usage: DictationProbe [--live synthetic.wav | --microphone | --editor-live synthetic.wav | --hotkeys | --hotkey-burst app.dll]");
             return 2;
         }
         try
         {
             var app = new System.Windows.Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+            RunNativeHotkeys();
+            if (hotkeysOnly)
+            {
+                app.Shutdown();
+                return 0;
+            }
             Require(CultureInfo.GetCultureInfo(1033).Name == "en-US", "Windows input culture is unavailable.");
             _ = InputLanguageManager.Current.CurrentInputLanguage;
             var textData = new System.Windows.DataObject(System.Windows.DataFormats.UnicodeText, "dictation probe");
             Require((string)textData.GetData(System.Windows.DataFormats.UnicodeText) == "dictation probe",
                 "WPF Unicode text data failed.");
             Console.WriteLine("PASS Windows input culture and WPF Unicode text data.");
-            using var shortcut = new DictationHotkey();
-            shortcut.Configure(true, "Ctrl+Alt+F23");
-            shortcut.Configure(true, "Ctrl+Alt+F23");
-            shortcut.Configure(true, "Ctrl+Shift+F23");
-            shortcut.Configure(false, "");
             var focus = GetForegroundWindow();
             var indicator = new DictationIndicator();
             indicator.Present("Dictation test", 0.5);
@@ -97,18 +99,265 @@ internal static class Program
             var type = assembly.GetType("VoicePrompt.App.Services.DictationHotkey", throwOnError: true)!;
             var constructor = type.GetConstructor(BindingFlags.Instance | BindingFlags.NonPublic,
                 null, [typeof(Func<int, bool>)], null);
+            var down = new HashSet<int>();
             using var shortcut = (IDisposable)(constructor is not null
-                ? constructor.Invoke([(Func<int, bool>)(_ => true)]) : Activator.CreateInstance(type)!);
+                ? constructor.Invoke([(Func<int, bool>)down.Contains]) : Activator.CreateInstance(type)!);
             var source = (HwndSource)type.GetField("_source", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(shortcut)!;
             var actions = 0;
             (type.GetEvent("Pressed") ?? type.GetEvent("Toggle"))!.AddEventHandler(shortcut, (Action)(() => actions++));
-            type.GetMethod("Configure")!.Invoke(shortcut, [true, "Ctrl+Alt+F23"]);
+            var configure = type.GetMethod("Configure")!;
+            configure.Invoke(shortcut, configure.GetParameters().Length == 3
+                ? [true, "Ctrl+Alt+F23", "Ctrl+Alt+Shift+F23"] : [true, "Ctrl+Alt+F23"]);
+            down.UnionWith([0x11, 0x12, 0x86]);
             for (var repeat = 0; repeat < 40; repeat++)
-                SendMessage(source.Handle, 0x0312, new IntPtr(0x5640), IntPtr.Zero);
-            Console.WriteLine($"{(actions == 1 ? "PASS" : "FAIL")} hotkey burst: 40 notifications produced {actions} toggles (expected 1).");
+                SendMessage(source.Handle, 0x0312, new IntPtr(0x5640), new IntPtr((0x86 << 16) | 3));
+            Console.WriteLine($"{(actions == 1 ? "PASS" : "FAIL")} hotkey burst: 40 notifications produced {actions} presses (expected 1).");
             return actions == 1 ? 0 : 1;
         }
         finally { context.Unload(); }
+    }
+
+    private static void RunNativeHotkeys()
+    {
+        const int control = 0x11, alt = 0x12, shift = 0x10, windows = 0x5B, escape = 0x1B;
+        const int f23 = 0x86, f24 = 0x87;
+        const uint holdModifiers = 3, toggleModifiers = 7;
+        var down = new HashSet<int>();
+        using var shortcut = new DictationHotkey(down.Contains);
+        var presses = 0;
+        var releases = 0;
+        var toggles = 0;
+        var cancels = 0;
+        shortcut.Pressed += () => presses++;
+        shortcut.Released += () => releases++;
+        shortcut.TogglePressed += () => toggles++;
+        shortcut.Cancel += () => cancels++;
+        void Keys(params int[] keys)
+        {
+            down.Clear();
+            down.UnionWith(keys);
+            shortcut.ObserveKeyState();
+        }
+        void Notify(int id, int key, uint modifiers, int count = 1)
+        {
+            for (var repeat = 0; repeat < count; repeat++)
+                SendMessage(shortcut.Handle, 0x0312, new IntPtr(id), new IntPtr((long)(((uint)key << 16) | modifiers)));
+        }
+        void Hold(int count = 1) => Notify(shortcut.HoldRegistrationId, f23, holdModifiers, count);
+        void Toggle(int count = 1) => Notify(shortcut.ToggleRegistrationId, f23, toggleModifiers, count);
+        void Reject(Action action, string message)
+        {
+            var rejected = false;
+            try { action(); }
+            catch (Exception ex) when (ex is ArgumentException or System.ComponentModel.Win32Exception)
+            {
+                rejected = true;
+            }
+            Require(rejected, message);
+        }
+
+        shortcut.Configure(true, "Ctrl+Alt+F23", "Ctrl+Alt+Shift+F23");
+        var originalHoldId = shortcut.HoldRegistrationId;
+        var originalToggleId = shortcut.ToggleRegistrationId;
+        shortcut.Configure(true, "Ctrl+Alt+F23", "Ctrl+Alt+Shift+F23");
+        Require(shortcut.HoldRegistrationId == originalHoldId && shortcut.ToggleRegistrationId == originalToggleId,
+            "Unchanged shortcuts were re-registered.");
+        Keys(control, alt, shift, f23);
+        Toggle(40);
+        Require(toggles == 1 && presses == 0 && releases == 0, "Toggle autorepeat produced multiple actions.");
+        Keys(control, alt, f23);
+        Hold(40);
+        Require(presses == 0 && releases == 0, "Releasing Shift from toggle synthesized hold-to-talk.");
+        Keys();
+        Toggle();
+        Require(toggles == 1 && releases == 0, "Toggle release/stale notification emitted an action.");
+        Keys(control, alt, shift, f23);
+        Toggle(40);
+        Require(toggles == 2, "Second physical toggle press did not produce exactly one action.");
+        Keys();
+
+        Keys(control, alt, f23);
+        Hold(40);
+        Require(presses == 1 && releases == 0, "Hold press autorepeat was not suppressed.");
+        Keys(control, alt, shift, f23);
+        Toggle(40);
+        Require(toggles == 2 && releases == 1, "Adding Shift to hold synthesized a toggle or missed hold release.");
+        Keys(control, alt, f23);
+        Hold(40);
+        Require(presses == 1 && releases == 1, "Modifier-only transitions rearmed the hold latch.");
+        Keys();
+        Keys(control, alt, f23);
+        Hold();
+        Keys(control, alt);
+        Require(presses == 2 && releases == 2, "Second physical hold press/release was not retained.");
+
+        Keys(control, alt, f23);
+        Toggle();
+        Keys(control, alt, shift, f23);
+        Toggle();
+        Require(toggles == 2, "Incomplete toggle chord was accepted or rearmed by adding Shift.");
+        Keys();
+        Keys(control, f23);
+        Hold();
+        Require(presses == 2, "Hold chord without Alt was accepted.");
+        Keys();
+        Keys(control, alt, windows, f23);
+        Hold();
+        Require(presses == 2, "Unexpected Windows modifier was ignored.");
+        Keys();
+        Keys(control, alt, shift, windows, f23);
+        Toggle();
+        Require(toggles == 2, "Unexpected toggle modifier was ignored.");
+        Keys();
+        Keys(control, alt, f23);
+        Notify(shortcut.HoldRegistrationId, f24, holdModifiers);
+        Notify(shortcut.HoldRegistrationId, f23, toggleModifiers);
+        Require(presses == 2, "Mismatched native key/modifier payload was accepted.");
+        Hold();
+        Require(presses == 3, "Rejected stale payload incorrectly consumed a valid press.");
+        Keys();
+
+        shortcut.EnableCancel(true);
+        Notify(0x5641, escape, 0);
+        Require(cancels == 0, "Stale Escape notification was accepted.");
+        Keys(escape);
+        Notify(0x5641, escape, 0, 40);
+        shortcut.EnableCancel(false);
+        shortcut.EnableCancel(true);
+        Notify(0x5641, escape, 0, 40);
+        Require(cancels == 1, "Cancel autorepeat gate was reset during registration changes.");
+        Keys();
+        Keys(escape);
+        Notify(0x5641, escape, 0);
+        Require(cancels == 2, "Second physical Escape press did not rearm.");
+        shortcut.EnableCancel(false);
+        Keys();
+        Keys(control, alt, shift, f23);
+        Toggle();
+        var beforeCancel = toggles;
+        shortcut.EnableCancel(true);
+        down.Add(escape);
+        Notify(0x5641, escape, 0);
+        shortcut.EnableCancel(false);
+        down.Remove(escape);
+        shortcut.ObserveKeyState();
+        Toggle(40);
+        Require(toggles == beforeCancel, "Cancel/start/stop registration changes rearmed the toggle gate.");
+
+        shortcut.Configure(false, "");
+        Toggle();
+        Hold();
+        Require(toggles == beforeCancel && presses == 3, "Disabled shortcuts emitted an action.");
+        shortcut.Configure(true, "Ctrl+Alt+F23", "Ctrl+Alt+Shift+F23");
+        Toggle(40);
+        Require(toggles == beforeCancel, "Re-enabling while held rearmed the toggle gate.");
+        Keys();
+        Keys(control, alt, shift, f23);
+        Toggle();
+        Require(toggles == beforeCancel + 1, "Re-enabled toggle failed after physical release.");
+        Keys();
+
+        var oldHoldId = shortcut.HoldRegistrationId;
+        var oldToggleId = shortcut.ToggleRegistrationId;
+        shortcut.Configure(true, "Ctrl+Shift+F23", "Alt+Shift+F23");
+        Keys(control, alt, f23);
+        Notify(oldHoldId, f23, holdModifiers);
+        Keys();
+        Keys(control, alt, shift, f23);
+        Notify(oldToggleId, f23, toggleModifiers);
+        Require(presses == 3 && toggles == beforeCancel + 1, "Stale IDs survived shortcut reconfiguration.");
+        Keys();
+        Keys(control, shift, f23);
+        Notify(shortcut.HoldRegistrationId, f23, 6);
+        Keys();
+        Keys(alt, shift, f23);
+        Notify(shortcut.ToggleRegistrationId, f23, 5);
+        Require(presses == 4 && toggles == beforeCancel + 2, "Replacement shortcut pair did not work.");
+        Keys();
+        shortcut.Configure(true, "Ctrl+Alt+F23", "Ctrl+Alt+Shift+F23");
+
+        Reject(() => shortcut.Configure(true, "Ctrl+Alt+F23", "Alt+Ctrl+F23"), "Identical gestures were allowed.");
+        Reject(() => shortcut.Configure(true, "Ctrl+Alt+F23", "Shift+F23"), "Modifier-only shortcut restriction failed.");
+        Reject(() => shortcut.Configure(true, "Ctrl+Escape", "Ctrl+Alt+Shift+F23"), "Escape was accepted as hold shortcut.");
+        Reject(() => shortcut.Configure(true, "Ctrl+Alt+F23", "not-a-shortcut"), "Malformed toggle shortcut was accepted.");
+        Reject(() => shortcut.Configure(true, "Ctrl+LeftShift", "Ctrl+Alt+Shift+F23"), "Modifier key was accepted as primary key.");
+
+        using (var competitor = new HwndSource(new HwndSourceParameters("VoicePrompt hotkey conflict probe")
+        {
+            ParentWindow = new IntPtr(-3),
+            WindowStyle = 0,
+        }))
+        {
+            const int competingId = 0x5650;
+            Require(RegisterHotKey(competitor.Handle, competingId, 0x4000 | toggleModifiers, f24),
+                "Cannot reserve conflict-test shortcut Ctrl+Alt+Shift+F24.");
+            try
+            {
+                var holdId = shortcut.HoldRegistrationId;
+                var toggleId = shortcut.ToggleRegistrationId;
+                Reject(() => shortcut.Configure(true, "Ctrl+Alt+F24", "Ctrl+Alt+Shift+F24"),
+                    "Toggle registration conflict was not reported.");
+                Require(shortcut.HoldRegistrationId == holdId && shortcut.ToggleRegistrationId == toggleId,
+                    "Toggle conflict changed the old shortcut pair.");
+                Require(RegisterHotKey(competitor.Handle, competingId + 1, 0x4000 | holdModifiers, f24),
+                    "Failed pair leaked the staged hold registration.");
+                UnregisterHotKey(competitor.Handle, competingId + 1);
+                Reject(() => shortcut.Configure(true, "Ctrl+Alt+Shift+F24", "Ctrl+Shift+F24"),
+                    "Hold registration conflict was not reported.");
+                Require(shortcut.HoldRegistrationId == holdId && shortcut.ToggleRegistrationId == toggleId,
+                    "Hold conflict changed the old shortcut pair.");
+                Require(!RegisterHotKey(competitor.Handle, competingId + 2, 0x4000 | holdModifiers, f23),
+                    "Old hold shortcut was not retained at native registration level.");
+                Require(!RegisterHotKey(competitor.Handle, competingId + 3, 0x4000 | toggleModifiers, f23),
+                    "Old toggle shortcut was not retained at native registration level.");
+                Keys(control, alt, f23);
+                Hold();
+                Keys();
+                Keys(control, alt, shift, f23);
+                Toggle();
+                Require(presses == 5 && toggles == beforeCancel + 3,
+                    "Validation/conflict failure broke the original shortcuts.");
+                Keys();
+            }
+            finally
+            {
+                for (var id = competingId; id <= competingId + 3; id++)
+                    UnregisterHotKey(competitor.Handle, id);
+            }
+        }
+
+        var swappedHold = shortcut.ToggleRegistrationId;
+        var swappedToggle = shortcut.HoldRegistrationId;
+        shortcut.Configure(true, "Ctrl+Alt+Shift+F23", "Ctrl+Alt+F23");
+        Require(shortcut.HoldRegistrationId == swappedHold && shortcut.ToggleRegistrationId == swappedToggle,
+            "Swapping shortcuts did not reuse the live registrations.");
+        Keys(control, alt, shift, f23);
+        Notify(shortcut.HoldRegistrationId, f23, toggleModifiers);
+        Keys();
+        Keys(control, alt, f23);
+        Notify(shortcut.ToggleRegistrationId, f23, holdModifiers);
+        Require(presses == 6 && toggles == beforeCancel + 4, "Swapped shortcut roles did not work.");
+        Keys();
+
+        shortcut.Configure(true, "Ctrl+Alt+F23", "Ctrl+Alt+F24");
+        Keys(control, alt, f23);
+        Hold();
+        down.Add(f24);
+        Notify(shortcut.ToggleRegistrationId, f24, holdModifiers, 40);
+        Require(presses == 7 && toggles == beforeCancel + 5, "Different primary keys shared a latch.");
+        down.Remove(f24);
+        shortcut.ObserveKeyState();
+        down.Add(f24);
+        Notify(shortcut.ToggleRegistrationId, f24, holdModifiers, 40);
+        Require(toggles == beforeCancel + 6, "Independent toggle key did not rearm while hold remained down.");
+        Keys();
+        var finalReleases = releases;
+        shortcut.Configure(false, "");
+        Notify(shortcut.HoldRegistrationId, f23, holdModifiers);
+        Notify(shortcut.ToggleRegistrationId, f24, holdModifiers);
+        Require(presses == 7 && toggles == beforeCancel + 6 && releases == finalReleases,
+            "Final disable produced a shortcut callback.");
+        Console.WriteLine("PASS native dual-hotkey repeats, physical release, exact chords, independent latches, stale messages, disable/reconfigure, and transactional conflicts.");
     }
 
     private static void RunDispatcher(Func<Task> action)
@@ -255,6 +504,12 @@ internal static class Program
 
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool RegisterHotKey(IntPtr hwnd, int id, uint modifiers, uint key);
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool UnregisterHotKey(IntPtr hwnd, int id);
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
     private static extern IntPtr GetWindowLongPtr(IntPtr hwnd, int index);
 }

@@ -77,18 +77,18 @@ public sealed class DictationSession : IAsyncDisposable
     public static string Stitch(IEnumerable<(string Text, bool Overlap)> chunks)
     {
         var tokens = new List<string>();
+        var previousTokenCount = 0;
         foreach (var (text, overlap) in chunks)
         {
             var incoming = text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
             var skip = 0;
             if (overlap)
             {
-                for (var count = Math.Min(12, Math.Min(tokens.Count, incoming.Length)); count > 0; count--)
+                for (var count = Math.Min(12, Math.Min(previousTokenCount, Math.Min(tokens.Count, incoming.Length))); count > 0; count--)
                 {
                     var tail = tokens.TakeLast(count).Select(Normalize).ToArray();
                     var head = incoming.Take(count).Select(Normalize);
-                    if (tail.SequenceEqual(head) && tail.Sum(t => t.Length) > 0
-                        && (count >= 2 || tail[0].Length >= 8))
+                    if (tail.SequenceEqual(head) && tail.Any(t => t.Length > 0))
                     {
                         skip = count;
                         break;
@@ -96,6 +96,7 @@ public sealed class DictationSession : IAsyncDisposable
                 }
             }
             tokens.AddRange(incoming.Skip(skip));
+            previousTokenCount = incoming.Length;
         }
         return string.Join(' ', tokens);
     }

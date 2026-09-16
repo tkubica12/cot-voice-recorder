@@ -17,7 +17,7 @@
 ; ---------------------------------------------------------------------------
 
 #define AppName        "VoicePrompt"
-#define AppVersion     "1.2.0"
+#define AppVersion     "1.3.1"
 #define AppPublisher   "tomaskubica"
 #define AppExeName     "VoicePrompt.exe"
 #define AppId          "{{9C1E7A54-3E77-4B27-9E4A-3A5C1E2C0B41}"

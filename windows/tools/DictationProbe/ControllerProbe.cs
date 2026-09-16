@@ -27,12 +27,15 @@ internal static class ControllerProbe
         var starts = 0;
         var desktop = new ProbeDesktop();
         var clipboard = new ProbeClipboard();
+        var targetSnapshots = 0;
         await using var controller = new DictationController(host, notifications, Dispatcher.CurrentDispatcher,
             hotkey, () => { starts++; return capture = new ReplayCapture(); },
-            (text, ct) => DictationDelivery.DeliverAsync(text, desktop, new ClipboardCopier(clipboard), ct));
+            (text, ct) => DictationDelivery.DeliverAsync(text, desktop, new ClipboardCopier(clipboard), ct),
+            () => { targetSnapshots++; return desktop; }, TimeSpan.FromMilliseconds(700));
         controller.Configure();
 
-        void Message(int id = 0x5640) => SendMessage(hotkey.Handle, 0x0312, new IntPtr(id), IntPtr.Zero);
+        void Message(int id = 0x5640) => SendMessage(hotkey.Handle, 0x0312, new IntPtr(id),
+            new IntPtr(id == 0x5641 ? 0x1B << 16 : (0x86 << 16) | (id == hotkey.ToggleRegistrationId ? 7 : 3)));
         async Task Release()
         {
             down.Clear();
@@ -42,6 +45,11 @@ internal static class ControllerProbe
         {
             down.UnionWith([0x11, 0x12, 0x86]);
             Message();
+        }
+        void TogglePress()
+        {
+            down.UnionWith([0x11, 0x12, 0x10, 0x86]);
+            Message(hotkey.ToggleRegistrationId);
         }
 
         Press();
@@ -74,6 +82,7 @@ internal static class ControllerProbe
         Message(0x5641);
         await UntilAsync(() => !controller.IsBusy);
         Require(desktop.Pastes == 1 && host.History.All().Count == 1, "Cancelled capture delivered text.");
+        Require(host.Recovery.List().Count == 0, "Explicit cancellation kept recovery audio.");
 
         await Release();
         Press();
@@ -109,7 +118,76 @@ internal static class ControllerProbe
         Require(desktop.Pastes == 1 && host.History.All().Count == 2,
             "Failed cloud request pasted partial text.");
         Require(notifications.Messages.Count == 3, "Unexpected duplicate error notifications.");
-        Console.WriteLine("PASS controller: cancellation, one silent-session notice, changed-focus fallback, cloud failure without paste.");
+        var pending = host.Recovery.List().Single();
+        Require(pending.PendingChunks == 1, "Cloud failure lost durable pending audio.");
+        host.FailRequests = false;
+        host.RecoveryContext = "different account/backend";
+        try
+        {
+            await controller.RecoverAsync(pending.Id);
+            throw new InvalidOperationException("Recovery accepted a changed account/backend.");
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("original signed-in account")) { }
+        Require(host.Recovery.List().Count == 1, "Wrong-account recovery removed saved audio.");
+        host.RecoveryContext = ProbeHost.DefaultContext;
+        await controller.RecoverAsync(pending.Id);
+        Require(desktop.Pastes == 1 && host.History.All().Count == 3 && host.Recovery.List().Count == 0,
+            "Recovery pasted automatically, lost text, or did not remove finished recovery data.");
+        Console.WriteLine("PASS controller: explicit discard, silence, focus fallback, offline recovery, account/backend binding, no recovery paste.");
+
+        await Release();
+        var beforeSnapshots = targetSnapshots;
+        TogglePress();
+        for (var repeat = 0; repeat < 20; repeat++) Message(hotkey.ToggleRegistrationId);
+        await Release();
+        Require(controller.IsRecording, "Toggle release or repeated native messages stopped recording.");
+        await Task.Run(() => capture!.Emit(VoiceFrame()));
+        desktop.TargetUnchanged = false;
+        Press(); // Hold shortcut must not stop or take over the hands-free recording.
+        await Release();
+        Require(controller.IsRecording, "Hands-free dictation stopped on release of the hold shortcut.");
+        await Task.Delay(150);
+        Require(targetSnapshots == beforeSnapshots + 1, "Hands-free changed destination before stop.");
+        desktop.TargetUnchanged = true;
+        TogglePress();
+        Require(targetSnapshots == beforeSnapshots + 2, "Hands-free did not choose the destination at stop.");
+        await UntilAsync(() => !controller.IsBusy);
+        Require(desktop.Pastes == 2 && clipboard.Text == ProbeHost.Transcript,
+            "Hands-free stop did not deliver to the selected destination.");
+
+        await Release();
+        TogglePress();
+        await Release();
+        await Task.Run(() => capture!.Emit(VoiceFrame()));
+        await controller.InterruptAsync();
+        Require(desktop.Pastes == 2 && host.Recovery.List().Count == 1,
+            "System interruption pasted or discarded the recording.");
+        await controller.RecoverAsync(host.Recovery.List().Single().Id);
+        Require(desktop.Pastes == 2 && host.Recovery.List().Count == 0,
+            "Interrupted-session recovery pasted or retained a finished journal.");
+        Console.WriteLine("PASS controller: hands-free releases ignored, destination captured at stop, interruption preserves audio without paste.");
+
+        await Release();
+        controller.Start();
+        var previewDuringCapture = false;
+        long maxUnsavedBytes = 0;
+        for (var frame = 0; frame < 300; frame++)
+        {
+            await Task.Run(() => capture!.Emit(VoiceFrame()));
+            await Task.Delay(40);
+            Require(controller.IsRecording, "Paced capture failed while writing real DPAPI checkpoints.");
+            var progress = controller.Progress!;
+            previewDuringCapture |= progress.Preview.Length > 0;
+            maxUnsavedBytes = Math.Max(maxUnsavedBytes, progress.CapturedBytes - progress.SavedBytes);
+        }
+        Require(previewDuringCapture, "No recognized text was previewed while recording.");
+        Require(maxUnsavedBytes <= 4 * PcmChunker.BytesPerSecond, "Checkpoint writer fell behind real-time audio.");
+        var tailLatency = Stopwatch.StartNew();
+        controller.Stop();
+        await UntilAsync(() => !controller.IsBusy);
+        Require(desktop.Pastes == 3 && host.Recovery.List().Count == 0,
+            "Paced capture was not delivered or left unfinished recovery data.");
+        Console.WriteLine($"PASS controller: 12-second paced DPAPI capture, live preview, bounded checkpoints; stop-to-complete {tailLatency.ElapsedMilliseconds} ms (controlled transcription).");
     }
 
     internal static int RunEditor(byte[] pcm, Func<byte[], CancellationToken, Task<string>> transcribe)
@@ -241,8 +319,16 @@ internal static class ControllerProbe
             _transcribe = transcribe;
             Directory.CreateDirectory(_root);
             History = new HistoryStore(Path.Combine(_root, "history.json"), PhysicalFileSystem.Instance, Clock);
+            Recovery = new RecoveryStore(Path.Combine(_root, "recovery"), new DpapiSecretProtector(), Clock);
         }
-        public AppSettings Settings { get; } = new() { DictationEnabled = true, DictationShortcut = "Ctrl+Alt+F23" };
+        public AppSettings Settings { get; } = new()
+        {
+            DictationEnabled = true, DictationShortcut = "Ctrl+Alt+F23",
+            DictationToggleShortcut = "Ctrl+Alt+Shift+F23",
+        };
+        internal const string DefaultContext = "https://example.test\nprobe";
+        public string RecoveryContext { get; set; } = DefaultContext;
+        public RecoveryStore Recovery { get; }
         public bool CanDictate => true;
         public bool DictationBusy { get; set; }
         public bool FailRequests { get; set; }
@@ -258,6 +344,8 @@ internal static class ControllerProbe
         }
         public void Dispose()
         {
+            foreach (var item in Recovery.List()) Recovery.Delete(item.Id);
+            Directory.Delete(Path.Combine(_root, "recovery"));
             File.Delete(Path.Combine(_root, "history.json"));
             Directory.Delete(_root);
         }

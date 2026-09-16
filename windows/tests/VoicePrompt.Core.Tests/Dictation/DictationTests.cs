@@ -196,11 +196,34 @@ public class SessionTests
 
     [Theory]
     [InlineData("Deploy Kubernetes.", "kubernetes functions now", true, "Deploy Kubernetes. functions now")]
-    [InlineData("say go", "go now", true, "say go go now")]
+    [InlineData("say go", "go now", true, "say go now")]
+    [InlineData("send it to", "to the editor", true, "send it to the editor")]
+    [InlineData("release with that.", "that and include notes.", true, "release with that. and include notes.")]
+    [InlineData("the release notes", "release notes are ready", true, "the release notes are ready")]
+    [InlineData("chci to", "to poslat", true, "chci to poslat")]
+    [InlineData("say go", "go now", false, "say go go now")]
+    [InlineData("I know that", "that is true", false, "I know that that is true")]
+    [InlineData("very very", "very good", true, "very very good")]
+    [InlineData("write notes", "nodes there", true, "write notes nodes there")]
+    [InlineData("...", "...", true, "... ...")]
     [InlineData("very very", "very very good", false, "very very very very good")]
     [InlineData("use Azure Functions", "azure functions please", true, "use Azure Functions please")]
     public void Deduplication_only_applies_to_actual_overlap(string a, string b, bool overlap, string expected) =>
         Assert.Equal(expected, DictationSession.Stitch(new[] { (a, false), (b, overlap) }));
+
+    [Fact]
+    public void An_empty_chunk_breaks_overlap_matching_with_earlier_text()
+    {
+        Assert.Equal("use Kubernetes Kubernetes again", DictationSession.Stitch(
+            [("use Kubernetes", false), ("", true), ("Kubernetes again", true)]));
+    }
+
+    [Fact]
+    public void Overlap_never_matches_more_than_the_immediately_previous_chunk()
+    {
+        Assert.Equal("alpha beta alpha beta gamma", DictationSession.Stitch(
+            [("alpha beta", false), ("beta", true), ("alpha beta gamma", true)]));
+    }
 
     private static TaskCompletionSource<string> Signal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
     private static async Task WaitUntilAsync(Func<bool> done)
@@ -365,10 +388,13 @@ public class DictationApiTests
         var settings = store.Load();
         Assert.True(settings.DictationEnabled);
         Assert.Equal("Ctrl+Alt+Space", settings.DictationShortcut);
+        Assert.Equal("Ctrl+Alt+Shift+Space", settings.DictationToggleShortcut);
         settings.DictationShortcut = "Ctrl+Shift+D";
+        settings.DictationToggleShortcut = "Ctrl+Alt+D";
         settings.DictationLanguage = "cs";
         store.Save(settings.Clone());
         Assert.Equal("Ctrl+Shift+D", store.Load().DictationShortcut);
         Assert.Equal("cs", store.Load().DictationLanguage);
+        Assert.Equal("Ctrl+Alt+D", store.Load().DictationToggleShortcut);
     }
 }

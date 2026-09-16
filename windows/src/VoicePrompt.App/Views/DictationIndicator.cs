@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Threading;
 using Brushes = System.Windows.Media.Brushes;
 using Color = System.Windows.Media.Color;
 using Orientation = System.Windows.Controls.Orientation;
@@ -26,12 +27,23 @@ public sealed class DictationIndicator : Window
         VerticalAlignment = VerticalAlignment.Center,
         Margin = new Thickness(12, 0, 0, 0),
     };
+    private readonly TextBlock _preview = new()
+    {
+        Foreground = Brushes.White, FontSize = 14, TextWrapping = TextWrapping.Wrap,
+        TextTrimming = TextTrimming.CharacterEllipsis, Height = 62, Margin = new Thickness(12, 8, 12, 4),
+    };
+    private readonly TextBlock _status = new()
+    {
+        Foreground = Brushes.LightGray, FontSize = 11, TextWrapping = TextWrapping.Wrap,
+        Margin = new Thickness(12, 0, 12, 8),
+    };
+    private readonly DispatcherTimer _dismiss = new() { Interval = TimeSpan.FromMilliseconds(900) };
 
     public DictationIndicator()
     {
         Title = "VoicePrompt dictation";
-        Width = 230;
-        Height = 34;
+        Width = 440;
+        Height = 142;
         WindowStyle = WindowStyle.None;
         ResizeMode = ResizeMode.NoResize;
         ShowInTaskbar = false;
@@ -40,9 +52,14 @@ public sealed class DictationIndicator : Window
         Topmost = true;
         AllowsTransparency = true;
         Background = Brushes.Transparent;
-        var panel = new StackPanel { Orientation = Orientation.Horizontal };
-        panel.Children.Add(_dot);
-        panel.Children.Add(_text);
+        var header = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 10, 0, 0) };
+        header.Children.Add(_dot);
+        header.Children.Add(_text);
+        var panel = new StackPanel();
+        panel.Children.Add(header);
+        panel.Children.Add(_preview);
+        panel.Children.Add(_status);
+        _dismiss.Tick += (_, _) => { _dismiss.Stop(); Hide(); };
         Content = new Border
         {
             CornerRadius = new CornerRadius(17),
@@ -57,15 +74,20 @@ public sealed class DictationIndicator : Window
         };
     }
 
-    public void Present(string text, double level = 0, bool recording = true)
+    public void Present(string text, double level = 0, bool recording = true, string preview = "", string status = "",
+        bool dismiss = false)
     {
+        _dismiss.Stop();
         _text.Text = text;
+        _preview.Text = string.IsNullOrWhiteSpace(preview) ? "Recognized words will appear here as you speak." : preview;
+        _status.Text = status;
         _dot.Fill = recording ? Brushes.OrangeRed : Brushes.DodgerBlue;
         _dot.Opacity = recording ? 0.5 + level * 0.5 : 1;
         var area = SystemParameters.WorkArea;
         Left = area.Left + (area.Width - Width) / 2;
         Top = area.Bottom - Height - 18;
         if (!IsVisible) Show();
+        if (dismiss) _dismiss.Start();
     }
 
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]

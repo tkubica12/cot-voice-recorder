@@ -2,10 +2,13 @@ using System.Buffers.Binary;
 
 namespace VoicePrompt.Core.Dictation;
 
-public sealed record AudioChunk(byte[] Wav, bool OverlapsPrevious);
+public sealed record AudioChunk(byte[] Wav, bool OverlapsPrevious, long EndByte = 0);
+
+public sealed record PcmChunkerState(byte[] Audio, byte[] Frame, int SilentFrames, int NewBytes,
+    bool HasSpeech, bool Overlaps, double SilenceRms, long ProcessedBytes, int Version = 1);
 
 /// <summary>16 kHz mono PCM: cut at pauses, with bounded overlapping chunks during continuous speech.</summary>
-public sealed class PcmChunker
+public sealed class PcmChunker : IDisposable
 {
     public const int SampleRate = 16000;
     public const int BytesPerSecond = SampleRate * 2;
@@ -21,6 +24,7 @@ public sealed class PcmChunker
     private int _newBytes;
     private bool _hasSpeech;
     private bool _overlaps;
+    private long _processedBytes;
 
     public PcmChunker(double silenceRms = 120)
     {
@@ -30,6 +34,27 @@ public sealed class PcmChunker
     }
 
     public double Level { get; private set; }
+
+    public PcmChunker(PcmChunkerState state) : this(state.SilenceRms)
+    {
+        if (state.Version != 1 || state.Audio is null || state.Frame is null || state.Audio.Length >= _audio.Length
+            || state.Audio.Length % FrameBytes != 0 || state.Frame.Length >= FrameBytes
+            || state.NewBytes < 0 || state.NewBytes > state.Audio.Length || state.SilentFrames < 0
+            || state.ProcessedBytes < state.Audio.Length || state.ProcessedBytes % 2 != 0)
+            throw new InvalidDataException("Invalid dictation audio checkpoint.");
+        state.Audio.CopyTo(_audio, 0);
+        state.Frame.CopyTo(_frame, 0);
+        _length = state.Audio.Length;
+        _frameLength = state.Frame.Length;
+        _silentFrames = state.SilentFrames;
+        _newBytes = state.NewBytes;
+        _hasSpeech = state.HasSpeech;
+        _overlaps = state.Overlaps;
+        _processedBytes = state.ProcessedBytes;
+    }
+
+    public PcmChunkerState Snapshot() => new(_audio[.._length], _frame[.._frameLength],
+        _silentFrames, _newBytes, _hasSpeech, _overlaps, _silenceRms, _processedBytes);
 
     public IReadOnlyList<AudioChunk> Append(ReadOnlySpan<byte> pcm)
     {
@@ -67,6 +92,7 @@ public sealed class PcmChunker
 
     private void ProcessFrame(ReadOnlySpan<byte> frame, List<AudioChunk> chunks)
     {
+        _processedBytes += frame.Length;
         double energy = 0;
         for (var i = 0; i < frame.Length; i += 2)
         {
@@ -106,7 +132,7 @@ public sealed class PcmChunker
 
     private AudioChunk Emit(bool keepOverlap)
     {
-        var result = new AudioChunk(ToWav(_audio.AsSpan(0, _length)), _overlaps);
+        var result = new AudioChunk(ToWav(_audio.AsSpan(0, _length)), _overlaps, _processedBytes);
         var overlap = keepOverlap ? BytesPerSecond * OverlapMilliseconds / 1000 : 0;
         if (overlap > 0)
             _audio.AsSpan(_length - overlap, overlap).CopyTo(_audio);
@@ -125,6 +151,8 @@ public sealed class PcmChunker
         _length = _newBytes = _frameLength = _silentFrames = 0;
         _hasSpeech = _overlaps = false;
     }
+
+    public void Dispose() => Clear();
 
     public static byte[] ToWav(ReadOnlySpan<byte> pcm)
     {

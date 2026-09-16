@@ -15,6 +15,7 @@ public sealed class AppPaths
         TokensFile = Path.Combine(root, "tokens.bin");
         HistoryFile = Path.Combine(root, "history.json");
         SettingsFile = Path.Combine(root, "settings.json");
+        RecoveryDirectory = Path.Combine(root, "dictation-recovery");
         LogDirectory = Path.Combine(root, "logs");
         LogFile = Path.Combine(LogDirectory, "voiceprompt.log");
     }
@@ -30,6 +31,8 @@ public sealed class AppPaths
 
     /// <summary>User settings (backend URL, notification pause, auto-start intent).</summary>
     public string SettingsFile { get; }
+
+    public string RecoveryDirectory { get; }
 
     public string LogDirectory { get; }
 

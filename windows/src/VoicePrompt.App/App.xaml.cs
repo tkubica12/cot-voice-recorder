@@ -99,6 +99,18 @@ public partial class App : Application
         _dictation = new DictationController(_host, _tray, Dispatcher);
         try
         {
+            _host.Recovery.Cleanup();
+            if (_host.Recovery.List().Count > 0)
+                _tray.Notify("Unfinished dictation", "Open VoicePrompt > Recovery to finish saved dictations. Nothing is pasted automatically.");
+        }
+        catch (Exception ex)
+        {
+            _host.Log.Warn($"dictation: recovery discovery failed ({ex.GetType().Name})");
+            _tray.Notify("Recovery needs attention", "Saved dictation data could not be read. Open Recovery for details.",
+                Core.Notifications.NotificationKind.Warning);
+        }
+        try
+        {
             _dictation.Configure();
         }
         catch (Exception ex)
@@ -166,7 +178,7 @@ public partial class App : Application
         switch (e.Mode)
         {
             case PowerModes.Suspend:
-                Dispatcher.BeginInvoke(() => _dictation?.Cancel());
+                Dispatcher.BeginInvoke(() => _dictation?.Interrupt());
                 _host?.Realtime.Suspend();
                 break;
             case PowerModes.Resume:
@@ -182,7 +194,7 @@ public partial class App : Application
     {
         if (e.Reason is SessionSwitchReason.SessionLock or SessionSwitchReason.SessionLogoff
             or SessionSwitchReason.RemoteDisconnect or SessionSwitchReason.ConsoleDisconnect)
-            Dispatcher.BeginInvoke(() => _dictation?.Cancel());
+            Dispatcher.BeginInvoke(() => _dictation?.Interrupt());
     }
 
     private void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)

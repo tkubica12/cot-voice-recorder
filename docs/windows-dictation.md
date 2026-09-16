@@ -2,7 +2,7 @@
 
 ## Decision
 
-Add a Handy-style global push-to-talk shortcut to the existing tray app. Capture the Windows
+Add Handy-style global push-to-talk and hands-free shortcuts to the existing tray app. Capture the Windows
 default microphone locally, transcribe with **MAI-Transcribe-2 in Azure**, and paste the
 complete text once when stopped. This is local capture, **not offline transcription**.
 Android's durable recording/cleanup workflow remains separate and unchanged.
@@ -38,18 +38,32 @@ Express's advertised subsecond platform startup is not an end-to-end transcripti
 - After at least 2 seconds, a 400 ms quiet interval ends a chunk. Continuous speech
   is cut at 6 seconds with 600 ms overlap. Stop flushes remaining speech immediately,
   even when it is shorter than 2 seconds. Never upload an overlap-only tail.
-- Run at most two transcription requests concurrently. Keep at most eight unfinished
-  chunks; overload stops the session explicitly instead of silently dropping audio.
+- Run at most two transcription requests concurrently. Pending chunks live in an encrypted
+  disk journal rather than an unbounded in-memory queue. The microphone-to-checkpoint queue
+  holds at most 50 buffers (about two seconds); disk overload stops explicitly and retains the
+  last durable checkpoint rather than dropping samples silently.
 - Order responses by capture order. Deduplicate punctuation/case-normalized suffix/prefix
   words **only at overlapping boundaries**, preserving repetitions at normal pause boundaries.
-  This heuristic cannot guarantee a perfect seam when the model recognizes overlap differently.
+  Version 1.3.1 also matches single short words (such as "to", "that", or "go"); earlier
+  versions intentionally kept one-word matches shorter than eight characters. Matching is
+  limited to the immediately preceding chunk; an empty result breaks that adjacency.
+  Repetitions inside a chunk are not sanitized. This heuristic cannot guarantee a perfect
+  seam when the model recognizes overlap differently, and can remove an intentional repeat
+  that happens to match across an overlapping boundary. It does not correct recognition
+  mistakes or add an LLM/network request.
 - Use MAI's `clean` style with automatic multilingual recognition by default. Czech and English
   can be forced in Settings. There is no separate LLM cleanup round trip.
 - Each desktop request has a 25-second timeout and at most one transient retry, plus the
   existing one-time token refresh on 401. The API has a 20-second response deadline, four
   model-call slots per process and no hidden model retry. Timeout slots remain occupied
   until the underlying synchronous request really finishes.
-- Limit a session to five minutes, then stop and finish automatically.
+- No fixed five-minute recording limit. Checkpoint every two seconds of captured audio and
+  whenever a chunk is sealed, without cutting/restarting capture. The checkpoint includes the
+  exact partial frame, pre-roll and overlap state, so restarting does not create new seams.
+- Transient cloud failures back off while capture/checkpointing continues. Authentication or
+  configuration failures pause uploads until explicit recovery. Release/stop waits at most
+  30 seconds for remaining results; if still pending, retain the session for Recovery, never
+  paste an incomplete transcript as though it were finished.
 
 Stop-to-text latency is the remaining work for any unfinished chunks, usually the final
 short chunk rather than the complete recording. Stop-to-delivery additionally includes
@@ -58,8 +72,11 @@ to be released. No fixed cloud latency guarantee is claimed.
 
 ## Desktop behavior and safeguards
 
-Default shortcut: hold **Ctrl+Alt+Space** while speaking; release to finish and paste. **Escape** cancels
-while recording or transcribing. Settings can disable dictation or change the shortcut/language.
+Default shortcuts: hold **Ctrl+Alt+Space** while speaking; release to finish and paste.
+Press **Ctrl+Alt+Shift+Space** once to start hands-free, and again to stop. Release does not
+stop hands-free capture. The hold shortcut does not take over an active hands-free session
+and the toggle shortcut does not take over a hold-to-talk session. **Escape** discards
+while recording or transcribing. Settings can disable dictation or change both shortcuts/language.
 Shortcut collisions are reported rather than ignored. The temporary Escape binding is released
 as soon as the session finishes.
 Each shortcut press is latched until the trigger or a required modifier is released,
@@ -67,12 +84,20 @@ independently of Windows' `MOD_NOREPEAT`. Holding the shortcut must not repeated
 sessions. Release detection samples the chord every 20 ms only while a shortcut is held;
 there is no fixed cooldown. Queued messages for an already released chord are ignored.
 
-The 230 by 34 DIP indicator is topmost, click-through, `WS_EX_NOACTIVATE`, absent from
-the taskbar, and only visible while recording or processing. It does not take keyboard focus.
-Its dot reflects microphone energy; blue indicates transcription.
+The fixed 440 by 142 DIP indicator is topmost, click-through, `WS_EX_NOACTIVATE`, and absent
+from the taskbar. It does not take keyboard focus. "Listening" stays stable while transcription
+runs concurrently; the latest approximately 30 words (bounded to 220 Unicode code points)
+appear only as the contiguous, ordered transcript advances. Later results cannot jump ahead
+of missing earlier chunks. Separate saved-audio and transcribed-through timestamps distinguish
+recognition from durable capture. "Finishing" and a brief "Pasted"/"Saved - paste skipped"
+status complete the interaction. There is no incremental clipboard paste.
 
-The app captures the foreground HWND, process/thread and native focused child at start,
-then checks for changes during capture and before paste. It never activates another window.
+Hold-to-talk captures the foreground HWND, process/thread and native focused child at start,
+then checks for changes during capture and before paste. Hands-free allows focus changes while
+recording and instead selects the destination at **stop**; keep that input focused while
+finishing. It never activates another window. Selecting the wrong input at stop can paste
+into that input; it is not guaranteed to "fail safely" merely because it was not your intended
+destination.
 If focus changes, modifiers remain held, the clipboard changes, or Windows rejects input
 (for example an elevated target), it skips automatic paste and reports the clipboard/history
 fallback. Applications with multiple custom-drawn editors sharing one native focus HWND
@@ -83,10 +108,52 @@ the previous clipboard is deliberately not restored because delayed restoration 
 a subsequent user copy. If clipboard access fails, recover from History. Background Android
 auto-copy is suppressed during dictation so it does not normally replace dictation text.
 
-Cancellation, sign-out, Windows lock/disconnect, suspend and normal exit stop capture.
-Failed or cancelled sessions never paste successful partial chunks. Audio is held in bounded
-memory, not saved to disk, and request buffers are cleared on completion. In-flight cloud
-requests already sent cannot be recalled by cancelling locally.
+Explicit Escape stops and discards the journal. Sign-out, Windows lock/disconnect, suspend and
+normal exit stop without paste and preserve recovery. Failed sessions never paste partial chunks.
+In-flight cloud requests already sent cannot be recalled by cancelling locally.
+
+## Durable recovery and privacy
+
+`%LOCALAPPDATA%\VoicePrompt\dictation-recovery` contains current-user DPAPI-encrypted WAV
+chunks and an encrypted manifest containing ordered recognized text, capture state, language
+and account/backend binding. New audio files are durably flushed before atomically replacing
+the matching manifest. Results are committed before their audio is removed. Already recognized
+chunks are not retranscribed on recovery. The full original audio is not archived after recognition.
+Silence gating also retains only its short pre-roll, not an archive of discarded quiet audio.
+The saved cursor describes a recoverable processing checkpoint, not a lossless recording of
+every microphone sample; quiet speech misclassified as silence can still be missed.
+
+The journal is retained until successful History persistence/delivery, explicit discard, or
+48-hour expiry; cleanup runs at startup and periodically while idle. The recovery store has a
+256 MiB quota. Disk/quota/decryption failures surface explicitly. A process crash can lose
+audio since the last completed checkpoint (normally about two seconds, plus queued capture);
+disk failure or an OS forcibly terminating during shutdown can prevent a final checkpoint.
+This is not protection against disk loss or loss of the Windows user encryption keys.
+Completed History remains the existing local text cache, not DPAPI-encrypted.
+
+Open **Recovery**, select a session, and choose **Recover to History**. The original signed-in
+account and backend are required before uploading pending audio. Recovery never chooses a
+paste target or writes the clipboard automatically; select the result in History and Copy.
+Recovery continues while chunks are completing; 30 seconds without progress leaves the
+remaining work saved for a later retry. Escape stops recovery without deleting its saved data.
+Corrupt/unreadable entries remain visible for explicit discard rather than silently disappearing.
+History IDs are derived from the recovery ID so retrying finalization replaces the same item.
+
+## Optional LLM polishing (not enabled)
+
+Windows dictation uses MAI's `clean` transcription style and local overlap deduplication, not
+the Android worker's separate refinement model. A second LLM can improve fillers, repetitions
+and punctuation, but can also alter names, numbers, code or meaning; seeing full context does
+not guarantee perfect correction. Streaming tokens alone does not make a full five-minute
+rewrite complete within one or two seconds.
+
+Before adding this to the fast path, benchmark MAI-only against background, sentence-aware
+polishing windows (for example 30-60 seconds of new text with preceding context and a small
+uncommitted tail). Preserve the raw transcript, allow a strict stop-time budget with raw-text
+fallback, and never replace text after it has been pasted. Compare end-to-end stop-to-ready
+p50/p95, corrections versus meaning-changing edits, Czech/English switching, names/numbers,
+and short versus five-minute recordings. These are proposed experiments, not measured model
+latency or a promise that a particular small model can meet the budget.
 
 ## Verification
 
@@ -102,6 +169,11 @@ Core tests cover actual WAV bytes, irregular buffer boundaries, silence, short u
 hard-cut overlap reconstruction, final flush, concurrency, out-of-order responses, overload,
 cancellation, failure handling, seam deduplication, modifier/focus/clipboard delivery policy,
 binary upload replay after 401, settings compatibility and backend URL changes.
+Recovery tests additionally simulate 20 minutes of capture with blocked cloud requests,
+reopen durable journals after disposal, verify exact audio across checkpoint boundaries,
+exercise out-of-order preview, retries, quota failures, encryption/corruption/retention and
+Unicode preview limits. Simulated capture runs faster than real time; it does not establish
+real-cloud throughput or accuracy.
 
 The native probe checks real hotkey registration/reconfiguration, indicator HWND styles and
 focus preservation, and actual x64 INPUT marshalling size. It enumerates but does not record
@@ -109,7 +181,9 @@ microphones or send global paste input. It also pumps the real WPF dispatcher an
 actual dictation controller with repeated native hotkey messages, worker-thread audio callbacks,
 and controlled transcription/delivery. It checks that a held start/stop shortcut produces
 one session and one delivery on release (including modifier release), cancellation never pastes, silence reports once, changed focus
-falls back, and cloud failure does not paste partial results. The separate `--microphone` probe opens the default
+falls back, and cloud failure does not paste partial results. It also checks hands-free release
+behavior, destination selection at stop, encrypted recovery, interrupted capture, and
+account/backend binding. The separate `--microphone` probe opens the default
 microphone for 240 ms, verifies capture and stop, and discards all samples without upload or
 disk storage. The opt-in live probe uses the installed app's normal
 Google credentials without printing tokens, sends a synthetic PCM WAV, verifies recognized
@@ -120,6 +194,21 @@ The opt-in `--editor-live` probe adds the real controller, cloud endpoint, clipb
 leave it focused until the on-screen result appears. It replays synthetic capture, verifies
 the editor contains exactly one transcript after its prefix, never sends Enter, and uses
 isolated temporary history instead of the user's history.
+
+### Long-session validation
+
+The full Windows core suite passed **297 tests**, including an accelerated 20-minute offline
+capture followed by ordered recovery. Native dual-shortcut, controller, interruption and
+recovery checks passed. A 12-second paced synthetic capture exercised real Windows DPAPI
+checkpoints and live preview without the checkpoint writer falling behind; one recorded run
+completed 182 ms after stop. This uses controlled transcription and a test clipboard, **not
+a measured live MAI response or real foreground paste latency**. The desktop build completed
+without warnings or errors. A local Windows 1.3.0 installer was subsequently built and
+installed successfully, preserving existing settings and OAuth configuration. Version
+1.3.1 packages these changes together with the short-word overlap fix. The Android APK
+distributed alongside it remains the unchanged signed 1.2.0 build.
+Release 1.3.1 passed the expanded **309-test** core suite and the native/controller probes,
+including short-word stitching in preview, final text and reopened recovery results.
 
 Manual end-to-end acceptance: focus an ordinary text editor, hold the shortcut, speak Czech/English,
 release, verify text once; repeat with Escape and with another window selected, checking

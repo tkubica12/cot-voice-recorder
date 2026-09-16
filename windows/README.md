@@ -8,11 +8,19 @@ connection** (the backend is never polled) and when a `transcript.completed` eve
 fetches the transcript, copies it to the clipboard, and shows a tray notification. A compact
 settings/history window lists recent transcripts; selecting an old one copies it again.
 
-Version 1.2 uses **push-to-talk Windows dictation**: hold **Ctrl+Alt+Space**, speak into the default
-microphone, and release to paste into the focused app. A tiny, non-activating indicator
-shows recording/transcription; **Esc** cancels. Audio is transcribed by **MAI-Transcribe-2
-in Azure**, not an offline model. Settings offers enable/disable, shortcut and language;
-automatic language detection is the default.
+**Windows dictation:** hold **Ctrl+Alt+Space**, speak into the default microphone, and release
+to paste. Current source adds **Ctrl+Alt+Shift+Space** for hands-free start/stop; focus the
+destination before stopping (it is selected at stop, not start). Both shortcuts are configurable.
+A fixed-size, non-activating overlay shows recent recognized words and saved/transcribed progress.
+**Esc** discards. Long sessions no longer stop at five minutes: audio checkpoints are encrypted
+with current-user DPAPI about every two seconds, with a 48-hour recovery retention and a
+256 MiB recovery-store limit. Cloud failures retain a durable backlog. Open **Recovery** to
+finish interrupted audio into History, without automatic paste. Clipboard/History are the
+normal paste fallback. **MAI-Transcribe-2 in Azure** uses `clean` style with no additional LLM
+cleanup call; automatic language detection remains the default.
+Windows **1.3.1** includes long-session recovery, hands-free mode and improved short-word
+deduplication at overlapping chunk boundaries. Repetitions inside individual chunks are left
+unchanged; this is not an LLM rewrite.
 The updated backend is required. See [dictation design, safeguards, tests and rollback](../docs/windows-dictation.md).
 
 - **Contract:** [`../openapi/voice-recorder.yaml`](../openapi/voice-recorder.yaml).

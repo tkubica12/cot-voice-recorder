@@ -9,6 +9,7 @@ using VoicePrompt.Core.Infrastructure;
 using VoicePrompt.Core.Notifications;
 using VoicePrompt.Core.Realtime;
 using VoicePrompt.Core.Settings;
+using VoicePrompt.Core.Dictation;
 
 namespace VoicePrompt.App;
 
@@ -23,7 +24,7 @@ namespace VoicePrompt.App;
 /// </summary>
 public sealed class AppHost : IAsyncDisposable, IDictationHost
 {
-    public const string AppVersion = "1.2.0";
+    public const string AppVersion = "1.3.1";
 
     private static readonly TimeSpan CleanupInterval = TimeSpan.FromMinutes(30);
 
@@ -81,6 +82,8 @@ public sealed class AppHost : IAsyncDisposable, IDictationHost
     public IAutoStartManager AutoStart { get; }
     public ApiClient DictationApi { get; private set; } = null!;
     public bool DictationBusy { get; set; }
+    public RecoveryStore Recovery { get; private set; } = null!;
+    public string RecoveryContext => Settings.BackendBaseUrl + "\n" + Auth.Status.Email;
     bool IDictationHost.CanDictate => Auth.Status.CanCallBackend;
     Task<string> IDictationHost.TranscribeAsync(byte[] wav, string language, CancellationToken ct) =>
         DictationApi.TranscribeDictationAsync(wav, language, ct);
@@ -148,6 +151,7 @@ public sealed class AppHost : IAsyncDisposable, IDictationHost
             paths, log, clock, settings, settingsStore, auth, api, apiHttp, tokenHttp,
             history, coordinator, realtime, autoStart, desktopConfig is not null, firstRun);
         host._dictationHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(25) };
+        host.Recovery = new RecoveryStore(paths.RecoveryDirectory, protector, clock);
         host.DictationApi = new ApiClient(host._dictationHttp, new AuthBackendCredentials(auth),
             new ApiRetryOptions { MaxRetries = 1 },
             baseUrl: () => new Uri(settings.BackendBaseUrl + "/"));
@@ -221,6 +225,7 @@ public sealed class AppHost : IAsyncDisposable, IDictationHost
             try
             {
                 var removed = History.Cleanup();
+                if (!DictationBusy) Recovery.Cleanup();
                 if (removed > 0)
                 {
                     Log.Info($"cache: pruned {removed} expired transcript(s)");
