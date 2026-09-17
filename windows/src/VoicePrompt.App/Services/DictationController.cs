@@ -137,7 +137,7 @@ public sealed class DictationController : IAsyncDisposable
                 {
                     using var requestCancel = CancellationTokenSource.CreateLinkedTokenSource(ct, sessionToken);
                     return await RefineAsync(text, previous, context, requestCancel.Token).ConfigureAwait(false);
-                }, timeProvider: _polishTimeProvider);
+                }, timeProvider: _polishTimeProvider, log: _host.Log);
             }
             _audio = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(50)
             {
@@ -375,7 +375,6 @@ public sealed class DictationController : IAsyncDisposable
                 return;
             }
             SaveHistory(text);
-            var fallbackBlocks = 0;
             if (_polisher is not null)
             {
                 _polishingFinal = true;
@@ -384,7 +383,7 @@ public sealed class DictationController : IAsyncDisposable
                 var polished = await _polisher.CompleteAsync(text, _cancel.Token);
                 _cancel.Token.ThrowIfCancellationRequested();
                 text = polished.Text;
-                fallbackBlocks = polished.FallbackBlocks;
+                var fallbackBlocks = polished.FallbackBlocks;
                 SaveHistory(text, polished.RawText, fallbackBlocks);
                 _host.Log.Info($"dictation: background polishing frozen; elapsed-ms={polishingLatency.ElapsedMilliseconds}; successful-windows={polished.SuccessfulBlocks}; raw-tail-words={polished.UnprocessedWords}; fallback-blocks={fallbackBlocks}; last-failure={polished.LastFailure ?? "none"}");
             }
@@ -403,10 +402,6 @@ public sealed class DictationController : IAsyncDisposable
                 _notifier.Notify("Dictation saved", result == DictationDeliveryResult.ClipboardFailed
                     ? "Clipboard busy. Use History to copy the dictation."
                     : "Automatic paste was skipped. Text is on the clipboard and in History.", NotificationKind.Warning);
-            if (fallbackBlocks > 0)
-                _notifier.Notify("Background dictation cleanup failed",
-                    "Some background AI work failed, exceeded its limits, or returned invalid edits; original text was kept. Available earlier edits were retained. See History for the original. An unprocessed ending is normal and does not cause this warning.",
-                    NotificationKind.Warning);
         }
         catch (OperationCanceledException) when (_cancel?.IsCancellationRequested == true) { }
         catch (Exception ex) { ReportFailure(ex); }

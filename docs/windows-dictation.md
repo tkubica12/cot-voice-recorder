@@ -253,8 +253,10 @@ Each request is capped at 4,000 characters and carries up to 150 preceding raw w
 (at most 8,000 characters) as read-only context. JSON requests are capped at 32 KiB.
 Only one physical request runs at a time, with no queue of stale snapshots. Its result
 is tied to exact source-text positions, so incoming text is never replaced accidentally.
-An eight-second request deadline keeps the previous available edits and original text
-on failure. The physical slot stays occupied until an uncooperative call actually exits.
+A 25-second desktop request deadline keeps the previous available edits and original text
+on failure. The backend response deadline and provider HTTP timeout are 20 seconds, leaving
+five seconds of client-side transport headroom. These background limits do not add a final
+AI wait. The physical slot stays occupied until an uncooperative call actually exits.
 When catching up after a stall, the latest window also has a 30-second raw-text arrival-age
 limit. Skipped unprocessed older text stays verbatim and is reported as a real backlog
 fallback; aging already processed overlap is not an error. Accepted edits persist across
@@ -290,7 +292,11 @@ three-line recent-text preview. Version 1.4.2 removes saved/transcribed/pending 
 AI diagnostic details from the popup; diagnostics remain in logs and History, and actionable
 failures still produce notifications. A normal unprocessed ending, or a short recording
 that never dispatched AI, is not counted as a failure and never produces a warning.
-Real request/validation failures produce one aggregated warning, not per-block notifications.
+Version 1.4.3 also suppresses notifications for real optional-AI request/validation failures,
+timeouts and window-limit fallbacks. Each fallback writes a sanitized reason to the diagnostic
+log, and History retains the fallback count and original text. Earlier accepted edits and raw
+text elsewhere are still delivered normally. Transcription, storage and clipboard/paste failures
+continue to produce actionable notifications; this is quiet optional cleanup, not hidden data loss.
 History saves the assembled and raw text together, does not claim the entire transcript was
 checked, and exposes **Copy original**. Both versions share the existing
 unencrypted 48-hour/200-entry cache. Intermediate AI edits exist only in memory; the encrypted
@@ -378,6 +384,24 @@ and History disk failures. With a deliberately stalled LLM, controlled stop-to-c
 was 366 ms, including remaining synthetic transcription and local persistence. The separate
 12-second real-paced encrypted checkpoint scenario completed 254 ms after Stop. Neither
 measurement is a promise about actual microphone or network latency.
+
+### Quiet cleanup deployment (2026-09-17)
+
+The 1.4.3 API revision `ca-api--quiet-143-20260917` is healthy with 100% traffic.
+Its source-only image is
+`crcotvrspddxkti.azurecr.io/voice-recorder-backend@sha256:63b5695b0d911d7e62ac7cc77c7657ee2c3e8dd591ad3ac585f15861545b46be`.
+It reuses the previous locked runtime without dependency, worker, identity or network changes.
+Rollback uses the preceding digest
+`sha256:cc2b24f540a592a1f03d8aeee46ff95f16a831e73ac34586b4988e551568d9eb`.
+Readiness returned 200 and anonymous refinement returned 401.
+
+The Windows core suite passed 379 tests and the backend suite passed 439 tests.
+Native controller scenarios verified quiet network/502/invalid-edit/timeout fallback, one
+History-backed paste, and preserved actionable storage/paste errors. The controlled stalled
+LLM scenario finished 323 ms after Stop with the longer deadline. An actual deployed synthetic
+Czech/English check took 4,382/2,440 ms, and a real background result was frozen in 1 ms
+without a final wait. These samples do not establish production latency percentiles or explain
+historical provider errors. No private recordings or History were resubmitted.
 
 ### Rolling deployment and local installation (2026-09-16)
 

@@ -25,6 +25,9 @@ request and does not wait for AI: one final paste combines available edits with 
 ending. Short dictations may remain entirely original; that is not an error. History keeps
 both versions with **Copy original**. This requires the updated backend and Windows build.
 See the [dictation architecture and operating guide](docs/windows-dictation.md).
+**Windows 1.4.3:** optional AI failures no longer show notifications; diagnostics stay
+in logs and History. Background cleanup allows 20 seconds on the backend and 25 seconds
+in Windows, still with no final AI wait. Storage and paste problems remain visible.
 
 ## Downloads
 

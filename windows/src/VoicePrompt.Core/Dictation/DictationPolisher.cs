@@ -1,4 +1,5 @@
 using System.Text;
+using VoicePrompt.Core.Infrastructure;
 
 namespace VoicePrompt.Core.Dictation;
 
@@ -26,6 +27,7 @@ public sealed record DictationPolishResult(string Text, string RawText, int Fall
 /// </summary>
 public sealed class DictationPolisher : IAsyncDisposable
 {
+    public static readonly TimeSpan DefaultCallTimeout = TimeSpan.FromSeconds(25);
     private const int MaxWindowCharacters = 4000;
     private readonly object _gate = new();
     private readonly Func<string, string, CancellationToken, Task<DictationRefinement>> _refine;
@@ -35,6 +37,7 @@ public sealed class DictationPolisher : IAsyncDisposable
     private readonly TimeSpan _callTimeout;
     private readonly TimeSpan _maxWindowAge;
     private readonly TimeProvider _clock;
+    private readonly ILog _log;
     private readonly List<Patch> _patches = [];
     private readonly List<Coverage> _coverage = [];
     private readonly Queue<Arrival> _arrivals = new();
@@ -57,13 +60,14 @@ public sealed class DictationPolisher : IAsyncDisposable
     public DictationPolisher(
         Func<string, string, CancellationToken, Task<DictationRefinement>> refine,
         int targetWords = 75, int overlapWords = 15, TimeSpan? pendingDelay = null,
-        TimeSpan? callTimeout = null, TimeProvider? timeProvider = null, TimeSpan? maxWindowAge = null)
+        TimeSpan? callTimeout = null, TimeProvider? timeProvider = null, TimeSpan? maxWindowAge = null,
+        ILog? log = null)
     {
         ArgumentNullException.ThrowIfNull(refine);
         if (targetWords < 2 || targetWords > 150) throw new ArgumentOutOfRangeException(nameof(targetWords));
         if (overlapWords < 0 || overlapWords > 20) throw new ArgumentOutOfRangeException(nameof(overlapWords));
         _pendingDelay = pendingDelay ?? TimeSpan.FromSeconds(12);
-        _callTimeout = callTimeout ?? TimeSpan.FromSeconds(8);
+        _callTimeout = callTimeout ?? DefaultCallTimeout;
         _maxWindowAge = maxWindowAge ?? TimeSpan.FromSeconds(30);
         ValidateDuration(_pendingDelay, nameof(pendingDelay));
         ValidateDuration(_callTimeout, nameof(callTimeout));
@@ -73,6 +77,7 @@ public sealed class DictationPolisher : IAsyncDisposable
         _overlapWords = Math.Min(overlapWords, targetWords - 1);
         _refine = refine;
         _clock = timeProvider ?? TimeProvider.System;
+        _log = log ?? NullLog.Instance;
     }
 
     public DictationPolishProgress Progress => Volatile.Read(ref _progress);
@@ -409,6 +414,7 @@ public sealed class DictationPolisher : IAsyncDisposable
     {
         _fallbacks++;
         _lastFailure = reason;
+        _log.Warn($"dictation AI: fallback-block={_fallbacks}; reason={reason}");
     }
 
     private void Publish()

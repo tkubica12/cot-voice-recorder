@@ -47,6 +47,15 @@ from .conftest import FORBIDDEN_TOKEN, make_wav
 PATH = "/v1/dictation/refine"
 
 
+def test_background_deadline_allows_twenty_seconds() -> None:
+    assert TIMEOUT_SECONDS == 20.0
+    service = DictationRefinementService(None)
+    try:
+        assert service._timeout == TIMEOUT_SECONDS
+    finally:
+        service.close()
+
+
 def edits(*values: tuple[str, str, str]) -> str:
     return json.dumps({"edits": values}, ensure_ascii=False)
 

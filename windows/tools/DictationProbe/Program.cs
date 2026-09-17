@@ -547,7 +547,7 @@ internal static class Program
             polisher.Update(firstWindow);
             var recording = Stopwatch.StartNew();
             while (polisher.Progress.SuccessfulBlocks == 0 && polisher.Progress.FallbackBlocks == 0
-                && recording.Elapsed < TimeSpan.FromSeconds(9))
+                && recording.Elapsed < DictationPolisher.DefaultCallTimeout + TimeSpan.FromSeconds(1))
                 await Task.Delay(50);
             Require(polisher.Progress.SuccessfulBlocks > 0, "No real background model response completed before Stop.");
             var tail = Stopwatch.StartNew();

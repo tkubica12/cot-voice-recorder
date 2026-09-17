@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using VoicePrompt.Core.Dictation;
+using VoicePrompt.Core.Tests.Fakes;
 using Xunit;
 
 namespace VoicePrompt.Core.Tests.Dictation;
@@ -454,15 +455,21 @@ public sealed class DictationPolisherTests
     {
         var clock = new ManualClock();
         var requests = new Requests();
+        var log = new RecordingLog();
         await using var polisher = new DictationPolisher(requests.Refine, targetWords: 4,
-            overlapWords: 1, timeProvider: clock);
+            overlapWords: 1, timeProvider: clock, log: log);
         var raw = Words(0, 4);
         polisher.Update(raw);
         var first = await requests.At(0);
         await Until(() => clock.TimerCount > 0);
-        clock.Advance(TimeSpan.FromSeconds(8));
+        clock.Advance(TimeSpan.FromSeconds(24));
+        Assert.Equal(0, polisher.Progress.FallbackBlocks);
+        Assert.False(first.Token.IsCancellationRequested);
+        clock.Advance(TimeSpan.FromSeconds(1));
         await Until(() => polisher.Progress.FallbackBlocks == 1);
         Assert.Contains("timed out", polisher.Progress.LastFailure);
+        Assert.Single(log.Lines);
+        Assert.Contains("Warn: dictation AI: fallback-block=1; reason=Refinement request timed out", log.All);
         await Until(() => first.Token.IsCancellationRequested);
         raw += Words(4, 20);
         polisher.Update(raw);
@@ -480,6 +487,39 @@ public sealed class DictationPolisherTests
         second.Finish(Unchanged(second.Raw));
         await Until(() => polisher.Progress.SuccessfulBlocks == 1);
         Assert.Equal(2, polisher.Progress.FallbackBlocks); // Timeout plus discarded backlog.
+        Assert.Equal(2, log.Lines.Count);
+        Assert.Contains("exceeded the rolling window", log.Lines[1]);
+    }
+
+    [Fact]
+    public async Task Response_after_old_eight_second_deadline_is_accepted_without_adding_a_final_wait()
+    {
+        var clock = new ManualClock();
+        var requests = new Requests();
+        await using var polisher = new DictationPolisher(requests.Refine, targetWords: 4,
+            overlapWords: 1, timeProvider: clock);
+        const string raw = "one two three four ";
+        polisher.Update(raw);
+        var first = await requests.At(0);
+        await Until(() => clock.TimerCount > 0);
+        clock.Advance(TimeSpan.FromSeconds(19));
+        first.Finish(Replace(raw, "one", "ONE"));
+        await Until(() => polisher.Progress.SuccessfulBlocks == 1);
+        var appended = raw + "five six seven ";
+        polisher.Update(appended);
+        var pending = await requests.At(1);
+        polisher.StopScheduling();
+        var completion = polisher.CompleteAsync(appended + "tail", CancellationToken.None);
+        Assert.True(completion.IsCompletedSuccessfully);
+        var result = await completion;
+        Assert.Equal("ONE two three four five six seven tail", result.Text);
+        Assert.Equal(1, result.SuccessfulBlocks);
+        Assert.Equal(0, result.FallbackBlocks);
+        await Until(() => pending.Token.IsCancellationRequested);
+        pending.Finish(Replace(pending.Raw, "seven", "SEVEN"));
+        await pending.Returned.Task;
+        Assert.Equal(result.Text, polisher.Progress.Text);
+        Assert.Equal(2, requests.Items.Count);
     }
 
     [Fact]
@@ -511,7 +551,8 @@ public sealed class DictationPolisherTests
     {
         const string privateText = "private transcript contents four ";
         var requests = new Requests();
-        await using var polisher = new DictationPolisher(requests.Refine, targetWords: 4);
+        var log = new RecordingLog();
+        await using var polisher = new DictationPolisher(requests.Refine, targetWords: 4, log: log);
         polisher.Update(privateText);
         var call = await requests.At(0);
         call.Completion.SetException(cancel
@@ -522,6 +563,9 @@ public sealed class DictationPolisherTests
         Assert.Equal(0, polisher.Progress.SuccessfulBlocks);
         Assert.NotNull(polisher.Progress.LastFailure);
         Assert.DoesNotContain(privateText, polisher.Progress.LastFailure);
+        Assert.Single(log.Lines);
+        Assert.Contains(polisher.Progress.LastFailure!, log.All);
+        Assert.DoesNotContain(privateText, log.All);
         var result = await polisher.CompleteAsync(privateText + "tail", CancellationToken.None);
         Assert.Equal(1, result.FallbackBlocks);
     }
@@ -644,13 +688,18 @@ public sealed class DictationPolisherTests
     public async Task Invalid_provenance_never_changes_raw_and_reports_failure(DictationRefinement response)
     {
         const string raw = "one two three four ";
-        await using var polisher = new DictationPolisher((_, _, _) => Task.FromResult(response), targetWords: 4);
+        var log = new RecordingLog();
+        await using var polisher = new DictationPolisher((_, _, _) => Task.FromResult(response),
+            targetWords: 4, log: log);
         polisher.Update(raw);
         await Until(() => polisher.Progress.FallbackBlocks == 1);
         var result = await polisher.CompleteAsync(raw, CancellationToken.None);
         Assert.Equal(raw, result.Text);
         Assert.Equal(0, result.SuccessfulBlocks);
         Assert.Contains("provenance", result.LastFailure);
+        Assert.Single(log.Lines);
+        Assert.Contains("provenance", log.All);
+        Assert.DoesNotContain(raw, log.All);
     }
 
     [Fact]
@@ -705,16 +754,18 @@ public sealed class DictationPolisherTests
     [Fact]
     public async Task Empty_session_or_normal_unprocessed_tail_is_not_a_failure()
     {
-        await using var empty = new DictationPolisher((_, _, _) => throw new InvalidOperationException());
+        var log = new RecordingLog();
+        await using var empty = new DictationPolisher((_, _, _) => throw new InvalidOperationException(), log: log);
         var emptyResult = await empty.CompleteAsync("", CancellationToken.None);
         Assert.Equal("", emptyResult.Text);
         Assert.Equal(0, emptyResult.UnprocessedWords);
-        await using var tail = new DictationPolisher((_, _, _) => throw new InvalidOperationException());
+        await using var tail = new DictationPolisher((_, _, _) => throw new InvalidOperationException(), log: log);
         tail.Update("normal raw tail");
         var result = await tail.CompleteAsync("normal raw tail", CancellationToken.None);
         Assert.Equal(0, result.FallbackBlocks);
         Assert.Equal(3, result.UnprocessedWords);
         Assert.Null(result.LastFailure);
+        Assert.Empty(log.Lines);
     }
 
     private static string Words(int start, int count) =>

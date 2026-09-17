@@ -211,7 +211,8 @@ managed-identity client, `reasoning_effort=none`, at most 2048 completion tokens
 deployment or dependencies are needed. Gated `VR_USE_FAKE_AI=true` returns unchanged
 text locally. Two dedicated threads per API process allow **two concurrent calls**;
 excess requests return `429` immediately with `Retry-After: 1`. The response
-deadline and upstream HTTP timeout are **8 seconds**. A timed-out or cancelled
+deadline and upstream HTTP timeout are **20 seconds**. Windows allows **25 seconds**
+including transport overhead, but never waits for AI at final assembly. A timed-out or cancelled
 waiter retains its slot until its synchronous work actually ends. Shutdown drains
 work off-loop before closing the dedicated client and credential.
 

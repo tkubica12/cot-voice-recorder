@@ -8,6 +8,7 @@ using System.Windows.Interop;
 using System.Windows.Threading;
 using NAudio.Wave;
 using VoicePrompt.App.Services;
+using VoicePrompt.Core.Api;
 using VoicePrompt.Core.Clipboard;
 using VoicePrompt.Core.Dictation;
 using VoicePrompt.Core.History;
@@ -232,15 +233,33 @@ internal static class ControllerProbe
         Require(notifications.Messages.Count == noticesBefore, "Successful AI cleanup warned unexpectedly.");
         Require(host.RefinementCalls == callsAtStop, "Stop sent a new AI request.");
 
-        host.Refiner = (_, _, _) => Task.FromException<DictationRefinement>(new HttpRequestException("Injected refinement failure."));
-        await StartBackgroundCapture();
-        await UntilAsync(() => controller.PolishProgress?.FallbackBlocks == 1);
-        controller.Stop();
-        await UntilAsync(() => !controller.IsBusy);
-        Require(clipboard.Text == ProbeHost.Transcript && host.History.Latest()!.RefinementFallbackBlocks == 1,
-            "AI failure lost the raw dictation or was not marked as fallback.");
-        Require(notifications.Messages.Count == noticesBefore + 1,
-            "AI failure did not produce exactly one aggregated warning.");
+        Func<string, string, CancellationToken, Task<DictationRefinement>>[] failures =
+        [
+            (_, _, _) => Task.FromException<DictationRefinement>(new HttpRequestException("Injected refinement failure.")),
+            (_, _, _) => Task.FromException<DictationRefinement>(
+                new ApiException(ApiErrorKind.Retryable, 502, null, "Injected provider failure.")),
+            (_, _, _) => Task.FromResult(new DictationRefinement("Invalid unanchored rewrite.", [])),
+            async (_, _, ct) =>
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+                throw new InvalidOperationException("A stalled request must be cancelled.");
+            },
+        ];
+        foreach (var failure in failures)
+        {
+            host.Refiner = failure;
+            pastesBefore = desktop.Pastes;
+            await StartBackgroundCapture();
+            await UntilAsync(() => controller.PolishProgress?.FallbackBlocks == 1);
+            controller.Stop();
+            await UntilAsync(() => !controller.IsBusy);
+            Require(desktop.Pastes == pastesBefore + 1 && clipboard.Text == ProbeHost.Transcript
+                && host.History.Latest() is { RawBody: ProbeHost.Transcript, Body: ProbeHost.Transcript, RefinementFallbackBlocks: 1 },
+                "AI failure lost the raw dictation, duplicated delivery, or was not marked as fallback.");
+            Require(notifications.Messages.Count == noticesBefore,
+                "Optional AI failure interrupted the user with a notification.");
+        }
+        Console.WriteLine("PASS controller: network/502/invalid-edit/timeout fallbacks preserve raw History and one paste without notifications.");
 
         var late = new TaskCompletionSource<DictationRefinement>(TaskCreationOptions.RunContinuationsAsynchronously);
         host.Refiner = (_, _, _) => late.Task;

@@ -24,7 +24,7 @@ from ..problems import (
 
 MAX_BODY_BYTES = 32768
 MAX_CONCURRENT_CALLS = 2
-TIMEOUT_SECONDS = 8.0
+TIMEOUT_SECONDS = 20.0
 logger = get_logger(__name__)
 
 

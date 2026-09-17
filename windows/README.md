@@ -30,6 +30,11 @@ Stop schedules no new AI request and never waits for AI; available edits are
 combined with the original ending after MAI finishes. Short dictations may remain entirely
 original. This normal unprocessed tail does not produce a failure warning. History reports
 actual AI failures and offers **Copy original** alongside normal copying.
+Version **1.4.3** also keeps real optional-AI failures quiet: no failure notification is shown.
+Each fallback reason remains in the diagnostic log, and failed blocks remain marked in History.
+Transcription, storage and clipboard/paste problems still surface actionable notifications.
+Background cleanup now allows 20 seconds on the backend and 25 seconds in Windows, without
+adding a final AI wait. Available corrections are frozen when the final transcription is ready.
 Both versions are in the existing unencrypted, 48-hour local text cache. AI can still make
 mistakes; Recovery restores raw MAI text without running cleanup or pasting.
 The updated backend is required. See [dictation design, safeguards, tests and rollback](../docs/windows-dictation.md).

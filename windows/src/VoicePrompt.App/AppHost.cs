@@ -24,7 +24,7 @@ namespace VoicePrompt.App;
 /// </summary>
 public sealed class AppHost : IAsyncDisposable, IDictationHost
 {
-    public const string AppVersion = "1.4.2";
+    public const string AppVersion = "1.4.3";
 
     private static readonly TimeSpan CleanupInterval = TimeSpan.FromMinutes(30);
 
@@ -159,7 +159,7 @@ public sealed class AppHost : IAsyncDisposable, IDictationHost
         host.DictationApi = new ApiClient(host._dictationHttp, new AuthBackendCredentials(auth),
             new ApiRetryOptions { MaxRetries = 1 },
             baseUrl: () => new Uri(settings.BackendBaseUrl + "/"));
-        host._refinementHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(9) };
+        host._refinementHttp = new HttpClient { Timeout = DictationPolisher.DefaultCallTimeout };
         host.DictationRefinementApi = new ApiClient(host._refinementHttp, new AuthBackendCredentials(auth),
             new ApiRetryOptions { MaxRetries = 0 },
             baseUrl: () => new Uri(settings.BackendBaseUrl + "/"));
