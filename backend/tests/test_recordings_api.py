@@ -42,9 +42,7 @@ def test_create_defaults_model_and_language(client: TestClient, auth: dict[str, 
 
 def test_create_with_new_and_legacy_models(client: TestClient, auth: dict[str, str]) -> None:
     for model in ("gpt-6-luna", "gpt-5.6-luna", "gpt-5.6-terra"):
-        resp = client.post(
-            "/v1/recordings", json=_create_body(refine_model=model), headers=auth
-        )
+        resp = client.post("/v1/recordings", json=_create_body(refine_model=model), headers=auth)
         assert resp.status_code == 201
         assert resp.json()["refine_model"] == model
         rid = resp.json()["recording_id"]

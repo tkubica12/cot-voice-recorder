@@ -395,6 +395,7 @@ def test_release_probe_exact_phrase_removal_preserves_port_and_safety_sentence(
     assert body["text"].endswith(safety_sentence)
     refiner.propose_edits.assert_called_once_with(text, previous_text="")
 
+
 def test_czech_false_start_with_repeated_lead_has_one_cloud_edit(
     client: TestClient, auth: dict[str, str]
 ) -> None:
