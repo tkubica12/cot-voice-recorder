@@ -30,7 +30,7 @@ AZURITE_DEV_CONNECTION_STRING = (
 
 DEFAULT_GLOSSARY_TERMS = (
     "Microsoft, Azure, GitHub, SDK, API, AI, Container Apps, Managed Identity, "
-    "Foundry, Copilot, Backend, Speech-to-text, MAI-Transcribe-2, GPT-5.6 Luna, "
+    "Foundry, Copilot, Backend, Speech-to-text, MAI-Transcribe-2, GPT-5.6 Luna, GPT-6 Luna, "
     "REST API, Blob Storage, Kubernetes, Entra, OpenAI, FastAPI, Python, DevOps, "
     "Terraform, Azure OpenAI, Web PubSub, DNS, OIDC, JWT"
 )
@@ -86,7 +86,7 @@ class Settings(BaseSettings):
     speech_model: str = "MAI-Transcribe-2"
     speech_transcribe_style: TranscribeStyle = "verbatim"
     speech_timeout_seconds: float = 180.0
-    refine_deployment_default: str = "gpt-5.6-luna"
+    refine_deployment_default: str = "gpt-6-luna"
     refine_deployment_alternative: str = "gpt-5.6-terra"
 
     # ------------------------------------------------------------- web pubsub

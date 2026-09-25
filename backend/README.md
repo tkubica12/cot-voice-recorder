@@ -5,9 +5,12 @@
 
 The stateless API and workers that orchestrate the recorder: authenticate the user,
 accept recording sessions and audio chunks, transcribe Czech with `MAI-Transcribe-2`
-through Azure Speech, and refine (`gpt-5.6-luna` default / `gpt-5.6-terra`) through
-Azure AI Foundry, persist
-short-lived transcripts, and push `transcript.completed` events over Azure Web PubSub.
+through Azure Speech, refine through Azure AI Foundry (`gpt-6-luna` default; older
+5.6 Luna/Terra retained for recordings created before the upgrade), persist short-lived
+transcripts, and push `transcript.completed` events over Azure Web PubSub.
+Windows dictation uses a separate, optional refinement endpoint configured by
+`VR_REFINE_DEPLOYMENT_DEFAULT` (`gpt-6-luna` by default); Android recording refinement
+continues to use the model saved at recording creation, defaulting to GPT-6 Luna in new clients.
 
 Implements the contract in [`../openapi/voice-recorder.yaml`](../openapi/voice-recorder.yaml)
 and the behavior in [`../docs/architecture.md`](../docs/architecture.md).
@@ -205,11 +208,11 @@ occurrence in current text. Clear ASR fixes and accidental fillers are allowed;
 intentional repetition/emphasis/counting, ambiguous speech and numeric literals stay.
 No style polishing, synonym substitution or guessing missing words.
 It uses `VR_FOUNDRY_ENDPOINT`, `VR_FOUNDRY_API_VERSION` (2024-10-21),
-`VR_FOUNDRY_SCOPE`, and `VR_REFINE_DEPLOYMENT_DEFAULT` (gpt-5.6-luna), with a dedicated
+`VR_FOUNDRY_SCOPE`, and `VR_REFINE_DEPLOYMENT_DEFAULT` (gpt-6-luna), with a dedicated
 managed-identity client, `reasoning_effort=none`, at most 2048 completion tokens,
-**zero SDK retries**, and **one model call per request**. No new credentials, keys,
-deployment or dependencies are needed. Gated `VR_USE_FAKE_AI=true` returns unchanged
-text locally. Two dedicated threads per API process allow **two concurrent calls**;
+**zero SDK retries**, and **one model call per request**. No client-side model credentials
+or new dependencies are needed. Gated `VR_USE_FAKE_AI=true` returns unchanged text locally.
+Two dedicated threads per API process allow **two concurrent calls**;
 excess requests return `429` immediately with `Retry-After: 1`. The response
 deadline and upstream HTTP timeout are **20 seconds**. Windows allows **25 seconds**
 including transport overhead, but never waits for AI at final assembly. A timed-out or cancelled
@@ -222,7 +225,7 @@ work off-loop before closing the dedicated client and credential.
 | --- | --- |
 | `VR_FOUNDRY_ENDPOINT` | `https://tomaskubica-foundry-resource.cognitiveservices.azure.com/` (or the configured compatible Foundry resource) |
 | `VR_FOUNDRY_API_VERSION` | `2024-10-21` |
-| `VR_REFINE_DEPLOYMENT_DEFAULT` | Existing deployment `gpt-5.6-luna`, not the versioned model name |
+| `VR_REFINE_DEPLOYMENT_DEFAULT` | Deployment `gpt-6-luna`, not the versioned model name; changing this backend setting does not require a Windows update |
 | `VR_FOUNDRY_SCOPE` | Default `https://cognitiveservices.azure.com/.default`; explicit env override is unnecessary |
 | `AZURE_CLIENT_ID` | Existing attached runtime user-assigned managed identity's client ID |
 

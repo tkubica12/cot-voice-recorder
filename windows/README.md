@@ -22,19 +22,28 @@ detection remains the default.
 Windows **1.3.1** includes long-session recovery, hands-free mode and improved short-word
 deduplication at overlapping chunk boundaries. Repetitions inside individual chunks are left
 unchanged; this is not an LLM rewrite.
-**New in 1.4.2:** optional **Polish dictation with GPT-5.6 Luna** in
-Settings is off by default. It sends small text blocks and preceding context through the
+**New in 1.4.2:** optional dictation polishing in
+Settings is off by default. Since 1.4.4 the setting is labeled **Polish dictation with LLM**
+rather than naming a deployment. It sends small text blocks and preceding context through the
 authenticated backend while capture continues, using overlapping text windows rather than
 audio-chunk boundaries or a whole-transcript rewrite. The overlay shows recent text.
-Stop schedules no new AI request and never waits for AI; available edits are
-combined with the original ending after MAI finishes. Short dictations may remain entirely
-original. This normal unprocessed tail does not produce a failure warning. History reports
+Version 1.4.5 adds the configurable stop-time wait and earlier first windows.
+The first text windows start at 20 then 40 words, growing to 75 words; short pending
+text is sent earlier. After Stop, the desktop may wait within the user-configured
+0.5–5 s stop-time budget (1.5 s default) for a single final cleanup of the
+unprocessed ending. Available edits are combined with original text if AI is late.
+The final MAI transcription and clipboard can still exceed that stop-time budget.
+An unprocessed tail does not produce a failure warning. History reports
 actual AI failures and offers **Copy original** alongside normal copying.
+The current backend selects `gpt-6-luna` for Windows dictation. The model is a backend
+deployment setting (`VR_REFINE_DEPLOYMENT_DEFAULT`), not a Windows setting; changing it
+does not require rebuilding the client. Settings only enables or disables polishing.
 Version **1.4.3** also keeps real optional-AI failures quiet: no failure notification is shown.
 Each fallback reason remains in the diagnostic log, and failed blocks remain marked in History.
 Transcription, storage and clipboard/paste problems still surface actionable notifications.
-Background cleanup now allows 20 seconds on the backend and 25 seconds in Windows, without
-adding a final AI wait. Available corrections are frozen when the final transcription is ready.
+Background cleanup allows 20 seconds on the backend and 25 seconds in Windows. The
+optional final request uses only the remaining stop-time budget and cannot extend it.
+Corrections are frozen before delivery; late responses never change pasted text.
 Both versions are in the existing unencrypted, 48-hour local text cache. AI can still make
 mistakes; Recovery restores raw MAI text without running cleanup or pasting.
 The updated backend is required. See [dictation design, safeguards, tests and rollback](../docs/windows-dictation.md).

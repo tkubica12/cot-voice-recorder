@@ -143,10 +143,16 @@ History IDs are derived from the recovery ID so retrying finalization replaces t
 
 ## Optional LLM polishing (off by default)
 
-Windows 1.4.2 includes **Polish dictation with GPT-5.6 Luna** in Settings.
+Windows 1.4.2 introduced optional dictation polishing in Settings; version 1.4.4
+renames the switch **Polish dictation with LLM** to avoid pinning the UI to a model.
 It is opt-in and was not included in the 1.3.1 installer. With it disabled,
 Windows uses only MAI's `clean` transcription style and local overlap deduplication.
-The Android worker's refinement pipeline is unchanged. A second LLM can improve fillers, repetitions
+The current backend default for this separate dictation endpoint is `gpt-6-luna`.
+The Windows switch controls whether polishing runs; it does not select the model.
+To change the model later, configure the backend's `VR_REFINE_DEPLOYMENT_DEFAULT`
+with an existing deployment name and update the API. No client rebuild is needed.
+The Android worker's pipeline remains separate (new recordings now default to GPT-6 Luna).
+A second LLM can improve fillers, repetitions
 and punctuation, but can also alter names, numbers, code or meaning; seeing full context does
 not guarantee perfect correction. Streaming tokens alone does not make a full five-minute
 rewrite complete within one or two seconds.
@@ -245,18 +251,19 @@ run are retained in the session artifacts `llm-benchmark-01` and `llm-benchmark-
 
 The desktop uses **background edit patches**, not a full rewrite at stop or unrestricted
 six-second rewriting. MAI's short audio chunks and immediate preview stay unchanged.
-The polisher operates on overlapping text windows spanning multiple audio chunks. It
-dispatches on sufficient new text or 12 seconds of pending-text age, rather than waiting
-only for a word threshold. The normal window target is roughly 75 words (about 30 seconds,
-depending on speaking rate); the last 15 raw words remain editable in the next window.
+The polisher operates on overlapping text windows spanning multiple audio chunks. Its
+first pending block dispatches at 20 new words or four seconds after text arrives, the
+second at 40 new words or six seconds, then at 75 new words or 12 seconds. Each window
+can include up to 75 words, so a large initial arrival is not truncated; the initial
+overlap is five words, then ten, then 15 for later windows.
 Each request is capped at 4,000 characters and carries up to 150 preceding raw words
 (at most 8,000 characters) as read-only context. JSON requests are capped at 32 KiB.
 Only one physical request runs at a time, with no queue of stale snapshots. Its result
 is tied to exact source-text positions, so incoming text is never replaced accidentally.
 A 25-second desktop request deadline keeps the previous available edits and original text
 on failure. The backend response deadline and provider HTTP timeout are 20 seconds, leaving
-five seconds of client-side transport headroom. These background limits do not add a final
-AI wait. The physical slot stays occupied until an uncooperative call actually exits.
+five seconds of client-side transport headroom. The physical slot stays occupied until
+an uncooperative call actually exits.
 When catching up after a stall, the latest window also has a 30-second raw-text arrival-age
 limit. Skipped unprocessed older text stays verbatim and is reported as a real backlog
 fallback; aging already processed overlap is not an error. Accepted edits persist across
@@ -275,16 +282,43 @@ not retrospectively rewritten when a correction arrives much later; preserve the
 correction and history instead. If ASR changes an already published prefix, the desktop
 invalidates earlier edits and keeps that session raw rather than mixing text revisions.
 
-At stop, **no new AI request is scheduled and there is no final AI wait**. Already running
-work may finish while the remaining MAI audio is transcribed, but cannot launch another
-request. Raw MAI text is written to History first. The result is then frozen immediately,
-combining available edits with original text elsewhere. There is one final paste and no
-late clipboard/history replacement. Remaining MAI work, local storage, clipboard access
-and modifier-key release still take time; this does not promise fully polished output.
+At stop, background scheduling stops while the remaining MAI audio is transcribed. Raw
+MAI text is written to History first. The desktop then uses the remaining user-configured
+0.5–5 second **stop-to-paste** budget (default 1.5 seconds), reserving 250 ms for
+History and clipboard delivery. It may accept an already running response, then send
+one final request for the unsubmitted ending if the physical slot and time remain.
+After the budget expires, available corrections and the original ending are frozen,
+and any later AI response is ignored. There is one paste, no late clipboard/history
+replacement and no fabricated incomplete transcript. Last-chunk MAI work, disk I/O,
+clipboard access and modifier-key release can independently exceed the chosen budget;
+the setting caps only the additional AI wait, not absolute stop-to-paste latency.
+The existing server-side 20-second limit and client-side 25-second limit still bound
+background requests separately.
+
+### Short-dictation latency check (2026-09-25)
+
+Ten local API calls to GPT-6 Luna with a synthetic, roughly 30-word Czech false
+start returned the correct uniquely anchored edit all ten times. Nine calls took
+0.91–1.47 seconds; the first took 5.47 seconds despite warming Azure CLI
+credentials. This is a small synthetic sample, not a latency guarantee or a test
+of real microphone-to-paste timing. In 17 paired local dictation logs, Stop to
+final-text readiness took 0.67–1.48 seconds (median 0.84 seconds); that older
+desktop build did not send a final AI request. With the default 1.5-second
+stop-time limit and 250 ms delivery allowance, median final-text readiness
+would leave roughly 0.41 seconds for a new LLM request. None of these ten
+short-text LLM calls finished that quickly. Most short recordings will
+therefore paste original text at the default unless a background call had
+already started during capture. Users can elect a longer wait (up to five
+seconds); the desktop does not promise that every correction will finish.
 
 The primary prompt objective is removing clear accidental repetitions across the text
 window and its preceding context. It preserves intentional emphasis/counting, prohibits
 stylistic rewrites and guessing missing content, and permits only unambiguous ASR fixes.
+It also describes the Czech abandoned-fragment/repeated-lead case. A cloud-side
+deterministic deletion heuristic was not added: the transcription endpoint processes
+individual audio chunks without stitched context, while a text-only rule cannot reliably
+distinguish a genuine self-correction from an unintended duplicate. The existing LLM
+receives the assembled text in the final window and must return uniquely anchored edits.
 This cannot reconstruct words the speech recognizer omitted.
 
 The compact, non-activating overlay shows only the stable recording/finishing state and a
@@ -463,7 +497,7 @@ was followed by the separately approved deployment and installation below.
 Windows **1.4.0** was installed locally, preserving the settings file and existing OAuth
 configuration. The installed executable and application/core assemblies match the published
 build, and the tray process was restarted. AI cleanup remains **off by default**; enable
-**Polish dictation with GPT-5.6 Luna** in Settings and apply the dictation settings to test it.
+**Polish dictation with LLM** in Settings and apply the dictation settings to test it.
 This local installation is not a new GitHub release.
 
 API revision `ca-api--polish-20260916-1135` is healthy with one warm replica and all API

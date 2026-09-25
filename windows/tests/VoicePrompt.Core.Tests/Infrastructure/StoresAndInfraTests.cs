@@ -357,6 +357,7 @@ public class SettingsStoreTests
         Assert.Equal(AppSettings.DefaultBackendBaseUrl, settings.BackendBaseUrl);
         Assert.False(settings.NotificationsPaused);
         Assert.False(settings.AutoStart);
+        Assert.Equal(1500, settings.DictationFinalWaitMilliseconds);
     }
 
     [Fact]
@@ -370,6 +371,7 @@ public class SettingsStoreTests
             BackendBaseUrl = "https://api.example.test",
             NotificationsPaused = true,
             AutoStart = true,
+            DictationFinalWaitMilliseconds = 5000,
         });
 
         var loaded = new SettingsStore(Path, fs).Load();
@@ -377,6 +379,7 @@ public class SettingsStoreTests
         Assert.Equal("https://api.example.test", loaded.BackendBaseUrl);
         Assert.True(loaded.NotificationsPaused);
         Assert.True(loaded.AutoStart);
+        Assert.Equal(5000, loaded.DictationFinalWaitMilliseconds);
     }
 
     [Fact]
@@ -386,6 +389,21 @@ public class SettingsStoreTests
         fs.Seed(Path, "not json");
 
         Assert.Equal(AppSettings.DefaultBackendBaseUrl, new SettingsStore(Path, fs).Load().BackendBaseUrl);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(750)]
+    [InlineData(5500)]
+    public void Invalid_final_wait_resets_only_that_setting(int milliseconds)
+    {
+        var fs = new FakeFileSystem();
+        fs.Seed(Path, $"{{\"auto_start\":true,\"dictation_final_wait_milliseconds\":{milliseconds}}}");
+        var settings = new SettingsStore(Path, fs).Load();
+        Assert.True(settings.AutoStart);
+        Assert.Equal(1500, settings.DictationFinalWaitMilliseconds);
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new SettingsStore(Path, fs).Save(new AppSettings { DictationFinalWaitMilliseconds = milliseconds }));
     }
 
     [Theory]

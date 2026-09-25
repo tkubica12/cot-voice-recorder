@@ -8,7 +8,7 @@
     <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
     <Deterministic>true</Deterministic>
     <NoWarn>$(NoWarn);CA1416</NoWarn>
-    <VoicePromptVersion>1.4.3</VoicePromptVersion>
+    <VoicePromptVersion>1.4.5</VoicePromptVersion>
     <Version>$(VoicePromptVersion)</Version>
     <Company>tomaskubica</Company>
     <Product>VoicePrompt</Product>

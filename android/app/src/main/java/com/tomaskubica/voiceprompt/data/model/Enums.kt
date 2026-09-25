@@ -31,7 +31,8 @@ enum class ChunkUploadState { PENDING, ACKED, FAILED }
 
 /** Allowed refinement models (RefineModel in the contract). */
 enum class RefineModel(val wire: String) {
-    LUNA("gpt-5.6-luna"),
+    LUNA("gpt-6-luna"),
+    LEGACY_LUNA("gpt-5.6-luna"),
     TERRA("gpt-5.6-terra");
 
     companion object {

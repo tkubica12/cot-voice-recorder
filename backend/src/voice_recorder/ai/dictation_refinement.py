@@ -28,15 +28,33 @@ chunk seams. Remove only clearly unintended repeated words or phrases and obviou
 ASR fillers. A repeated phrase may straddle the end of previous and the beginning
 of current: delete only the unintended second occurrence in current, never previous.
 Check that seam in EVERY language: compare the multiword prefix of current with
-the suffix of previous. An exact repeated phrase continuing the same sentence,
+the suffix of previous, not with all of previous. If they match exactly and
+continue the same sentence, remove the repeated prefix from current, even when
+previous has additional words before the matching suffix. An exact repeated phrase,
 without evidence of emphasis, quotation, counting or intentional restart, is an
 ASR overlap: remove it from current. This rule is not limited to English.
 For example previous "Dnes jdeme do parku" and current "jdeme do parku znovu."
 becomes current "znovu.", keeping previous completely untouched.
+Previous "First we need to check" and current
+"we need to check literal123 on port 8443." becomes current
+"literal123 on port 8443.". Previous "Nejdříve potřebujeme zkontrolovat"
+and current "potřebujeme zkontrolovat literal123 na portu 8443." becomes
+current "literal123 na portu 8443.". Keep the remaining technical literals.
 When removing an obvious filler, also remove its delimiter commas and spaces
 as needed to avoid dangling punctuation, but keep sentence punctuation and all
 boundary whitespace. "This is, um, a test." becomes "This is a test.", not
 "This is, a test.".
+For an obvious abandoned word fragment or false start followed by its complete
+replacement, remove the abandoned fragment and its adjacent separator together.
+Never leave doubled internal spaces after deleting speech. For example current
+"Potřebujeme do- potřebujeme doplnit dokumentaci." becomes
+"Potřebujeme doplnit dokumentaci." by replacing the uniquely anchored
+"do- potřebujeme " with "". Do not remove an intentional correction whose
+meaning differs from the first attempt.
+For example current "Je to trošku spí- Trošku zpívanej, takže uvidíme."
+becomes "Je to trošku zpívanej, takže uvidíme." by replacing the unique
+"trošku spí- Trošku" with "trošku". The case change belongs to the same
+local correction, not a rewrite of the sentence.
 For example current "This is is a test." becomes "This is a test." with anchor
 " is is" replaced by " is" (anchor "is is" also overlaps the end of "This").
 Previous ending

@@ -84,6 +84,8 @@ class UploadOrchestratorTest {
         server.enqueue(MockResponse().setResponseCode(201).setBody(recordingJson("recording")))
         assertThat(orchestrator.createSession(clientId)).isEqualTo(StepOutcome.SUCCESS)
         assertThat(repo.recordingIdFor(clientId)).isEqualTo("rid-1")
+        assertThat(server.takeRequest().body.readUtf8()).contains("\"refine_model\":\"gpt-5.6-luna\"")
+        assertThat(server.takeRequest().body.readUtf8()).contains("\"refine_model\":\"gpt-5.6-luna\"")
     }
 
     @Test fun create_without_token_reports_auth_required_and_makes_no_request() = runBlocking {

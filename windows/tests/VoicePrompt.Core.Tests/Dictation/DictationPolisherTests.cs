@@ -8,14 +8,14 @@ namespace VoicePrompt.Core.Tests.Dictation;
 public sealed class DictationPolisherTests
 {
     [Fact]
-    public async Task Pending_raw_triggers_at_twelve_seconds_on_update_tick_not_at_stop()
+    public async Task First_pending_window_triggers_at_four_seconds_on_update_tick()
     {
         var clock = new ManualClock();
         var requests = new Requests();
         await using var polisher = new DictationPolisher(requests.Refine, timeProvider: clock);
         const string raw = "a short utterance";
         polisher.Update(raw);
-        clock.Advance(TimeSpan.FromSeconds(11));
+        clock.Advance(TimeSpan.FromSeconds(3));
         polisher.Update(raw);
         Assert.Empty(requests.Items);
         Assert.Equal(0, polisher.Progress.PendingBlocks);
@@ -33,6 +33,218 @@ public sealed class DictationPolisherTests
         Assert.Equal(0, result.FallbackBlocks);
         Assert.Equal(0, result.UnprocessedWords);
     }
+
+    [Fact]
+    public async Task Early_windows_start_small_then_grow_without_discarding_a_large_first_arrival()
+    {
+        var clock = new ManualClock();
+        var requests = new Requests();
+        await using var polisher = new DictationPolisher(requests.Refine, timeProvider: clock);
+        var raw = Words(0, 20);
+        polisher.Update(raw);
+        var first = await requests.At(0);
+        Assert.Equal(raw, first.Raw);
+        first.Finish(Unchanged(first.Raw));
+        await Until(() => polisher.Progress.SuccessfulBlocks == 1);
+
+        raw += Words(20, 39);
+        polisher.Update(raw);
+        Assert.Single(requests.Items);
+        raw += Words(59, 1);
+        polisher.Update(raw);
+        var second = await requests.At(1);
+        Assert.StartsWith("w15 ", second.Raw);
+        Assert.EndsWith("w59 ", second.Raw);
+        second.Finish(Unchanged(second.Raw));
+        await Until(() => polisher.Progress.SuccessfulBlocks == 2);
+
+        raw += Words(60, 74);
+        polisher.Update(raw);
+        Assert.Equal(2, requests.Items.Count);
+        raw += Words(134, 1);
+        polisher.Update(raw);
+        var third = await requests.At(2);
+        Assert.InRange(WordCount(third.Raw), 1, 75);
+        third.Finish(Unchanged(third.Raw));
+        await Until(() => polisher.Progress.SuccessfulBlocks == 3);
+        Assert.Equal(raw, (await polisher.CompleteAsync(raw, CancellationToken.None)).Text);
+
+        var burst = new Requests();
+        await using var largeArrival = new DictationPolisher(burst.Refine);
+        largeArrival.Update(Words(0, 75));
+        var call = await burst.At(0);
+        Assert.Equal(Words(0, 75), call.Raw);
+        call.Finish(Unchanged(call.Raw));
+        await Until(() => largeArrival.Progress.SuccessfulBlocks == 1);
+        Assert.Equal(0, largeArrival.Progress.FallbackBlocks);
+    }
+
+    [Fact]
+    public async Task Pending_delay_grows_from_four_to_six_to_twelve_seconds()
+    {
+        var clock = new ManualClock();
+        var requests = new Requests();
+        await using var polisher = new DictationPolisher(requests.Refine, timeProvider: clock);
+        var raw = "one ";
+        polisher.Update(raw);
+        clock.Advance(TimeSpan.FromSeconds(4));
+        polisher.Update(raw);
+        var first = await requests.At(0);
+        first.Finish(Unchanged(first.Raw));
+        await Until(() => polisher.Progress.SuccessfulBlocks == 1);
+
+        raw += "two ";
+        polisher.Update(raw);
+        clock.Advance(TimeSpan.FromSeconds(5));
+        polisher.Update(raw);
+        Assert.Single(requests.Items);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        polisher.Update(raw);
+        var second = await requests.At(1);
+        second.Finish(Unchanged(second.Raw));
+        await Until(() => polisher.Progress.SuccessfulBlocks == 2);
+
+        raw += "three ";
+        polisher.Update(raw);
+        clock.Advance(TimeSpan.FromSeconds(11));
+        polisher.Update(raw);
+        Assert.Equal(2, requests.Items.Count);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        polisher.Update(raw);
+        var third = await requests.At(2);
+        third.Finish(Unchanged(third.Raw));
+        await Until(() => polisher.Progress.SuccessfulBlocks == 3);
+        Assert.Equal(raw, (await polisher.CompleteAsync(raw, CancellationToken.None)).Text);
+    }
+
+    [Fact]
+    public async Task Final_short_text_is_sent_once_and_accepted_before_deadline()
+    {
+        var requests = new Requests();
+        await using var polisher = new DictationPolisher(requests.Refine);
+        const string raw = "Trochu spi- trochu zpivane.";
+        polisher.StopScheduling();
+        var completion = polisher.CompleteWithinAsync(raw, TimeSpan.FromSeconds(5), CancellationToken.None);
+        var call = await requests.At(0);
+        Assert.Equal(raw, call.Raw);
+        call.Finish(Replace(raw, "Trochu spi- trochu", "trochu"));
+        var result = await completion;
+        Assert.Equal("trochu zpivane.", result.Text);
+        Assert.Equal(raw, result.RawText);
+        Assert.Equal(0, result.UnprocessedWords);
+        Assert.Equal(1, result.SuccessfulBlocks);
+        Assert.Single(requests.Items);
+    }
+
+    [Fact]
+    public async Task Final_tail_waits_for_existing_request_without_a_second_physical_call()
+    {
+        var requests = new Requests();
+        await using var polisher = new DictationPolisher(requests.Refine, targetWords: 4, overlapWords: 1);
+        const string prefix = "one two wrong four ";
+        const string raw = prefix + "five six seven ";
+        polisher.Update(prefix);
+        var first = await requests.At(0);
+        polisher.StopScheduling();
+        var completion = polisher.CompleteWithinAsync(raw, TimeSpan.FromSeconds(5), CancellationToken.None);
+        Assert.Single(requests.Items);
+        first.Finish(Replace(prefix, "wrong", "right"));
+        var last = await requests.At(1);
+        Assert.Equal("four five six seven ", last.Raw);
+        Assert.Equal("one two wrong ", last.Context);
+        Assert.Equal(1, requests.Peak);
+        last.Finish(Replace(last.Raw, "seven", "SEVEN"));
+        var result = await completion;
+        Assert.Equal("one two right four five six SEVEN ", result.Text);
+        Assert.Equal(0, result.UnprocessedWords);
+        Assert.Equal(2, result.SuccessfulBlocks);
+    }
+
+    [Fact]
+    public async Task Final_deadline_does_not_accept_late_edits_or_start_a_second_request()
+    {
+        var clock = new ManualClock();
+        var requests = new Requests();
+        await using var polisher = new DictationPolisher(requests.Refine, timeProvider: clock);
+        const string raw = "short false start ";
+        var completion = polisher.CompleteWithinAsync(raw, TimeSpan.FromMilliseconds(500), CancellationToken.None);
+        var call = await requests.At(0);
+        await Until(() => clock.TimerCount > 0);
+        clock.Advance(TimeSpan.FromMilliseconds(500));
+        var result = await completion;
+        Assert.Equal(raw, result.Text);
+        Assert.Equal(3, result.UnprocessedWords);
+        Assert.Equal(0, result.FallbackBlocks);
+        await Until(() => call.Token.IsCancellationRequested);
+        call.Finish(Replace(raw, "false", "correct"));
+        await call.Returned.Task;
+        Assert.Equal(raw, polisher.Progress.Text);
+        Assert.Single(requests.Items);
+        Assert.Same(completion, polisher.CompleteWithinAsync(raw, TimeSpan.FromSeconds(5), CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Background_reply_after_stop_deadline_is_ignored_even_while_transcription_continues()
+    {
+        var clock = new ManualClock();
+        var requests = new Requests();
+        await using var polisher = new DictationPolisher(requests.Refine, targetWords: 4, timeProvider: clock);
+        var raw = Words(0, 4);
+        polisher.Update(raw);
+        var call = await requests.At(0);
+        polisher.StopScheduling(TimeSpan.FromMilliseconds(500));
+        clock.Advance(TimeSpan.FromMilliseconds(600));
+        call.Finish(Replace(raw, "w0", "LATE"));
+        await call.Returned.Task;
+        await Until(() => polisher.Progress.PendingBlocks == 0);
+        var result = await polisher.CompleteWithinAsync(raw, TimeSpan.Zero, CancellationToken.None);
+        Assert.Equal(raw, result.Text);
+        Assert.Equal(0, result.SuccessfulBlocks);
+        Assert.Equal(0, result.FallbackBlocks);
+    }
+
+    [Fact]
+    public async Task No_stop_budget_does_not_dispatch_and_preserves_available_corrections()
+    {
+        var requests = new Requests();
+        await using var polisher = new DictationPolisher(requests.Refine, targetWords: 4);
+        const string raw = "one two wrong four ";
+        polisher.Update(raw);
+        var call = await requests.At(0);
+        call.Finish(Replace(raw, "wrong", "right"));
+        await Until(() => polisher.Progress.SuccessfulBlocks == 1);
+        polisher.StopScheduling();
+        var final = await polisher.CompleteWithinAsync(raw + "tail", TimeSpan.Zero, CancellationToken.None);
+        Assert.Equal("one two right four tail", final.Text);
+        Assert.Single(requests.Items);
+    }
+
+    [Fact]
+    public async Task Cancellation_during_final_request_freezes_without_late_edits()
+    {
+        var requests = new Requests();
+        await using var polisher = new DictationPolisher(requests.Refine);
+        const string raw = "original text ";
+        using var cancel = new CancellationTokenSource();
+        var completion = polisher.CompleteWithinAsync(raw, TimeSpan.FromSeconds(5), cancel.Token);
+        var call = await requests.At(0);
+        cancel.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => completion);
+        await Until(() => call.Token.IsCancellationRequested);
+        call.Finish(Replace(raw, "original", "late"));
+        await call.Returned.Task;
+        Assert.Equal(raw, polisher.Progress.Text);
+    }
+
+    [Theory]
+    [InlineData(1500, 800, 250, 450)]
+    [InlineData(1500, 1400, 250, 0)]
+    [InlineData(500, 1200, 250, 0)]
+    [InlineData(5000, 800, 250, 3950)]
+    public void Stop_budget_counts_from_stop_and_reserves_delivery_time(
+        int limit, int elapsed, int reserve, int remaining) =>
+        Assert.Equal(TimeSpan.FromMilliseconds(remaining), DictationStopBudget.Remaining(
+            TimeSpan.FromMilliseconds(limit), TimeSpan.FromMilliseconds(elapsed), TimeSpan.FromMilliseconds(reserve)));
 
     [Fact]
     public async Task Four_word_timed_window_stays_wholly_mutable_and_unrelated_deletion_preserves_corrections()

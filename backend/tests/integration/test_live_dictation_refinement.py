@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from voice_recorder.ai.dictation_refinement import FoundryDictationRefiner
 from voice_recorder.app import create_app
 from voice_recorder.auth import StaticTokenVerifier
+from voice_recorder.config import Settings
 from voice_recorder.dictation_edits import validate_dictation_edits
 from voice_recorder.services.context import ServiceContext
 from voice_recorder.services.dictation_refinement import TIMEOUT_SECONDS
@@ -24,14 +25,15 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-@pytest.mark.parametrize("case_group", ["baseline", "release-probe"])
+@pytest.mark.parametrize("case_group", ["baseline", "release-probe", "short-latency"])
 def test_synthetic_local_api_with_real_luna(
     context: ServiceContext, verifier: StaticTokenVerifier, auth: dict[str, str], case_group: str
 ) -> None:
     from azure.identity import AzureCliCredential, get_bearer_token_provider
     from openai import AzureOpenAI
 
-    credential = AzureCliCredential(process_timeout=5)
+    credential = AzureCliCredential(process_timeout=15)
+    credential.get_token("https://cognitiveservices.azure.com/.default")
     client = AzureOpenAI(
         azure_endpoint="https://tomaskubica-foundry-resource.cognitiveservices.azure.com/",
         api_version="2024-10-21",
@@ -41,7 +43,9 @@ def test_synthetic_local_api_with_real_luna(
         timeout=TIMEOUT_SECONDS,
         max_retries=0,
     )
-    refiner = FoundryDictationRefiner(client, "gpt-5.6-luna", credential=credential)
+    refiner = FoundryDictationRefiner(
+        client, Settings(environment="test").refine_deployment_default, credential=credential
+    )
     observations: list[dict[str, Any]] = []
     proposals: list[str] = []
     original_create = client.chat.completions.create
@@ -91,6 +95,24 @@ def test_synthetic_local_api_with_real_luna(
                 "",
                 "Dnes jdeme do parku společně.",
             ),
+            (
+                "cs-false-start",
+                "Potřebujeme do- potřebujeme doplnit dokumentaci a odeslat změny.",
+                "",
+                "Potřebujeme doplnit dokumentaci a odeslat změny.",
+            ),
+            (
+                "cs-repeated-lead",
+                "Je to trošku spí- Trošku zpívanej, takže uvidíme.",
+                "",
+                "Je to trošku zpívanej, takže uvidíme.",
+            ),
+            (
+                "cs-seam-sentence",
+                "otestovat nový build a zkontrolovat logy.",
+                "Před nasazením musíme otestovat nový build",
+                "a zkontrolovat logy.",
+            ),
             ("filler", "This is, um, a test.", "", "This is a test."),
             ("counting", "1, 1, 2, 3.", "", "1, 1, 2, 3."),
             (
@@ -128,6 +150,14 @@ def test_synthetic_local_api_with_real_luna(
                     "We will deploy the new version on port 8443. Do not disable authentication.",
                 ),
             ]
+        elif case_group == "short-latency":
+            raw = (
+                "Tak tady si musíme nadiktovat nějaký pěkný text, ale je taky "
+                "trošku spí- Trošku zpívanej, takže bude otázka, jestli se tam "
+                "budou duplikovat slova."
+            )
+            corrected = raw.replace("trošku spí- Trošku", "trošku")
+            cases = [(f"cs-short-{index}", raw, "", corrected) for index in range(10)]
         failures: list[str] = []
         for language, text, previous, expected in cases:
             observation_start = len(observations)

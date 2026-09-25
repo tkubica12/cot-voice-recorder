@@ -8,6 +8,15 @@ def test_test_environment_allows_minimal_config() -> None:
     assert settings.uses_managed_identity is True
     assert settings.transcribe_provider == "azure_speech"
     assert settings.speech_model == "MAI-Transcribe-2"
+    assert settings.refine_deployment_default == "gpt-6-luna"
+    assert settings.refine_deployment_alternative == "gpt-5.6-terra"
+
+
+def test_dictation_model_can_be_changed_with_backend_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VR_REFINE_DEPLOYMENT_DEFAULT", "gpt-5.6-luna")
+    assert Settings(environment="test").refine_deployment_default == "gpt-5.6-luna"
 
 
 def test_production_requires_storage_account() -> None:

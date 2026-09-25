@@ -13,6 +13,10 @@ retrying WorkManager chain. Startup is instant and never waits on the backend.
 - **Contract:** talks to the backend exactly per [`../openapi/voice-recorder.yaml`](../openapi/voice-recorder.yaml)
   and follows [`../docs/architecture.md`](../docs/architecture.md) (cold-start, idempotency,
   ack-then-delete). App identity/colors reuse [`../assets/voice-cloud.svg`](../assets/voice-cloud.svg).
+- New recordings in version 1.2.1 default to `gpt-6-luna` for the final whole-transcript
+  cleanup after MAI transcription. Upgrading migrates the previous saved `gpt-5.6-luna`
+  default, but recordings already captured keep their original model for retries.
+  Earlier APKs explicitly request `gpt-5.6-luna` until updated.
 
 ## Toolchain versions
 

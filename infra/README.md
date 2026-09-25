@@ -173,9 +173,10 @@ curl -i https://<api-fqdn>/v1/recordings/x   # 401 until Google auth is configur
 - Resource group `ai-services`, Foundry account `tomaskubica-foundry-resource`
   (Sweden Central), endpoint
   `https://tomaskubica-foundry-resource.cognitiveservices.azure.com/`.
-- Deployments (unchanged): `gpt-5.6-luna` / `gpt-5.6-terra` (2026-07-09) and
-  `gpt-4o-transcribe` (2025-03-20) as the transcription fallback. This IaC only adds a
-  role assignment to that existing account.
+- Deployments: `gpt-6-luna` / `gpt-6-sol` (2026-09-22, GlobalStandard, capacity 500 each),
+  `gpt-5.6-luna` / `gpt-5.6-terra` (2026-07-09) and `gpt-4o-transcribe`
+  (2025-03-20) as the transcription fallback. This IaC references the existing
+  Foundry account and does not manage its model deployments.
 
 ## Cost / tradeoffs
 

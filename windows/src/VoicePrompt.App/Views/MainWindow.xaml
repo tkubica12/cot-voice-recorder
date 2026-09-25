@@ -220,10 +220,24 @@
               <ComboBoxItem Content="Czech" />
               <ComboBoxItem Content="English" />
             </ComboBox>
-            <CheckBox x:Name="DictationRefinementCheck" Content="Polish dictation with GPT-5.6 Luna (optional)"
+            <CheckBox x:Name="DictationRefinementCheck" Content="Polish dictation with LLM (optional)"
                       Margin="0,10,0,0" AutomationProperties.Name="Enable optional cloud AI dictation cleanup" />
             <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap"
-                       Text="Cleans overlapping text windows in the background while you speak. Stop sends no new AI request and never waits for AI; available edits are combined with the original ending. Short dictations may remain entirely original. AI can make mistakes. History keeps both versions for 48 hours in the existing unencrypted local text cache; Copy original restores the MAI text. Recovery restores original text without AI cleanup." />
+                       Text="The AI model is configured on the backend. It starts with shorter text windows and grows to 75 words. After Stop, it can use any time left in your wait limit to clean the final transcript. If AI is late, the available edits and original ending are pasted. The last MAI transcription, History save and clipboard may still take longer. AI can make mistakes. History keeps both versions for 48 hours in the existing unencrypted local text cache; Copy original restores the MAI text. Recovery restores original text without AI cleanup." />
+            <TextBlock Style="{StaticResource Caption}" Text="Maximum wait from Stop for optional AI (default 1.5 s)" Margin="0,8,0,4" />
+            <ComboBox x:Name="DictationFinalWaitBox" Width="120" HorizontalAlignment="Left"
+                      AutomationProperties.Name="Maximum wait from Stop for optional AI">
+              <ComboBoxItem Content="0.5 s" />
+              <ComboBoxItem Content="1.0 s" />
+              <ComboBoxItem Content="1.5 s" />
+              <ComboBoxItem Content="2.0 s" />
+              <ComboBoxItem Content="2.5 s" />
+              <ComboBoxItem Content="3.0 s" />
+              <ComboBoxItem Content="3.5 s" />
+              <ComboBoxItem Content="4.0 s" />
+              <ComboBoxItem Content="4.5 s" />
+              <ComboBoxItem Content="5.0 s" />
+            </ComboBox>
             <Button Content="Apply dictation settings" Click="OnApplyDictation"
                     HorizontalAlignment="Left" Margin="0,8,0,0" />
             <TextBlock x:Name="DictationStatusText" Style="{StaticResource Caption}" TextWrapping="Wrap"

@@ -2,6 +2,7 @@ package com.tomaskubica.voiceprompt.data
 
 import android.content.Context
 import com.tomaskubica.voiceprompt.BuildConfig
+import com.tomaskubica.voiceprompt.data.model.RefineModel
 
 /**
  * Small editable settings surface: the backend base URL (defaults to the deployed release URL
@@ -9,6 +10,12 @@ import com.tomaskubica.voiceprompt.BuildConfig
  */
 class SettingsStore(context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences("vp_settings", Context.MODE_PRIVATE)
+
+    init {
+        if (prefs.getString(KEY_REFINE, null) == RefineModel.LEGACY_LUNA.wire) {
+            prefs.edit().putString(KEY_REFINE, RefineModel.DEFAULT.wire).apply()
+        }
+    }
 
     var backendUrl: String
         get() = prefs.getString(KEY_BACKEND, null)?.takeIf { it.isNotBlank() }
@@ -18,7 +25,7 @@ class SettingsStore(context: Context) {
         }
 
     var refineModel: String
-        get() = prefs.getString(KEY_REFINE, null) ?: "gpt-5.6-luna"
+        get() = prefs.getString(KEY_REFINE, null) ?: RefineModel.DEFAULT.wire
         set(value) { prefs.edit().putString(KEY_REFINE, value).apply() }
 
     var quickRecordNotification: Boolean

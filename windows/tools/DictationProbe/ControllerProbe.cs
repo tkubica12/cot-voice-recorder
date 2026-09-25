@@ -200,10 +200,47 @@ internal static class ControllerProbe
         capture!.Emit(VoiceFrame());
         controller.Stop();
         await UntilAsync(() => !controller.IsBusy);
-        Require(host.RefinementCalls == 0 && clipboard.Text == ProbeHost.Transcript
-            && host.History.Latest()!.RefinementFallbackBlocks == 0
+        Require(host.RefinementCalls == 1 && clipboard.Text == "Dictation through the cloud!"
+            && host.History.Latest() is { RawBody: ProbeHost.Transcript, Body: "Dictation through the cloud!", RefinementFallbackBlocks: 0 }
             && notifications.Messages.Count == noticesBefore,
-            "Short dictation sent a final AI request or reported the normal raw tail as a failure.");
+            "Short dictation did not use its stop budget for one final AI request.");
+        Console.WriteLine("PASS controller: short dictation receives a single bounded final correction.");
+
+        host.Settings.DictationFinalWaitMilliseconds = 500;
+        var slow = new TaskCompletionSource<DictationRefinement>(TaskCreationOptions.RunContinuationsAsynchronously);
+        host.Refiner = (_, _, _) => slow.Task;
+        pastesBefore = desktop.Pastes;
+        controller.Start();
+        capture!.Emit(VoiceFrame());
+        var shortStop = Stopwatch.StartNew();
+        controller.Stop();
+        await UntilAsync(() => !controller.IsBusy);
+        Require(shortStop.Elapsed < TimeSpan.FromSeconds(1.5)
+            && desktop.Pastes == pastesBefore + 1 && clipboard.Text == ProbeHost.Transcript
+            && host.History.Latest() is { RawBody: ProbeHost.Transcript, Body: ProbeHost.Transcript, RefinementFallbackBlocks: 0 },
+            "Late final cleanup blocked paste or lost the raw short dictation.");
+        pastesBefore = desktop.Pastes;
+        slow.SetResult(Edit(ProbeHost.Transcript, "cloud.", "cloud!"));
+        await Task.Delay(100);
+        Require(desktop.Pastes == pastesBefore && clipboard.Text == ProbeHost.Transcript,
+            "Late final cleanup changed clipboard contents.");
+        host.Settings.DictationFinalWaitMilliseconds = 3000;
+        host.Refiner = async (text, _, ct) =>
+        {
+            await Task.Delay(700, ct);
+            return Edit(text, "cloud.", "cloud!");
+        };
+        controller.Start();
+        capture!.Emit(VoiceFrame());
+        var longerStop = Stopwatch.StartNew();
+        controller.Stop();
+        await UntilAsync(() => !controller.IsBusy);
+        Require(longerStop.Elapsed >= TimeSpan.FromMilliseconds(700)
+            && longerStop.Elapsed < TimeSpan.FromSeconds(3)
+            && clipboard.Text == "Dictation through the cloud!",
+            "A user-selected longer wait did not accept an on-time final correction.");
+        host.Settings.DictationFinalWaitMilliseconds = 1500;
+        host.Refiner = (text, _, _) => Task.FromResult(Edit(text, "cloud.", "cloud!"));
 
         async Task StartBackgroundCapture()
         {
@@ -269,7 +306,7 @@ internal static class ControllerProbe
         var budget = Stopwatch.StartNew();
         controller.Stop();
         await UntilAsync(() => !controller.IsBusy);
-        Require(budget.Elapsed < TimeSpan.FromSeconds(1.5), "Stop waited for a stalled background LLM.");
+        Require(budget.Elapsed < TimeSpan.FromSeconds(2), "Stop waited longer than its LLM budget.");
         Require(host.RefinementCalls == callsBefore && host.History.Latest()!.RefinementFallbackBlocks == 0
             && notifications.Messages.Count == noticesBefore,
             "Stop scheduled another request or reported unfinished work as an AI error.");
@@ -280,7 +317,7 @@ internal static class ControllerProbe
         Require(desktop.Pastes == pastesBefore && clipboard.Text == ProbeHost.Transcript
             && host.History.Get(savedId)!.Body == ProbeHost.Transcript,
             "A late AI result changed the clipboard or persisted transcript.");
-        Console.WriteLine($"PASS controller: background-only cleanup, no request at Stop, expected raw tail without warning, stop {budget.ElapsedMilliseconds} ms, no late paste.");
+        Console.WriteLine($"PASS controller: bounded final cleanup, expected raw tail without warning, stop {budget.ElapsedMilliseconds} ms, no late paste.");
 
         var cancelled = new TaskCompletionSource<DictationRefinement>(TaskCreationOptions.RunContinuationsAsynchronously);
         host.Refiner = (_, _, _) => cancelled.Task;

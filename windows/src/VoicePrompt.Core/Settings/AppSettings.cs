@@ -34,6 +34,18 @@ public sealed class AppSettings
     [JsonPropertyName("dictation_refinement_enabled")]
     public bool DictationRefinementEnabled { get; set; }
 
+    public const int DefaultDictationFinalWaitMilliseconds = 1500;
+    public const int MinDictationFinalWaitMilliseconds = 500;
+    public const int MaxDictationFinalWaitMilliseconds = 5000;
+
+    [JsonPropertyName("dictation_final_wait_milliseconds")]
+    public int DictationFinalWaitMilliseconds { get; set; } = DefaultDictationFinalWaitMilliseconds;
+
+    public static bool IsSupportedDictationFinalWait(int milliseconds) =>
+        milliseconds >= MinDictationFinalWaitMilliseconds
+        && milliseconds <= MaxDictationFinalWaitMilliseconds
+        && milliseconds % 500 == 0;
+
     public const string DefaultBackendBaseUrl =
         "https://ca-api.ambitiousdesert-517ec9ed.swedencentral.azurecontainerapps.io";
 
@@ -47,6 +59,7 @@ public sealed class AppSettings
         DictationToggleShortcut = DictationToggleShortcut,
         DictationLanguage = DictationLanguage,
         DictationRefinementEnabled = DictationRefinementEnabled,
+        DictationFinalWaitMilliseconds = DictationFinalWaitMilliseconds,
     };
 
     /// <summary>Normalize and validate the backend URL, falling back to the default.</summary>
@@ -91,6 +104,8 @@ public sealed class SettingsStore
             var settings = JsonSerializer.Deserialize<AppSettings>(_fs.ReadAllText(_path), Options)
                            ?? new AppSettings();
             settings.BackendBaseUrl = AppSettings.NormalizeBaseUrl(settings.BackendBaseUrl);
+            if (!AppSettings.IsSupportedDictationFinalWait(settings.DictationFinalWaitMilliseconds))
+                settings.DictationFinalWaitMilliseconds = AppSettings.DefaultDictationFinalWaitMilliseconds;
             return settings;
         }
         catch
@@ -101,6 +116,8 @@ public sealed class SettingsStore
 
     public void Save(AppSettings settings)
     {
+        if (!AppSettings.IsSupportedDictationFinalWait(settings.DictationFinalWaitMilliseconds))
+            throw new ArgumentOutOfRangeException(nameof(settings), "Final dictation wait must be 0.5 to 5 seconds in 0.5-second steps.");
         settings.BackendBaseUrl = AppSettings.NormalizeBaseUrl(settings.BackendBaseUrl);
         _fs.AtomicWrite(_path, JsonSerializer.Serialize(settings, Options));
     }

@@ -5,7 +5,7 @@
 //
 // "Cognitive Services User" grants inference data actions across the AIServices
 // account (audio transcription + chat completions) — sufficient to call the
-// gpt-5.6-luna / gpt-5.6-terra and the gpt-4o-transcribe fallback deployment.
+// gpt-6-luna / gpt-6-sol, gpt-5.6-luna / gpt-5.6-terra and the gpt-4o-transcribe fallback.
 // =============================================================================
 
 @description('Existing Foundry (Cognitive Services / AIServices) account name.')

@@ -54,6 +54,7 @@ public partial class MainWindow : Window
         PauseCheck.IsChecked = _host.Settings.NotificationsPaused;
         DictationEnabledCheck.IsChecked = _host.Settings.DictationEnabled;
         DictationRefinementCheck.IsChecked = _host.Settings.DictationRefinementEnabled;
+        DictationFinalWaitBox.SelectedIndex = _host.Settings.DictationFinalWaitMilliseconds / 500 - 1;
         DictationShortcutBox.Text = _host.Settings.DictationShortcut;
         DictationToggleShortcutBox.Text = _host.Settings.DictationToggleShortcut;
         DictationLanguageBox.SelectedIndex = _host.Settings.DictationLanguage switch { "cs" => 1, "en" => 2, _ => 0 };
@@ -434,6 +435,9 @@ public partial class MainWindow : Window
         {
             _host.Settings.DictationEnabled = DictationEnabledCheck.IsChecked == true;
             _host.Settings.DictationRefinementEnabled = DictationRefinementCheck.IsChecked == true;
+            if (DictationFinalWaitBox.SelectedIndex < 0)
+                throw new InvalidOperationException("Choose a final AI wait duration.");
+            _host.Settings.DictationFinalWaitMilliseconds = (DictationFinalWaitBox.SelectedIndex + 1) * 500;
             _host.Settings.DictationShortcut = DictationShortcutBox.Text.Trim();
             _host.Settings.DictationToggleShortcut = DictationToggleShortcutBox.Text.Trim();
             _host.Settings.DictationLanguage = DictationLanguageBox.SelectedIndex switch { 1 => "cs", 2 => "en", _ => "auto" };
@@ -450,8 +454,9 @@ public partial class MainWindow : Window
             _host.Settings.DictationToggleShortcut = before.DictationToggleShortcut;
             _host.Settings.DictationLanguage = before.DictationLanguage;
             _host.Settings.DictationRefinementEnabled = before.DictationRefinementEnabled;
+            _host.Settings.DictationFinalWaitMilliseconds = before.DictationFinalWaitMilliseconds;
             _host.Log.Warn($"dictation: settings failed ({ex.GetType().Name})");
-            DictationStatusText.Text = "Could not save dictation settings. Use an available shortcut including Ctrl or Alt.";
+            DictationStatusText.Text = "Could not save dictation settings. Check the shortcut and final AI wait duration.";
             try { _dictation.Configure(); }
             catch (Exception restoreError)
             {

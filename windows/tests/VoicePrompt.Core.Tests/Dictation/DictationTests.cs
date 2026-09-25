@@ -389,12 +389,15 @@ public class DictationApiTests
         Assert.True(settings.DictationEnabled);
         Assert.Equal("Ctrl+Alt+Space", settings.DictationShortcut);
         Assert.Equal("Ctrl+Alt+Shift+Space", settings.DictationToggleShortcut);
+        Assert.Equal(1500, settings.DictationFinalWaitMilliseconds);
         settings.DictationShortcut = "Ctrl+Shift+D";
         settings.DictationToggleShortcut = "Ctrl+Alt+D";
         settings.DictationLanguage = "cs";
+        settings.DictationFinalWaitMilliseconds = 3500;
         store.Save(settings.Clone());
         Assert.Equal("Ctrl+Shift+D", store.Load().DictationShortcut);
         Assert.Equal("cs", store.Load().DictationLanguage);
         Assert.Equal("Ctrl+Alt+D", store.Load().DictationToggleShortcut);
+        Assert.Equal(3500, store.Load().DictationFinalWaitMilliseconds);
     }
 }

@@ -52,7 +52,7 @@ flowchart LR
   end
 
   SPEECH[Azure Speech<br/>MAI-Transcribe-2]
-  FND[Azure AI Foundry<br/>gpt-5.6-luna/terra]
+  FND[Azure AI Foundry<br/>gpt-6-luna; legacy 5.6-luna/terra]
   WPS[Azure Web PubSub]
 
   subgraph Tray[Windows tray app · .NET 8 WPF]
@@ -114,7 +114,7 @@ sequenceDiagram
   WK->>ST: dequeue finalize (all chunks transcribed?)
   WK->>WK: stitch chunks (dedupe 1.5s overlap)
   WK->>ST: state=refining
-  WK->>AI: refine text (gpt-5.6-luna)
+  WK->>AI: refine text (recorded model; gpt-6-luna default)
   AI-->>WK: refined transcript
   WK->>ST: store transcript body (blob), state=completed
   WK->>WPS: send transcript.completed (preview only) to user group
@@ -324,12 +324,13 @@ flowchart TB
   private North Europe `AIServices` resource because Sweden Central does not currently
   support MAI transcription. `gpt-4o-transcribe` remains a configurable fallback.
   MAI-Transcribe-2 is currently an Azure public-preview feature without an SLA.
-- **Refinement (default) — `gpt-5.6-luna` (2026-07-09).** Cleans up disfluencies, fixes
+- **Refinement (default) — `gpt-6-luna` (2026-09-22).** Cleans up disfluencies, fixes
   punctuation/casing, and stitches overlap seams into coherent prose while preserving meaning.
-  Default because it balances quality and cost for short prompts.
-- **Refinement (alternative) — `gpt-5.6-terra` (2026-07-09).** Configurable per request/session
-  for cases needing a different quality/latency tradeoff. The API exposes a `refine_model`
-  selector constrained to the allowed set.
+  Android sends the model selected when recording starts; Windows dictation independently
+  uses the backend's `VR_REFINE_DEPLOYMENT_DEFAULT`.
+- **Refinement (legacy) — `gpt-5.6-luna` and `gpt-5.6-terra` (2026-07-09).**
+  Still accepted for recordings already queued or created by older Android clients;
+  the worker honors the stored selection rather than rewriting history.
 - **Why two stages.** Transcription is specialized and cheap per chunk; refinement benefits
   from full context after stitching. Separating them lets each retry independently and keeps
   audio deletable as soon as raw text exists.

@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .dictation_edits import MAX_EDIT_CHARS, MAX_EDITS, MAX_PREVIOUS_CHARS, MAX_TEXT_CHARS
 
-RefineModel = Literal["gpt-5.6-luna", "gpt-5.6-terra"]
+RefineModel = Literal["gpt-6-luna", "gpt-5.6-luna", "gpt-5.6-terra"]
 
 
 class StrictModel(BaseModel):
@@ -46,7 +46,7 @@ class ClientInfo(StrictModel):
 
 class CreateRecordingRequest(StrictModel):
     client_recording_id: str = Field(..., description="Client idempotency key (UUID).")
-    refine_model: RefineModel = "gpt-5.6-luna"
+    refine_model: RefineModel = "gpt-6-luna"
     language: str = "cs"
     client: ClientInfo | None = None
     started_at: datetime | None = None

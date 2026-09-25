@@ -19,11 +19,14 @@ short words such as "to" and "that". It does not remove repetitions inside indiv
 or use a separate LLM cleanup call.
 **New in Windows 1.4.2:** a compact overlay shows only the recording state and three lines
 of recent text, without saved/transcribed/pending counters. Settings offers optional
-**Polish dictation with GPT-5.6 Luna**, off by default. It cleans small text blocks while you
+dictation polishing (labeled **Polish dictation with LLM** since 1.4.4), off by default. It cleans small text blocks while you
 speak using overlapping text windows spanning multiple audio chunks. Stop sends no new AI
 request and does not wait for AI: one final paste combines available edits with the original
 ending. Short dictations may remain entirely original; that is not an error. History keeps
 both versions with **Copy original**. This requires the updated backend and Windows build.
+The current backend uses `gpt-6-luna` for optional Windows dictation polishing; the
+Windows setting only switches polishing on or off, while the deployment is configured
+centrally with `VR_REFINE_DEPLOYMENT_DEFAULT` on the API.
 See the [dictation architecture and operating guide](docs/windows-dictation.md).
 **Windows 1.4.3:** optional AI failures no longer show notifications; diagnostics stay
 in logs and History. Background cleanup allows 20 seconds on the backend and 25 seconds
@@ -115,7 +118,7 @@ flowchart LR
 3. Each acknowledged chunk is queued and transcribed independently with
    `MAI-Transcribe-2` through Azure Speech Fast Transcription; its audio is then deleted.
 4. After all chunks arrive, the worker stitches and deduplicates their text.
-5. `gpt-5.6-luna` performs a conservative cleanup pass over the complete transcript.
+5. `gpt-6-luna` performs a conservative cleanup pass over the complete transcript.
 6. Web PubSub notifies the Windows tray app, which fetches the final text and copies it to
    the clipboard.
 
@@ -130,8 +133,10 @@ an APK and Windows through a local per-user installer.
 
 ### Prerequisites
 
-- An Azure subscription and an Azure AI Foundry resource with `gpt-5.6-luna`
-  (optionally `gpt-5.6-terra` and the `gpt-4o-transcribe` fallback). The deployment
+- An Azure subscription and an Azure AI Foundry resource with `gpt-6-luna`
+  for Android recording refinement and optional Windows dictation polishing
+  (optionally legacy `gpt-5.6-luna` and `gpt-5.6-terra` for existing recordings,
+  and the `gpt-4o-transcribe` fallback). The deployment
   creates the private Azure Speech resource required by `MAI-Transcribe-2`.
 - Azure CLI with permission to create resources and role assignments.
 - Python 3.13 and [`uv`](https://docs.astral.sh/uv/) for backend development.

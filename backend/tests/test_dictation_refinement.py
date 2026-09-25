@@ -395,6 +395,25 @@ def test_release_probe_exact_phrase_removal_preserves_port_and_safety_sentence(
     assert body["text"].endswith(safety_sentence)
     refiner.propose_edits.assert_called_once_with(text, previous_text="")
 
+def test_czech_false_start_with_repeated_lead_has_one_cloud_edit(
+    client: TestClient, auth: dict[str, str]
+) -> None:
+    text = "Je to trošku spí- Trošku zpívanej, takže uvidíme."
+    anchor = "trošku spí- Trošku"
+    refiner = Mock(spec=FakeDictationRefiner)
+    refiner.propose_edits.return_value = edits(("current", anchor, "trošku"))
+    service = DictationRefinementService(refiner)
+    client.app.state.dictation_refinement = service
+    try:
+        response = client.post(PATH, json={"text": text, "previous_text": ""}, headers=auth)
+    finally:
+        service.close()
+    assert response.status_code == 200
+    assert response.json() == {
+        "text": "Je to trošku zpívanej, takže uvidíme.",
+        "edits": [{"original": anchor, "replacement": "trošku"}],
+    }
+
 
 @pytest.mark.parametrize(
     ("text", "anchor", "replacement"),
@@ -482,6 +501,7 @@ def test_prompt_is_separate_and_transcript_is_data() -> None:
     for rule in [
         "PRIMARY",
         "chunk seams",
+        "suffix of previous, not with all of previous",
         "straddle",
         "second occurrence in current",
         "counting",
@@ -552,6 +572,7 @@ def test_composition_uses_existing_configuration_without_retry(settings: Setting
     ):
         adapter = build_dictation_refiner(settings)
         assert isinstance(adapter, FoundryDictationRefiner)
+        assert adapter._deployment == "gpt-6-luna"
         assert constructor.call_args.kwargs == {
             "azure_endpoint": settings.foundry_endpoint,
             "azure_ad_token_provider": provider.return_value,

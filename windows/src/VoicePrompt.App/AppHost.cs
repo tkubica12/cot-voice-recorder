@@ -24,7 +24,7 @@ namespace VoicePrompt.App;
 /// </summary>
 public sealed class AppHost : IAsyncDisposable, IDictationHost
 {
-    public const string AppVersion = "1.4.3";
+    public const string AppVersion = "1.4.5";
 
     private static readonly TimeSpan CleanupInterval = TimeSpan.FromMinutes(30);
 

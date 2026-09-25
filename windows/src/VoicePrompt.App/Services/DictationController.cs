@@ -15,6 +15,7 @@ namespace VoicePrompt.App.Services;
 
 public sealed class DictationController : IAsyncDisposable
 {
+    private static readonly TimeSpan DeliveryAllowance = TimeSpan.FromMilliseconds(250);
     private readonly IDictationHost _host;
     private readonly INotifier _notifier;
     private readonly Dispatcher _dispatcher;
@@ -344,7 +345,7 @@ public sealed class DictationController : IAsyncDisposable
     private async Task FinishAsync()
     {
         var tailLatency = Stopwatch.StartNew();
-        _polisher?.StopScheduling();
+        _polisher?.StopScheduling(TimeSpan.FromMilliseconds(_host.Settings.DictationFinalWaitMilliseconds));
         _recording = false;
         _duration.Stop();
         _host.Log.Info($"dictation: stop requested; recording-ms={_duration.ElapsedMilliseconds}; hands-free={_toggleMode}");
@@ -380,12 +381,15 @@ public sealed class DictationController : IAsyncDisposable
                 _polishingFinal = true;
                 RenderProgress();
                 var polishingLatency = Stopwatch.StartNew();
-                var polished = await _polisher.CompleteAsync(text, _cancel.Token);
+                var remaining = DictationStopBudget.Remaining(
+                    TimeSpan.FromMilliseconds(_host.Settings.DictationFinalWaitMilliseconds),
+                    tailLatency.Elapsed, DeliveryAllowance);
+                var polished = await _polisher.CompleteWithinAsync(text, remaining, _cancel.Token);
                 _cancel.Token.ThrowIfCancellationRequested();
                 text = polished.Text;
                 var fallbackBlocks = polished.FallbackBlocks;
                 SaveHistory(text, polished.RawText, fallbackBlocks);
-                _host.Log.Info($"dictation: background polishing frozen; elapsed-ms={polishingLatency.ElapsedMilliseconds}; successful-windows={polished.SuccessfulBlocks}; raw-tail-words={polished.UnprocessedWords}; fallback-blocks={fallbackBlocks}; last-failure={polished.LastFailure ?? "none"}");
+                _host.Log.Info($"dictation: background polishing frozen; elapsed-ms={polishingLatency.ElapsedMilliseconds}; final-budget-ms={remaining.TotalMilliseconds:F0}; successful-windows={polished.SuccessfulBlocks}; raw-tail-words={polished.UnprocessedWords}; fallback-blocks={fallbackBlocks}; last-failure={polished.LastFailure ?? "none"}");
             }
             var result = await _deliver(text, _cancel.Token);
             _deliveryCompleted = true;

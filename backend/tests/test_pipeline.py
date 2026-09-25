@@ -115,3 +115,28 @@ def test_refiner_uses_selected_deployment(context: ServiceContext) -> None:
     drain(context)
     deployments = {dep for _, dep in context.refiner.calls}  # type: ignore[attr-defined]
     assert deployments == {"gpt-5.6-terra"}
+
+
+def test_refiner_uses_gpt_6_luna_for_new_recordings(context: ServiceContext) -> None:
+    rec, _ = create_recording(
+        context,
+        client_recording_id="crid-gpt6",
+        refine_model="gpt-6-luna",
+        language="cs",
+    )
+    data = unique_wav(0)
+    context.transcriber.responses[data] = "ahoj světe"  # type: ignore[attr-defined]
+    upload_chunk(
+        context,
+        recording_id=rec.recording_id,
+        index=0,
+        data=data,
+        checksum=compute_content_digest(data),
+        duration_ms=30000,
+        overlap_ms=1500,
+        started_at=None,
+    )
+    complete_recording(context, recording_id=rec.recording_id, chunk_count=1)
+    drain(context)
+    assert get_recording(context, rec.recording_id).state == RecordingState.COMPLETED
+    assert context.refiner.calls == [("ahoj světe", "gpt-6-luna")]  # type: ignore[attr-defined]

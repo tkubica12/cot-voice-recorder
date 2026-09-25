@@ -18,10 +18,10 @@ public sealed record DictationPolishResult(string Text, string RawText, int Fall
     int SuccessfulBlocks = 0, int UnprocessedWords = 0, string? LastFailure = null);
 
 /// <summary>
-/// Background-only rolling refinement. All ranges, edits and context are anchored to original raw
-/// UTF-16 offsets. Only one physical call exists, and no snapshots are queued. Update also acts as
-/// the clock tick for low-volume speech. StopScheduling permits the active response; CompleteAsync
-/// freezes immediately, without a final request or a wait for the active response.
+/// Rolling refinement. All ranges, edits and context are anchored to original raw UTF-16 offsets.
+/// Only one physical call exists, and no snapshots are queued. Update also acts as the clock tick
+/// for low-volume speech. CompleteAsync freezes immediately; CompleteWithinAsync can use a bounded
+/// stop-time opportunity for the active request and one final request for unsubmitted speech.
 /// Edit sets supersede intersecting prior edits, preserving disjoint corrections. Empty validated
 /// edit sets preserve all prior corrections; an explicit identity edit can revert a correction.
 /// </summary>
@@ -34,6 +34,7 @@ public sealed class DictationPolisher : IAsyncDisposable
     private readonly int _targetWords;
     private readonly int _overlapWords;
     private readonly TimeSpan _pendingDelay;
+    private readonly bool _adaptiveStart;
     private readonly TimeSpan _callTimeout;
     private readonly TimeSpan _maxWindowAge;
     private readonly TimeProvider _clock;
@@ -46,6 +47,8 @@ public sealed class DictationPolisher : IAsyncDisposable
     private int _lastSubmittedEnd;
     private int _tooOldEnd;
     private long? _pendingSince;
+    private long? _stopTimestamp;
+    private TimeSpan? _stopBudget;
     private Call? _active;
     private int _fallbacks;
     private int _successes;
@@ -67,6 +70,7 @@ public sealed class DictationPolisher : IAsyncDisposable
         if (targetWords < 2 || targetWords > 150) throw new ArgumentOutOfRangeException(nameof(targetWords));
         if (overlapWords < 0 || overlapWords > 20) throw new ArgumentOutOfRangeException(nameof(overlapWords));
         _pendingDelay = pendingDelay ?? TimeSpan.FromSeconds(12);
+        _adaptiveStart = targetWords == 75 && pendingDelay is null;
         _callTimeout = callTimeout ?? DefaultCallTimeout;
         _maxWindowAge = maxWindowAge ?? TimeSpan.FromSeconds(30);
         ValidateDuration(_pendingDelay, nameof(pendingDelay));
@@ -97,10 +101,13 @@ public sealed class DictationPolisher : IAsyncDisposable
     }
 
     /// <summary>Stops all future dispatch, including dispatch after the active call completes.</summary>
-    public void StopScheduling()
+    public void StopScheduling(TimeSpan? stopBudget = null)
     {
+        if (stopBudget < TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(stopBudget));
         lock (_gate)
         {
+            _stopTimestamp ??= _clock.GetTimestamp();
+            _stopBudget ??= stopBudget;
             _stopped = true;
             if (_active is { Started: false } call)
             {
@@ -131,6 +138,54 @@ public sealed class DictationPolisher : IAsyncDisposable
                 ? Task.FromCanceled<DictationPolishResult>(ct)
                 : Task.FromResult(result);
         }
+    }
+
+    public Task<DictationPolishResult> CompleteWithinAsync(string rawText, TimeSpan budget, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(rawText);
+        if (budget < TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(budget));
+        lock (_gate)
+        {
+            if (_completion is not null) return _completion;
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            UpdateRaw(rawText);
+            _stopTimestamp ??= _clock.GetTimestamp();
+            _stopBudget ??= budget;
+            _stopped = true;
+            return _completion = FinishWithinCoreAsync(budget, ct);
+        }
+    }
+
+    private async Task<DictationPolishResult> FinishWithinCoreAsync(TimeSpan budget, CancellationToken ct)
+    {
+        var started = _clock.GetTimestamp();
+        try
+        {
+            while (budget > _clock.GetElapsedTime(started))
+            {
+                ct.ThrowIfCancellationRequested();
+                Task? pending;
+                lock (_gate)
+                {
+                    if (_frozen) break;
+                    if (_active is null) Dispatch(force: true);
+                    pending = _active?.Released.Task;
+                }
+                if (pending is null) break;
+                var remaining = budget - _clock.GetElapsedTime(started);
+                if (remaining <= TimeSpan.Zero) break;
+                try { await pending.WaitAsync(remaining, _clock, ct).ConfigureAwait(false); }
+                catch (TimeoutException) { break; }
+            }
+        }
+        finally
+        {
+            lock (_gate) Freeze();
+        }
+        ct.ThrowIfCancellationRequested();
+        lock (_gate)
+            return new DictationPolishResult(_progress.Text, _raw, _fallbacks,
+                _successes, _progress.UnprocessedWords, _lastFailure);
     }
 
     private static void ValidateDuration(TimeSpan duration, string name)
@@ -169,9 +224,9 @@ public sealed class DictationPolisher : IAsyncDisposable
         }
     }
 
-    private void Dispatch()
+    private void Dispatch(bool force = false)
     {
-        if (_stopped || _frozen || _invalidated || _active is not null
+        if ((_stopped && !force) || _frozen || _invalidated || _active is not null
             || _raw.Length <= _lastSubmittedEnd) return;
         if (string.IsNullOrWhiteSpace(_raw[_lastSubmittedEnd..])) return;
         ExpireArrivals();
@@ -187,8 +242,16 @@ public sealed class DictationPolisher : IAsyncDisposable
         }
         var words = Tokens(_raw, _frontier, _raw.Length);
         if (words.Count == 0) return;
-        var ageReady = _pendingSince is long since && _clock.GetElapsedTime(since) >= _pendingDelay;
-        if (words.Count < _targetWords && !ageReady && _raw.Length - _frontier < MaxWindowCharacters)
+        var triggerWords = _adaptiveStart ? _successes switch { 0 => 20, 1 => 40, _ => 75 } : _targetWords;
+        var delay = _adaptiveStart ? _successes switch
+        {
+            0 => TimeSpan.FromSeconds(4),
+            1 => TimeSpan.FromSeconds(6),
+            _ => _pendingDelay,
+        } : _pendingDelay;
+        var ageReady = _pendingSince is long since && _clock.GetElapsedTime(since) >= delay;
+        var readyWords = _adaptiveStart ? Tokens(_raw, _lastSubmittedEnd, _raw.Length).Count : words.Count;
+        if (!force && readyWords < triggerWords && !ageReady && _raw.Length - _frontier < MaxWindowCharacters)
             return;
 
         // Select the latest bounded window, never a FIFO backlog. Old unsubmitted speech remains
@@ -232,7 +295,9 @@ public sealed class DictationPolisher : IAsyncDisposable
         // Include only bounded trailing whitespace; it remains verbatim outside the request otherwise.
         while (end < _raw.Length && char.IsWhiteSpace(_raw[end]) && end - start < MaxWindowCharacters)
             end++;
-        var call = new Call(start, end, _raw[start..end], ContextBefore(start));
+        var overlapWords = _adaptiveStart ? Math.Min(_overlapWords,
+            _successes switch { 0 => 5, 1 => 10, _ => _overlapWords }) : _overlapWords;
+        var call = new Call(start, end, _raw[start..end], ContextBefore(start), overlapWords, force);
         _active = call;
         _lastSubmittedEnd = end;
         _pendingSince = end < _raw.Length ? _clock.GetTimestamp() : null;
@@ -246,7 +311,7 @@ public sealed class DictationPolisher : IAsyncDisposable
         {
             lock (_gate)
             {
-                if (_frozen || _invalidated || _stopped || call.Resolved)
+                if (_frozen || _invalidated || (_stopped && !call.Final) || call.Resolved)
                 {
                     call.Skipped = true;
                     throw new OperationCanceledException();
@@ -271,7 +336,9 @@ public sealed class DictationPolisher : IAsyncDisposable
         lock (_gate)
         {
             call.Resolved = true;
-            if (!_frozen && !_invalidated && !call.Skipped)
+            var onTime = _stopTimestamp is not long stopped || _stopBudget is not TimeSpan limit
+                || _clock.GetElapsedTime(stopped) <= limit;
+            if (!_frozen && !_invalidated && !call.Skipped && onTime)
             {
                 if (edits is not null)
                 {
@@ -297,6 +364,7 @@ public sealed class DictationPolisher : IAsyncDisposable
             _active = null;
             Dispatch();
             Publish();
+            call.Released.TrySetResult();
         }
         await call.DisposeAsync().ConfigureAwait(false);
     }
@@ -304,7 +372,7 @@ public sealed class DictationPolisher : IAsyncDisposable
     private void AdvanceFrontier(Call call)
     {
         var words = Tokens(_raw, call.Start, call.End);
-        var keep = Math.Min(_overlapWords, words.Count);
+        var keep = Math.Min(call.OverlapWords, words.Count);
         var frontier = keep == 0 ? call.End : words[words.Count - keep].Start;
         int previousFrontier;
         do
@@ -467,7 +535,7 @@ public sealed class DictationPolisher : IAsyncDisposable
     private sealed record Coverage(int Start, int End);
     private sealed record Arrival(int End, long Timestamp);
 
-    private sealed class Call(int start, int end, string raw, string context)
+    private sealed class Call(int start, int end, string raw, string context, int overlapWords, bool final)
     {
         private readonly object _gate = new();
         private readonly CancellationTokenSource _cancel = new();
@@ -476,6 +544,9 @@ public sealed class DictationPolisher : IAsyncDisposable
         public int End { get; } = end;
         public string Raw { get; } = raw;
         public string Context { get; } = context;
+        public int OverlapWords { get; } = overlapWords;
+        public bool Final { get; } = final;
+        public TaskCompletionSource Released { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public bool Started { get; set; }
         public bool Skipped { get; set; }
         public bool Resolved { get; set; }

@@ -148,7 +148,7 @@ var commonEnv = [
   }
   {
     name: 'VR_REFINE_DEPLOYMENT_DEFAULT'
-    value: 'gpt-5.6-luna'
+    value: 'gpt-6-luna'
   }
   {
     name: 'VR_REFINE_DEPLOYMENT_ALTERNATIVE'

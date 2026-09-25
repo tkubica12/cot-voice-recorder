@@ -36,8 +36,19 @@ def test_create_is_idempotent(client: TestClient, auth: dict[str, str]) -> None:
 def test_create_defaults_model_and_language(client: TestClient, auth: dict[str, str]) -> None:
     resp = client.post("/v1/recordings", json=_create_body(), headers=auth)
     data = resp.json()
-    assert data["refine_model"] == "gpt-5.6-luna"
+    assert data["refine_model"] == "gpt-6-luna"
     assert data["language"] == "cs"
+
+
+def test_create_with_new_and_legacy_models(client: TestClient, auth: dict[str, str]) -> None:
+    for model in ("gpt-6-luna", "gpt-5.6-luna", "gpt-5.6-terra"):
+        resp = client.post(
+            "/v1/recordings", json=_create_body(refine_model=model), headers=auth
+        )
+        assert resp.status_code == 201
+        assert resp.json()["refine_model"] == model
+        rid = resp.json()["recording_id"]
+        assert client.get(f"/v1/recordings/{rid}", headers=auth).json()["refine_model"] == model
 
 
 def test_get_recording_returns_progress(client: TestClient, auth: dict[str, str]) -> None:
