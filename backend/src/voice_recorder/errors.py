@@ -26,3 +26,7 @@ class QueueMessageGone(Exception):
     visible again on its own schedule and is redelivered. Callers must treat this as a
     benign outcome because message processing is idempotent.
     """
+
+
+class StreamingPending(TransientError):
+    """No audio/completion yet, session rotation or graceful shutdown; not an ASR failure."""

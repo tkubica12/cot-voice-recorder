@@ -205,6 +205,15 @@ def build_context(settings: Settings, *, clock: Clock | None = None) -> ServiceC
     credential = _credential() if settings.uses_managed_identity else None
     transcriber, refiner = _build_ai(settings, credential)
     realtime = _build_realtime(settings, credential)
+    from .ai.streaming import MaiStreamingProvider
+
+    streaming = (
+        None
+        if settings.use_fake_ai
+        else MaiStreamingProvider(
+            settings.foundry_endpoint, settings.recording_stream_deployment, credential
+        )
+    )
 
     if settings.use_fake_storage:
         from .repositories.memory import (
@@ -226,6 +235,7 @@ def build_context(settings: Settings, *, clock: Clock | None = None) -> ServiceC
             refiner=refiner,
             realtime=realtime,
             user_id=settings.webpubsub_group,
+            streaming_provider=streaming,
         )
 
     blobs = _build_blob_store(settings, credential)
@@ -249,4 +259,5 @@ def build_context(settings: Settings, *, clock: Clock | None = None) -> ServiceC
         refiner=refiner,
         realtime=realtime,
         user_id=settings.webpubsub_group,
+        streaming_provider=streaming,
     )

@@ -150,6 +150,10 @@ private fun AppRoot(vm: RecorderViewModel = viewModel()) {
                 onSignOut = { vm.signOut() },
                 signingIn = ui.signingIn,
                 onBack = { navController.popBackStack() },
+                streamingTranscription = SettingsStore(context).streamingTranscription,
+                onStreamingTranscriptionChange = { SettingsStore(context).streamingTranscription = it },
+                polishTranscription = SettingsStore(context).polishTranscription,
+                onPolishTranscriptionChange = { SettingsStore(context).polishTranscription = it },
                 quickRecordNotification = SettingsStore(context).quickRecordNotification,
                 onQuickRecordNotificationChange = { enabled ->
                     SettingsStore(context).quickRecordNotification = enabled

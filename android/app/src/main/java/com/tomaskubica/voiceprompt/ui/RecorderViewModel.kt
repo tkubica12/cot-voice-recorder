@@ -106,7 +106,7 @@ class RecorderViewModel @JvmOverloads constructor(
         activeRecordingFlow,
     ) { phase, recording ->
         recording?.clientRecordingId?.takeIf {
-            phase == CapturePhase.IDLE &&
+            (phase == CapturePhase.IDLE || recording.transcriptionMode == "streaming") &&
                 recording.recordingId != null &&
                 recording.localState !in TERMINAL_LOCAL_STATES &&
                 recording.serverState !in TERMINAL_SERVER_STATES
@@ -231,6 +231,7 @@ class RecorderViewModel @JvmOverloads constructor(
                     state,
                     res.body.transcriptId,
                     res.body.failureReason,
+                    res.body.progress,
                 )
                 state in TERMINAL_SERVER_STATES
             }

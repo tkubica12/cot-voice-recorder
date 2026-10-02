@@ -40,6 +40,9 @@ class RecordingRepository(
         refineModel: String,
         language: String,
         startedAtEpochMs: Long,
+        transcriptionMode: String = "chunked",
+        audioLayout: String = "legacy_overlap",
+        refinementEnabled: Boolean = true,
     ): RecordingEntity {
         val now = clock()
         val entity = RecordingEntity(
@@ -52,6 +55,9 @@ class RecordingRepository(
             startedAtEpochMs = startedAtEpochMs,
             createdAtEpochMs = now,
             updatedAtEpochMs = now,
+            transcriptionMode = transcriptionMode,
+            audioLayout = audioLayout,
+            refinementEnabled = refinementEnabled,
         )
         recordingDao.upsert(entity)
         return entity
@@ -70,7 +76,8 @@ class RecordingRepository(
         recordingDao.update(r.copy(recordingId = recordingId, serverState = serverState, updatedAtEpochMs = clock()))
     }
 
-    suspend fun updateServerState(clientId: String, serverState: String, transcriptId: String?, failureReason: String?) {
+    suspend fun updateServerState(clientId: String, serverState: String, transcriptId: String?, failureReason: String?,
+        progress: com.tomaskubica.voiceprompt.data.api.RecordingProgressDto? = null) {
         val r = recordingDao.get(clientId) ?: return
         val localState = when (serverState) {
             ServerRecordingState.COMPLETED.name -> LocalRecordingState.COMPLETED.name
@@ -88,6 +95,10 @@ class RecordingRepository(
                 // The retry settled one way or the other: stop advertising "retrying".
                 retryRequestedAtEpochMs = if (terminal) null else r.retryRequestedAtEpochMs,
                 updatedAtEpochMs = clock(),
+                streamPreview = progress?.streamPreview ?: r.streamPreview,
+                streamedAudioMs = progress?.streamedAudioMs ?: r.streamedAudioMs,
+                streamAttempt = progress?.streamAttempt ?: r.streamAttempt,
+                streamError = progress?.streamError,
             ),
         )
     }

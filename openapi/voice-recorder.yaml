@@ -547,6 +547,21 @@ paths:
           schema:
             type: string
             format: date-time
+        - name: X-Audio-Start-Sample
+          in: header
+          required: false
+          description: Required for contiguous streaming; absolute 16 kHz sample offset (index * 160000).
+          schema:
+            type: integer
+            minimum: 0
+        - name: X-Audio-Sample-Count
+          in: header
+          required: false
+          description: Required for contiguous streaming; exact PCM frame count (maximum 160000).
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 160000
       requestBody:
         required: true
         content:
@@ -1088,6 +1103,22 @@ components:
           type: integer
           minimum: 0
           description: Chunks that have been transcribed so far.
+        streamed_audio_ms:
+          type: integer
+          minimum: 0
+          default: 0
+          description: Audio submitted in the current stream attempt, not a durable completion ACK.
+        stream_preview:
+          type: string
+          maxLength: 140
+          default: ""
+          description: Provisional hypothesis from the current attempt; never delivered to the PC.
+        stream_attempt:
+          type: integer
+          minimum: 0
+          default: 0
+        stream_error:
+          type: [string, "null"]
 
     CreateRecordingRequest:
       type: object
@@ -1108,6 +1139,18 @@ components:
           type: string
           format: date-time
           description: Client-side capture start time.
+        transcription_mode:
+          type: string
+          enum: [chunked, streaming]
+          default: chunked
+        audio_layout:
+          type: string
+          enum: [legacy_overlap, contiguous]
+          default: legacy_overlap
+        refinement_enabled:
+          type: boolean
+          default: true
+          description: New Android streaming clients send false by default; old clients retain cleanup.
 
     Recording:
       type: object
@@ -1152,6 +1195,17 @@ components:
         updated_at:
           type: string
           format: date-time
+        transcription_mode:
+          type: string
+          enum: [chunked, streaming]
+          default: chunked
+        audio_layout:
+          type: string
+          enum: [legacy_overlap, contiguous]
+          default: legacy_overlap
+        refinement_enabled:
+          type: boolean
+          default: true
 
     ChunkState:
       type: string

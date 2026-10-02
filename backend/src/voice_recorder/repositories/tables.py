@@ -241,6 +241,18 @@ def _to_recording_entity(recording: Recording) -> dict[str, Any]:
             ),
             "complete_requested_at": recording.complete_requested_at,
             "finalize_enqueued": recording.finalize_enqueued,
+            "transcription_mode": recording.transcription_mode,
+            "audio_layout": recording.audio_layout,
+            "refinement_enabled": recording.refinement_enabled,
+            "stream_lease_id": recording.stream_lease_id,
+            "stream_lease_expires_at": recording.stream_lease_expires_at,
+            "stream_raw_path": recording.stream_raw_path,
+            "stream_asr_ready": recording.stream_asr_ready,
+            "stream_attempt": recording.stream_attempt,
+            "streamed_samples": recording.streamed_samples,
+            "stream_preview": recording.stream_preview,
+            "stream_error": recording.stream_error,
+            "stream_delivery_completed": recording.stream_delivery_completed,
         }
     )
 
@@ -261,6 +273,18 @@ def _from_recording_entity(entity: Any) -> Recording:
         complete_requested_at=entity.get("complete_requested_at"),
         finalize_enqueued=bool(entity.get("finalize_enqueued", False)),
         etag=entity.metadata.get("etag") if hasattr(entity, "metadata") else None,
+        transcription_mode=str(entity.get("transcription_mode", "chunked")),
+        audio_layout=str(entity.get("audio_layout", "legacy_overlap")),
+        refinement_enabled=bool(entity.get("refinement_enabled", True)),
+        stream_lease_id=entity.get("stream_lease_id"),
+        stream_lease_expires_at=entity.get("stream_lease_expires_at"),
+        stream_raw_path=entity.get("stream_raw_path"),
+        stream_asr_ready=bool(entity.get("stream_asr_ready", False)),
+        stream_attempt=int(entity.get("stream_attempt", 0)),
+        streamed_samples=int(entity.get("streamed_samples", 0)),
+        stream_preview=str(entity.get("stream_preview", "")),
+        stream_error=entity.get("stream_error"),
+        stream_delivery_completed=bool(entity.get("stream_delivery_completed", False)),
     )
 
 
@@ -279,6 +303,8 @@ def _to_chunk_entity(chunk: Chunk) -> dict[str, Any]:
             "duration_ms": chunk.duration_ms,
             "overlap_ms": chunk.overlap_ms,
             "started_at": chunk.started_at,
+            "start_sample": chunk.start_sample,
+            "sample_count": chunk.sample_count,
         }
     )
 
@@ -297,6 +323,8 @@ def _from_chunk_entity(entity: Any) -> Chunk:
         overlap_ms=entity.get("overlap_ms"),
         started_at=entity.get("started_at"),
         etag=entity.metadata.get("etag") if hasattr(entity, "metadata") else None,
+        start_sample=entity.get("start_sample"),
+        sample_count=entity.get("sample_count"),
     )
 
 

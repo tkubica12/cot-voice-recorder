@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ..ai.protocols import Refiner, Transcriber
+from ..ai.streaming import StreamingProvider
 from ..clock import Clock
 from ..config import Settings
 from ..realtime.protocols import RealtimeGateway
@@ -35,6 +36,7 @@ class ServiceContext:
     realtime: RealtimeGateway
     # Single-user system: a stable group/user id for realtime notifications.
     user_id: str = "user"
+    streaming_provider: StreamingProvider | None = None
 
 
 def audio_path(recording_id: str, index: int) -> str:

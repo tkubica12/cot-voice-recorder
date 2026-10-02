@@ -56,6 +56,9 @@ class UploadOrchestrator(
             language = recording.language,
             client = ClientInfoDto(platform = "android", appVersion = appVersion),
             startedAt = Instant.ofEpochMilli(recording.startedAtEpochMs).toString(),
+            transcriptionMode = recording.transcriptionMode,
+            audioLayout = recording.audioLayout,
+            refinementEnabled = recording.refinementEnabled,
         )
         return when (val res = api.createRecording(token.idToken, request)) {
             is ApiResult.Success -> {
@@ -80,15 +83,20 @@ class UploadOrchestrator(
             repository.markFailed(clientId, "chunk_file_missing")
             return StepOutcome.FAILURE
         }
+        val bytes = file.readBytes()
+        val recording = repository.getRecording(clientId) ?: return StepOutcome.FAILURE
+        val contiguous = recording.transcriptionMode == "streaming" && recording.audioLayout == "contiguous"
         val res = api.uploadChunk(
             token = token.idToken,
             recordingId = recordingId,
             index = index,
-            wavBytes = file.readBytes(),
+            wavBytes = bytes,
             contentDigest = chunk.checksum,
             durationMs = chunk.durationMs,
             overlapMs = chunk.overlapMs,
             startedAtIso = chunk.startedAtIso,
+            startSample = if (contiguous) index.toLong() * 160_000 else null,
+            sampleCount = if (contiguous) (bytes.size - 44L) / 2 else null,
         )
         return when (res) {
             is ApiResult.Success -> {

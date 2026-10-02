@@ -11,7 +11,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Annotated, Literal
 
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 Environment = Literal["production", "local", "test"]
@@ -88,6 +88,13 @@ class Settings(BaseSettings):
     speech_timeout_seconds: float = 180.0
     dictation_stream_enabled: bool = True
     dictation_stream_deployment: str = "MAI-Transcribe-2-Streaming"
+    recording_stream_deployment: str = "MAI-Transcribe-2-Streaming"
+    recording_stream_replay_speed: float = Field(4.0, ge=1, le=8)
+    recording_stream_idle_seconds: float = Field(120.0, ge=1, le=900)
+    recording_stream_poll_seconds: float = Field(1.0, gt=0, le=10)
+    recording_stream_heartbeat_seconds: float = Field(20.0, gt=0, le=30)
+    recording_stream_lease_seconds: int = Field(120, ge=90, le=300)
+    recording_stream_session_seconds: float = Field(3300.0, gt=0, le=3300)
     refine_deployment_default: str = "gpt-6-luna"
     refine_deployment_alternative: str = "gpt-5.6-terra"
 

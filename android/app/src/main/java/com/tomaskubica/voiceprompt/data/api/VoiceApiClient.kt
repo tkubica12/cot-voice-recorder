@@ -64,6 +64,8 @@ class VoiceApiClient(
         durationMs: Int?,
         overlapMs: Int?,
         startedAtIso: String?,
+        startSample: Long? = null,
+        sampleCount: Long? = null,
     ): ApiResult<ChunkAcceptedDto> {
         val builder = authedBase(token, "${base()}/v1/recordings/$recordingId/chunks/$index")
             .put(wavBytes.toRequestBody(wavMedia))
@@ -71,6 +73,8 @@ class VoiceApiClient(
         durationMs?.let { builder.header("X-Chunk-Duration-Ms", it.toString()) }
         overlapMs?.let { builder.header("X-Chunk-Overlap-Ms", it.toString()) }
         startedAtIso?.let { builder.header("X-Chunk-Started-At", it) }
+        startSample?.let { builder.header("X-Audio-Start-Sample", it.toString()) }
+        sampleCount?.let { builder.header("X-Audio-Sample-Count", it.toString()) }
         return execute(builder.build(), chunkAdapter)
     }
 

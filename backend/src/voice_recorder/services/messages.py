@@ -6,8 +6,9 @@ from typing import Any, Literal
 
 TRANSCRIBE = "transcribe"
 FINALIZE = "finalize"
+STREAM = "stream"
 
-MessageType = Literal["transcribe", "finalize"]
+MessageType = Literal["transcribe", "finalize", "stream"]
 
 
 def transcribe_message(recording_id: str, index: int) -> dict[str, Any]:
@@ -16,3 +17,7 @@ def transcribe_message(recording_id: str, index: int) -> dict[str, Any]:
 
 def finalize_message(recording_id: str) -> dict[str, Any]:
     return {"type": FINALIZE, "recording_id": recording_id}
+
+
+def stream_message(recording_id: str) -> dict[str, Any]:
+    return {"type": STREAM, "recording_id": recording_id}

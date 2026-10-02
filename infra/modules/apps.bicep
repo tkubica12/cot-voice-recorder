@@ -147,6 +147,14 @@ var commonEnv = [
     value: 'MAI-Transcribe-2-Streaming'
   }
   {
+    name: 'VR_RECORDING_STREAM_DEPLOYMENT'
+    value: 'MAI-Transcribe-2-Streaming'
+  }
+  {
+    name: 'VR_RECORDING_STREAM_REPLAY_SPEED'
+    value: '4'
+  }
+  {
     name: 'VR_SPEECH_TRANSCRIBE_STYLE'
     value: 'verbatim'
   }
@@ -344,6 +352,7 @@ resource workerApp 'Microsoft.App/containerApps@2025-01-01' = {
                 accountName: storageAccountName
                 queueName: 'work'
                 queueLength: '1'
+                queueLengthStrategy: 'all'
               }
             }
           }

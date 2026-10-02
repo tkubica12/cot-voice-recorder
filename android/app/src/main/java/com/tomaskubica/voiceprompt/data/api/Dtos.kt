@@ -20,6 +20,9 @@ data class CreateRecordingRequestDto(
     val language: String? = null,
     val client: ClientInfoDto? = null,
     @Json(name = "started_at") val startedAt: String? = null,
+    @Json(name = "transcription_mode") val transcriptionMode: String? = null,
+    @Json(name = "audio_layout") val audioLayout: String? = null,
+    @Json(name = "refinement_enabled") val refinementEnabled: Boolean? = null,
 )
 
 @JsonClass(generateAdapter = true)
@@ -27,6 +30,10 @@ data class RecordingProgressDto(
     @Json(name = "expected_chunk_count") val expectedChunkCount: Int? = null,
     @Json(name = "received_chunk_count") val receivedChunkCount: Int = 0,
     @Json(name = "transcribed_chunk_count") val transcribedChunkCount: Int = 0,
+    @Json(name = "streamed_audio_ms") val streamedAudioMs: Long = 0,
+    @Json(name = "stream_preview") val streamPreview: String = "",
+    @Json(name = "stream_attempt") val streamAttempt: Int = 0,
+    @Json(name = "stream_error") val streamError: String? = null,
 )
 
 @JsonClass(generateAdapter = true)

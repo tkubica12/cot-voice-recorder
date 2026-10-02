@@ -46,9 +46,15 @@ fun SettingsScreen(
     signingIn: Boolean = false,
     quickRecordNotification: Boolean = false,
     onQuickRecordNotificationChange: (Boolean) -> Unit = {},
+    streamingTranscription: Boolean = true,
+    onStreamingTranscriptionChange: (Boolean) -> Unit = {},
+    polishTranscription: Boolean = false,
+    onPolishTranscriptionChange: (Boolean) -> Unit = {},
 ) {
     var url by remember(backendUrl) { mutableStateOf(backendUrl) }
     var quickNotification by remember(quickRecordNotification) { mutableStateOf(quickRecordNotification) }
+    var streaming by remember(streamingTranscription) { mutableStateOf(streamingTranscription) }
+    var polishing by remember(polishTranscription) { mutableStateOf(polishTranscription) }
 
     Scaffold(
         topBar = {
@@ -105,6 +111,21 @@ fun SettingsScreen(
                     }
                 }
             }
+            Text("Transcription", style = MaterialTheme.typography.titleMedium)
+            Text("Stream uploaded audio as one recording (recommended). Audio stays durable; uploads retry after outages.")
+            Switch(
+                checked = streaming,
+                onCheckedChange = { streaming = it; onStreamingTranscriptionChange(it) },
+                modifier = Modifier.testTag("streamingTranscription"),
+            )
+            Text("Optional LLM polishing after transcription. Off by default; raw streaming does not need seam cleanup.")
+            Switch(
+                checked = polishing,
+                enabled = streaming,
+                onCheckedChange = { polishing = it; onPolishTranscriptionChange(it) },
+                modifier = Modifier.testTag("polishTranscription"),
+            )
+            Text("Changes apply to new recordings. Disabling streaming restores the legacy 30-second overlap pipeline.")
             Text(stringResource(R.string.quick_record), style = MaterialTheme.typography.titleMedium)
             Text(stringResource(R.string.quick_settings_hint))
             Switch(

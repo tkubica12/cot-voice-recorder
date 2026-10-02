@@ -64,12 +64,19 @@ class CreateRecordingRequest(StrictModel):
     language: str = "cs"
     client: ClientInfo | None = None
     started_at: datetime | None = None
+    transcription_mode: Literal["chunked", "streaming"] = "chunked"
+    audio_layout: Literal["legacy_overlap", "contiguous"] = "legacy_overlap"
+    refinement_enabled: bool = True
 
 
 class RecordingProgress(StrictModel):
     expected_chunk_count: int | None = Field(None, ge=0)
     received_chunk_count: int = Field(..., ge=0)
     transcribed_chunk_count: int = Field(..., ge=0)
+    streamed_audio_ms: int = Field(0, ge=0)
+    stream_preview: str = Field("", max_length=140)
+    stream_attempt: int = Field(0, ge=0)
+    stream_error: str | None = None
 
 
 class Recording(StrictModel):
@@ -91,6 +98,9 @@ class Recording(StrictModel):
     ) = None
     created_at: datetime
     updated_at: datetime
+    transcription_mode: Literal["chunked", "streaming"] = "chunked"
+    audio_layout: Literal["legacy_overlap", "contiguous"] = "legacy_overlap"
+    refinement_enabled: bool = True
 
 
 class ChunkAccepted(StrictModel):

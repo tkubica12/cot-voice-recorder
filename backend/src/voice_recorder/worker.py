@@ -1,10 +1,10 @@
-"""Queue worker: transcribe chunks and finalize recordings with bounded retries.
+"""Queue worker: durable continuous streaming, legacy STT and finalization.
 
-Retry behaviour is driven by the queue's dequeue count and visibility timeout: a
-transient failure leaves the message on the queue (re-hidden with exponential backoff)
-until a bounded attempt count is exhausted, at which point the recording is failed with
-a useful reason. Terminal failures fail the recording immediately. There are no broad
-silent excepts — every failure is classified and logged.
+Legacy STT and finalization use bounded dequeue attempts and exponential backoff.
+Streaming renews queue/recording leases during processing and replays durable audio
+after transient failures without exhausting the per-chunk limit. Retention bounds
+streaming recovery; waiting for uploads is not a failed inference attempt. Terminal
+failures fail the recording immediately. Every failure is classified and logged.
 
 The loop is designed to outlive queue-level faults. ``receive`` errors back off (while
 staying responsive to SIGTERM) instead of terminating the process, and per-message
@@ -23,11 +23,11 @@ import threading
 import types
 
 from .domain import FailureReason, RecordingState
-from .errors import QueueMessageGone, TerminalError, TransientError
+from .errors import QueueMessageGone, StreamingPending, TerminalError, TransientError
 from .logging_config import get_logger
 from .services.context import ServiceContext
 from .services.finalize import all_expected_transcribed
-from .services.messages import FINALIZE, TRANSCRIBE
+from .services.messages import FINALIZE, STREAM, TRANSCRIBE
 from .services.pipeline import fail_chunk, fail_recording, finalize, transcribe_chunk
 from .storage.protocols import QueueMessage
 
@@ -45,6 +45,7 @@ class QueueWorker:
         self._poll_interval = poll_interval
         self._stop = threading.Event()
         self._receive_failures = 0
+        self._stream_receipts: dict[str, QueueMessage] = {}
 
     def stop(self) -> None:
         self._stop.set()
@@ -124,6 +125,9 @@ class QueueWorker:
         recording_id = str(message.content.get("recording_id", ""))
         try:
             self._process(message)
+        except StreamingPending:
+            logger.info("recording_stream_waiting", extra={"recording_id": recording_id})
+            self._renew(message, 30, msg_type, recording_id)
         except TerminalError as exc:
             logger.error(
                 "message_terminal_failure",
@@ -144,6 +148,20 @@ class QueueWorker:
                         "error": str(exc),
                     },
                 )
+            if msg_type == STREAM:
+                backoff = _backoff_seconds(
+                    min(message.dequeue_count, 8), self._ctx.settings.queue_retry_base_seconds
+                )
+                logger.warning(
+                    "recording_stream_retry",
+                    extra={
+                        "recording_id": recording_id,
+                        "error_type": type(exc).__name__,
+                        "backoff_seconds": backoff,
+                    },
+                )
+                self._renew(message, backoff, msg_type, recording_id)
+                return
             max_attempts = self._max_attempts(msg_type)
             if message.dequeue_count >= max_attempts:
                 logger.error(
@@ -176,6 +194,7 @@ class QueueWorker:
 
     def _delete(self, message: QueueMessage, msg_type: object, recording_id: str) -> None:
         """Delete a settled message. A failure only costs an idempotent redelivery."""
+        message = self._stream_receipts.pop(message.id, message)
         try:
             self._ctx.queue.delete(message)
         except Exception as exc:
@@ -198,6 +217,7 @@ class QueueWorker:
         A stale / not-found pop receipt only means the message becomes visible again on
         its own schedule, so the retry still happens — never kill the loop over it.
         """
+        message = self._stream_receipts.pop(message.id, message)
         try:
             self._ctx.queue.renew(message, visibility_seconds=backoff)
         except QueueMessageGone:
@@ -241,7 +261,25 @@ class QueueWorker:
     def _process(self, message: QueueMessage) -> None:
         msg_type = message.content.get("type")
         recording_id = str(message.content["recording_id"])
-        if msg_type == TRANSCRIBE:
+        recording = self._ctx.recordings.get(recording_id)
+        if msg_type == STREAM or (
+            msg_type == TRANSCRIBE
+            and recording is not None
+            and recording.transcription_mode == "streaming"
+        ):
+            import asyncio
+
+            from .services.recording_stream import transcribe_recording
+
+            def heartbeat() -> None:
+                renewed = self._ctx.queue.renew(
+                    self._stream_receipts.get(message.id, message),
+                    visibility_seconds=self._ctx.settings.queue_visibility_seconds,
+                )
+                self._stream_receipts[message.id] = renewed
+
+            asyncio.run(transcribe_recording(self._ctx, recording_id, self._stop, heartbeat))
+        elif msg_type == TRANSCRIBE:
             transcribe_chunk(self._ctx, recording_id, int(message.content["index"]))
         elif msg_type == FINALIZE:
             finalize(self._ctx, recording_id)
@@ -258,9 +296,9 @@ class QueueWorker:
         recording_id = str(message.content.get("recording_id", ""))
         if not recording_id:
             return
-        if msg_type == TRANSCRIBE:
+        if msg_type in {TRANSCRIBE, STREAM}:
             index = int(message.content.get("index", -1))
-            if index >= 0:
+            if msg_type == TRANSCRIBE and index >= 0:
                 fail_chunk(self._ctx, recording_id, index)
             fail_recording(self._ctx, recording_id, FailureReason.TRANSCRIPTION_FAILED)
         elif msg_type == FINALIZE:

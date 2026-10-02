@@ -9,7 +9,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [RecordingEntity::class, ChunkEntity::class],
-    version = 2,
+    version = 3,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -28,6 +28,19 @@ abstract class AppDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE recordings ADD COLUMN retryRequestedAtEpochMs INTEGER")
             }
+
+        }
+
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE recordings ADD COLUMN transcriptionMode TEXT NOT NULL DEFAULT 'chunked'")
+                db.execSQL("ALTER TABLE recordings ADD COLUMN audioLayout TEXT NOT NULL DEFAULT 'legacy_overlap'")
+                db.execSQL("ALTER TABLE recordings ADD COLUMN refinementEnabled INTEGER NOT NULL DEFAULT 1")
+                db.execSQL("ALTER TABLE recordings ADD COLUMN streamPreview TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE recordings ADD COLUMN streamedAudioMs INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE recordings ADD COLUMN streamAttempt INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE recordings ADD COLUMN streamError TEXT")
+            }
         }
 
         fun get(context: Context): AppDatabase =
@@ -36,7 +49,7 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "voiceprompt.db",
-                ).addMigrations(MIGRATION_1_2).build().also { instance = it }
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build().also { instance = it }
             }
     }
 }

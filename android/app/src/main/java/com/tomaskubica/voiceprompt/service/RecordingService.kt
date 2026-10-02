@@ -82,11 +82,15 @@ class RecordingService : Service() {
 
         recordJob = scope.launch {
             val refineModel = container.settings.refineModel
+            val streaming = container.settings.streamingTranscription
             container.repository.createLocalRecording(
                 clientRecordingId = clientId,
                 refineModel = refineModel,
-                language = "cs",
+                language = if (streaming) "auto" else "cs",
                 startedAtEpochMs = startEpoch,
+                transcriptionMode = if (streaming) "streaming" else "chunked",
+                audioLayout = if (streaming) "contiguous" else "legacy_overlap",
+                refinementEnabled = if (streaming) container.settings.polishTranscription else true,
             )
             val controller = RecordingController(
                 repository = container.repository,

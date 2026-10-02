@@ -2,9 +2,15 @@
 
 **Think out loud anywhere. Paste a clean prompt on your PC.**
 
-**Latest Windows release: 1.5.1.** Streaming dictation and 48-hour cloud audit, with
-the overlay hidden immediately after successful paste.
-See the [release notes](docs/releases/v1.5.1.md).
+**Latest release: 1.6.0.** Android **1.3.0** adds durable mobile uploads with one
+continuous cloud transcription session. Windows remains **1.5.1**, with streaming
+dictation, 48-hour cloud audit and immediate overlay hiding after successful paste.
+See the [release notes](docs/releases/v1.6.0.md).
+
+**Android 1.3.0:** reliable ten-second uploads feed one continuous cloud
+MAI session. Cloud audio is retained for full replay until completion; optional
+LLM polishing defaults off. Existing recordings and legacy clients keep their old
+pipeline. See [the mobile streaming contract](docs/mobile-streaming.md).
 
 **Windows 1.5.0:** live dictation streams to MAI-Transcribe-2-Streaming through the
 Google-authenticated backend; no additional Microsoft login is needed. A provisional
@@ -59,8 +65,10 @@ Existing configured installations retain their configuration; new installations 
 [Desktop OAuth setup](docs/google-oauth.md). The hosted backend still restricts access to
 its configured account allowlist. See the release notes for known dictation limitations.
 
-> **Status:** the complete Android → Azure → Windows flow is live and tested, including
-> recording while the phone is locked and automatic delivery to the clipboard.
+> **Status:** the new cloud streaming flow is deployed and synthetically tested through
+> automatic Windows clipboard delivery. Earlier Android versions were tested while the
+> phone was locked; locked-screen, radio-change and battery checks for Android 1.3.0 still
+> require a physical device.
 
 <p align="center">
   <img src="docs/images/android-home.png" width="360" alt="VoicePrompt Android home screen while recording" />
@@ -84,10 +92,11 @@ VoicePrompt makes that handoff deliberately simple:
 3. Stop the recording when the thought is complete.
 4. Return to the PC, open the target Copilot, press <kbd>Ctrl</kbd>+<kbd>V</kbd>, and continue.
 
-The cloud is already transcribing earlier chunks while the user is still speaking. A final
-language-model pass fixes obvious transcription errors, technical vocabulary, punctuation,
-repetitions, and spoken self-corrections. It intentionally does **not** summarize or invent
-content—the next, more capable agent receives the original intent in a cleaner form.
+The cloud transcribes the available contiguous audio while the user is still speaking.
+Segment boundaries do not reset the model or create independently recognized text seams.
+An optional final language-model pass can clean wording and technical vocabulary; it is
+off by default for streaming recordings. The next agent receives the original transcript,
+not a summary.
 
 ## How it works
 
@@ -97,12 +106,12 @@ flowchart LR
     API["FastAPI<br/>Azure Container Apps"]
     ST[("Private Azure Storage<br/>Blob · Queue · Table")]
     WK["Queue worker<br/>Azure Container Apps"]
-    AI["Azure AI Foundry<br/>speech-to-text + cleanup"]
+    AI["Azure AI Foundry<br/>continuous MAI + optional cleanup"]
     WPS["Azure Web PubSub"]
     W["Windows tray app"]
     C["Clipboard<br/>Ctrl+V"]
 
-    A -->|"30 s WAV chunks"| API
+    A -->|"10 s contiguous WAV segments"| API
     API --> ST
     ST --> WK
     WK --> AI
@@ -116,27 +125,32 @@ flowchart LR
 
 | Component | Technology | Responsibility |
 |-----------|------------|----------------|
-| [`android/`](android/) | Kotlin, Jetpack Compose, Room, WorkManager | Instant two-control capture, foreground recording under screen lock, 30 s chunks with 1.5 s overlap, durable uploads |
+| [`android/`](android/) | Kotlin, Jetpack Compose, Room, WorkManager | Instant two-control capture, foreground service, contiguous 10 s segments, durable uploads and provisional preview |
 | [`backend/`](backend/) | Python 3.13, FastAPI | Authenticated recording API, state machine, chunk ingestion, transcript access |
 | [`infra/`](infra/) | Azure Bicep, PowerShell | Container Apps, private Storage, managed identity, Web PubSub, networking, deployment |
-| Azure worker | Same Python image, queue-scaled Container App | Chunk transcription, overlap stitching, final language-model cleanup |
+| Azure worker | Same Python image, queue-scaled Container App | Leased continuous MAI session, full replay, optional final polishing; legacy independent STT remains available |
 | [`windows/`](windows/) | C#, .NET 8, WPF | Background tray listener, automatic clipboard copy, notifications, 48-hour history |
 
 ### Processing pipeline
 
 1. Android starts recording immediately; it never waits for a sleeping backend.
-2. Audio is stored locally before upload and split into 30-second PCM WAV chunks with a
-   1.5-second overlap so words are not clipped at boundaries.
-3. Each acknowledged chunk is queued and transcribed independently with
-   `MAI-Transcribe-2` through Azure Speech Fast Transcription; its audio is then deleted.
-4. After all chunks arrive, the worker stitches and deduplicates their text.
-5. `gpt-6-luna` performs a conservative cleanup pass over the complete transcript.
+2. New streaming recordings emit contiguous ten-second PCM WAV segments. Each file is
+   persisted locally before upload and deleted from the phone only after a cloud ACK.
+3. A leased worker sends the ordered PCM prefix to one `MAI-Transcribe-2-Streaming`
+   session, without WAV headers, boundary commits or network-gap silence.
+4. Cloud audio stays available for full replay after connection/worker failure. The only
+   commit happens at known EOF after every declared segment arrives.
+5. The canonical raw transcript is finalized directly. `gpt-6-luna` runs only if polishing
+   was enabled for that recording. Cloud audio is then removed.
 6. Web PubSub notifies the Windows tray app, which fetches the final text and copies it to
    the clipboard.
 
 The API contract lives in [`openapi/voice-recorder.yaml`](openapi/voice-recorder.yaml).
 The complete state machine, retry semantics, sequence diagram, and security boundaries are
 documented in [`docs/architecture.md`](docs/architecture.md).
+Older recordings and the Settings rollback retain the independent 30-second/1.5-second
+overlap pipeline. Durable capture protects persisted audio, not incomplete windows or
+queued writes lost in a hard process/device failure.
 
 ## Set up your own instance
 
@@ -145,8 +159,9 @@ an APK and Windows through a local per-user installer.
 
 ### Prerequisites
 
-- An Azure subscription and an Azure AI Foundry resource with `gpt-6-luna`
-  for Android recording refinement and optional Windows dictation polishing
+- An Azure subscription and an Azure AI Foundry resource with
+  `MAI-Transcribe-2-Streaming`, plus `gpt-6-luna`
+  for optional Android recording refinement and Windows dictation polishing
   (optionally legacy `gpt-5.6-luna` and `gpt-5.6-terra` for existing recordings,
   and the `gpt-4o-transcribe` fallback). The deployment
   creates the private Azure Speech resource required by `MAI-Transcribe-2`.
@@ -241,6 +256,9 @@ curl https://<your-api-host>/health/ready
 Record a short prompt on Android and stop it. The phone should advance through **Uploading**,
 **Transcribing**, **Refining**, and **Completed**. The Windows tray app then shows a
 notification and places the cleaned transcript on the clipboard.
+With polishing off, the finalization state may be brief and the clipboard contains the
+raw continuous transcript. USB debugging is optional: the signed APK can also be
+downloaded on the phone and installed as an update.
 
 ## Security and privacy
 
@@ -250,8 +268,9 @@ notification and places the cleaned transcript on the clipboard.
   Apps reaches Blob, Queue, and Table through VNet private endpoints and private DNS.
 - API, worker, and cleanup job use a shared user-assigned managed identity for Storage,
   Foundry, Web PubSub, and ACR—there are no Azure data-plane keys.
-- Audio exists only while needed for processing. Each cloud chunk is deleted immediately
-  after transcription; Android deletes its local copy only after server acknowledgement.
+- Audio exists only while needed for processing. Streaming cloud segments survive model
+  attempts until final transcript completion; legacy chunks are deleted after individual
+  transcription. Android deletes its local copy only after server acknowledgement.
 - Transcripts and local Windows history expire after 48 hours.
 - Realtime notifications contain IDs and a short preview, never the full transcript body.
 - The Windows refresh token is encrypted for the current user with DPAPI.

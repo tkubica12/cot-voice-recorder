@@ -42,6 +42,9 @@ def create_recording_route(
         client_recording_id=body.client_recording_id,
         refine_model=body.refine_model,
         language=body.language,
+        transcription_mode=body.transcription_mode,
+        audio_layout=body.audio_layout,
+        refinement_enabled=body.refinement_enabled,
     )
     if created:
         response.status_code = 201
@@ -76,6 +79,8 @@ async def upload_chunk_route(
     x_chunk_duration_ms: int | None = Header(default=None, alias="X-Chunk-Duration-Ms"),
     x_chunk_overlap_ms: int | None = Header(default=None, alias="X-Chunk-Overlap-Ms"),
     x_chunk_started_at: datetime | None = Header(default=None, alias="X-Chunk-Started-At"),
+    x_audio_start_sample: int | None = Header(default=None, alias="X-Audio-Start-Sample"),
+    x_audio_sample_count: int | None = Header(default=None, alias="X-Audio-Sample-Count"),
     _user: AuthenticatedUser = Depends(require_user),
     ctx: ServiceContext = Depends(get_context),
 ) -> ChunkAccepted:
@@ -111,6 +116,8 @@ async def upload_chunk_route(
         duration_ms=x_chunk_duration_ms,
         overlap_ms=x_chunk_overlap_ms,
         started_at=x_chunk_started_at,
+        start_sample=x_audio_start_sample,
+        sample_count=x_audio_sample_count,
     )
     response.status_code = status
     return model

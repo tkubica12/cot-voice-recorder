@@ -32,6 +32,14 @@ class SettingsStore(context: Context) {
         get() = prefs.getBoolean("quick_record_notification", false)
         set(value) { prefs.edit().putBoolean("quick_record_notification", value).apply() }
 
+    var streamingTranscription: Boolean
+        get() = prefs.getBoolean("streaming_transcription", true)
+        set(value) { prefs.edit().putBoolean("streaming_transcription", value).apply() }
+
+    var polishTranscription: Boolean
+        get() = prefs.getBoolean("polish_transcription", false)
+        set(value) { prefs.edit().putBoolean("polish_transcription", value).apply() }
+
     companion object {
         private const val KEY_BACKEND = "backend_url"
         private const val KEY_REFINE = "refine_model"

@@ -9,6 +9,7 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Protocol
 from urllib.parse import urlsplit
 
+from azure.core.credentials import TokenCredential
 from azure.identity import DefaultAzureCredential
 from websockets.asyncio.client import connect
 
@@ -24,7 +25,9 @@ class StreamingProvider(Protocol):
 
 
 class MaiStreamingProvider:
-    def __init__(self, endpoint: str, deployment: str) -> None:
+    def __init__(
+        self, endpoint: str, deployment: str, credential: TokenCredential | None = None
+    ) -> None:
         parsed = urlsplit(endpoint)
         if (
             parsed.scheme != "https"
@@ -39,10 +42,16 @@ class MaiStreamingProvider:
         hostname = parsed.hostname.replace(".cognitiveservices.azure.com", ".services.ai.azure.com")
         self._url = f"wss://{hostname}/mai/v1/realtime?intent=transcription"
         self._deployment = deployment
-        self._credential = DefaultAzureCredential()
+        self._owned_credential: DefaultAzureCredential | None = None
+        if credential is None:
+            self._owned_credential = DefaultAzureCredential()
+            self._credential: TokenCredential = self._owned_credential
+        else:
+            self._credential = credential
 
     async def close(self) -> None:
-        await asyncio.to_thread(self._credential.close)
+        if self._owned_credential is not None:
+            await asyncio.to_thread(self._owned_credential.close)
 
     @asynccontextmanager
     async def session(self, language: str) -> AsyncIterator[UpstreamStream]:

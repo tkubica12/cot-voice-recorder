@@ -77,6 +77,8 @@ def run_cleanup(ctx: ServiceContext) -> CleanupResult:
             if ctx.blobs.delete(ctx.settings.audio_container, path):
                 audio_deleted += 1
         ctx.blobs.delete(ctx.settings.raw_container, raw_path(rid))
+        for path, _ in ctx.blobs.list_paths(ctx.settings.raw_container, prefix=f"stream/{rid}/"):
+            ctx.blobs.delete(ctx.settings.raw_container, path)
         ctx.chunks.delete_for_recording(rid)
         ctx.recordings.delete(rid)
         recordings_deleted += 1
@@ -85,7 +87,14 @@ def run_cleanup(ctx: ServiceContext) -> CleanupResult:
     for path, last_modified in ctx.blobs.list_paths(ctx.settings.audio_container):
         recording_id = path.split("/", 1)[0]
         rec = ctx.recordings.get(recording_id)
-        stale = rec is None or rec.state in _TERMINAL or last_modified < cutoff
+        stale = (
+            rec is None
+            or (
+                rec.state in _TERMINAL
+                and (rec.transcription_mode != "streaming" or rec.state == RecordingState.COMPLETED)
+            )
+            or last_modified < cutoff
+        )
         if stale and ctx.blobs.delete(ctx.settings.audio_container, path):
             audio_deleted += 1
 

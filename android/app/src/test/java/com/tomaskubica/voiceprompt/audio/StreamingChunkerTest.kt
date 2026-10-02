@@ -85,4 +85,30 @@ class StreamingChunkerTest {
         }
         assertThat(chunks.map { it.index }).containsExactly(0, 1, 2).inOrder()
     }
+
+    @Test fun contiguous_ten_second_segments_cover_every_sample_exactly_once() {
+        val original = ByteArray(320_000 * 3 + 2_002) { (it % 251).toByte() }
+        val chunks = mutableListOf<StreamingChunker.RawChunk>()
+        val chunker = StreamingChunker(160_000, 0) { chunks.add(it) }
+        var position = 0
+        while (position < original.size) {
+            val size = minOf(1_282, original.size - position)
+            chunker.append(original.copyOfRange(position, position + size))
+            position += size
+        }
+        chunker.finalize()
+        assertThat(chunks).hasSize(4)
+        assertThat(chunks.map { it.startSample }).containsExactly(0L, 160_000L, 320_000L, 480_000L).inOrder()
+        assertThat(chunks.all { it.overlapMs == 0 && !it.hasPriorOverlap }).isTrue()
+        assertThat(chunks.flatMap { it.pcm.asIterable() }.toByteArray()).isEqualTo(original)
+        assertThat(chunks.last().lengthSamples).isEqualTo(1_001L)
+    }
+
+    @Test fun exact_contiguous_window_does_not_emit_an_empty_tail() {
+        val chunks = mutableListOf<StreamingChunker.RawChunk>()
+        val chunker = StreamingChunker(160_000, 0) { chunks.add(it) }
+        chunker.append(silence(320_000))
+        chunker.finalize()
+        assertThat(chunks).hasSize(2)
+    }
 }

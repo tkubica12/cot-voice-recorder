@@ -11,10 +11,20 @@ package com.tomaskubica.voiceprompt.audio
  * testable. It retains at most one window of audio in memory.
  */
 class StreamingChunker(
+    private val windowSamples: Long,
+    private val overlapSamples: Long,
     private val onChunk: (RawChunk) -> Unit,
 ) {
-    private val windowBytes = (ChunkPlan.WINDOW_SAMPLES * ChunkPlan.BYTES_PER_SAMPLE).toInt()
-    private val advanceBytes = (ChunkPlan.ADVANCE_SAMPLES * ChunkPlan.BYTES_PER_SAMPLE).toInt()
+    constructor(onChunk: (RawChunk) -> Unit) : this(
+        ChunkPlan.WINDOW_SAMPLES, ChunkPlan.OVERLAP_SAMPLES, onChunk,
+    )
+    init {
+        require(windowSamples in 1..ChunkPlan.WINDOW_SAMPLES)
+        require(overlapSamples in 0 until windowSamples)
+    }
+    private val windowBytes = (windowSamples * ChunkPlan.BYTES_PER_SAMPLE).toInt()
+    private val advanceSamples = windowSamples - overlapSamples
+    private val advanceBytes = (advanceSamples * ChunkPlan.BYTES_PER_SAMPLE).toInt()
 
     // Buffer holds bytes for samples from `retainedStartSample` onward.
     private var buf = ByteArray(windowBytes + advanceBytes)
@@ -46,15 +56,16 @@ class StreamingChunker(
                 RawChunk(
                     index = nextIndex,
                     startSample = start,
-                    lengthSamples = ChunkPlan.WINDOW_SAMPLES,
+                    lengthSamples = windowSamples,
                     pcm = pcm,
-                    hasPriorOverlap = nextIndex > 0,
+                    hasPriorOverlap = nextIndex > 0 && overlapSamples > 0,
+                    overlapSamples = if (nextIndex > 0) overlapSamples else 0,
                 ),
             )
             // Advance the window by the non-overlapping stride.
             System.arraycopy(buf, advanceBytes, buf, 0, size - advanceBytes)
             size -= advanceBytes
-            retainedStartSample += ChunkPlan.ADVANCE_SAMPLES
+            retainedStartSample += advanceSamples
             nextIndex += 1
         }
     }
@@ -64,16 +75,17 @@ class StreamingChunker(
         if (finalized) return
         finalized = true
         val remainderSamples = totalSamples - retainedStartSample
-        val plan = ChunkPlan.finalChunkAtStop(nextIndex, totalSamples) ?: return
+        if (remainderSamples <= 0 || (nextIndex > 0 && remainderSamples <= overlapSamples)) return
         val remainderBytes = (remainderSamples * ChunkPlan.BYTES_PER_SAMPLE).toInt()
         val pcm = buf.copyOfRange(0, remainderBytes)
         onChunk(
             RawChunk(
-                index = plan.index,
-                startSample = plan.startSample,
-                lengthSamples = plan.lengthSamples,
+                index = nextIndex,
+                startSample = retainedStartSample,
+                lengthSamples = remainderSamples,
                 pcm = pcm,
-                hasPriorOverlap = plan.index > 0,
+                hasPriorOverlap = nextIndex > 0 && overlapSamples > 0,
+                overlapSamples = if (nextIndex > 0) overlapSamples else 0,
             ),
         )
         nextIndex += 1
@@ -95,9 +107,10 @@ class StreamingChunker(
         val lengthSamples: Long,
         val pcm: ByteArray,
         val hasPriorOverlap: Boolean,
+        val overlapSamples: Long = if (hasPriorOverlap) ChunkPlan.OVERLAP_SAMPLES else 0,
     ) {
         val durationMs: Int get() = ChunkPlan.samplesToMs(lengthSamples)
-        val overlapMs: Int get() = if (hasPriorOverlap) ChunkPlan.OVERLAP_MS else 0
+        val overlapMs: Int get() = ChunkPlan.samplesToMs(overlapSamples)
         val startOffsetMs: Int get() = ChunkPlan.samplesToMs(startSample)
 
         override fun equals(other: Any?): Boolean {
@@ -106,6 +119,7 @@ class StreamingChunker(
             return index == other.index &&
                 startSample == other.startSample &&
                 lengthSamples == other.lengthSamples &&
+                overlapSamples == other.overlapSamples &&
                 pcm.contentEquals(other.pcm)
         }
 

@@ -30,6 +30,8 @@ def all_expected_transcribed(recording: Recording, chunks: list[Chunk]) -> bool:
     expected = recording.expected_chunk_count
     if expected is None:
         return False
+    if recording.transcription_mode == "streaming":
+        return recording.stream_asr_ready and all_expected_received(recording, chunks)
     return set(range(expected)).issubset(transcribed_indices(chunks))
 
 
@@ -150,6 +152,11 @@ def arm_finalize(ctx: ServiceContext, recording_id: str) -> None:
     if recording is None or recording.expected_chunk_count is None:
         return
     if recording.state in {RecordingState.COMPLETED, RecordingState.FAILED}:
+        return
+    if recording.transcription_mode == "streaming" and not recording.stream_asr_ready:
+        from .messages import stream_message
+
+        ctx.queue.send(stream_message(recording_id))
         return
     if try_enqueue_finalize(ctx, recording_id):
         return

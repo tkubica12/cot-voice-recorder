@@ -4,9 +4,21 @@
 **Tech:** Kotlin · Jetpack Compose · Material 3 · foreground service · Room · WorkManager.
 
 An extremely fast capture client with a **two-control** UI (**hold-to-talk** and **toggle
-start/stop**) that records 16 kHz mono PCM WAV in a foreground service, chunks it into exact
-30.0-second windows with 1.5-second overlap, and uploads chunks through a durable, idempotent,
+start/stop**) that records 16 kHz mono PCM WAV in a foreground service, splits new streaming
+recordings into contiguous ten-second segments, and uploads them through a durable, idempotent,
 retrying WorkManager chain. Startup is instant and never waits on the backend.
+
+**Android 1.3.0:** cloud transcription uses one leased MAI-Transcribe-2-Streaming session
+over the safely uploaded audio, not one independent STT request per file. Complete
+cloud audio is retained until final transcript completion and replayed from zero on
+session failure. New recordings use automatic language detection and no final LLM
+unless **Optional LLM polishing** is enabled. Settings can restore the legacy
+30-second/1.5-second-overlap pipeline. Pending older recordings keep their captured
+contract through a non-destructive Room migration.
+The foreground screen displays a provisional cloud preview; PC clipboard delivery
+still happens once, after the final transcript. See [the mobile contract and measured
+limits](../docs/mobile-streaming.md). USB debugging is not needed for builds or
+synthetic tests; it is useful for APK installation and locked-phone/network diagnostics.
 
 - **Package / application ID:** `com.tomaskubica.voiceprompt` (fixed).
 - **minSdk 29**, **targetSdk / compileSdk 35**.

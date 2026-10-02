@@ -4,13 +4,30 @@
 **Tech:** Python 3.13 · FastAPI · uv · Azure Container Apps (API min replicas 1, worker 0), managed identity only.
 
 The stateless API and workers that orchestrate the recorder: authenticate the user,
-accept recording sessions and audio chunks, transcribe Czech with `MAI-Transcribe-2`
-through Azure Speech, refine through Azure AI Foundry (`gpt-6-luna` default; older
-5.6 Luna/Terra retained for recordings created before the upgrade), persist short-lived
+accept recording sessions and audio segments, stream new Android recordings through
+`MAI-Transcribe-2-Streaming`, and preserve legacy `MAI-Transcribe-2` chunk transcription
+through Azure Speech. Optional refinement uses Azure AI Foundry (`gpt-6-luna` default;
+older 5.6 Luna/Terra retained for existing recordings). The services persist short-lived
 transcripts, and push `transcript.completed` events over Azure Web PubSub.
 Windows dictation uses a separate, optional refinement endpoint configured by
 `VR_REFINE_DEPLOYMENT_DEFAULT` (`gpt-6-luna` by default); Android recording refinement
-continues to use the model saved at recording creation, defaulting to GPT-6 Luna in new clients.
+uses the model saved at recording creation, defaulting to GPT-6 Luna when enabled.
+
+## Android 1.3 continuous cloud transcription
+
+New Android streaming recordings retain the same durable HTTP/Blob/Queue upload.
+The worker owns one recording lease and one MAI session, reads exact contiguous
+source ranges, removes only sample-proven legacy overlap, and replays the whole
+recording on failure. Audio survives model attempts and is deleted only after
+final transcript completion. Queue receipts and recording leases renew while
+running; empty-input waiting is not an exhausted STT retry.
+
+`transcription_mode`, `audio_layout` and `refinement_enabled` are persisted per
+recording, with legacy defaults for older clients. Android 1.3 defaults to continuous
+streaming and polishing off. This is separate from Windows' storage-free live proxy.
+Runtime speed is configurable (default 4x), not an advertised model guarantee.
+Deploy worker/API/cleanup before the new APK. See [lease, replay, sample continuity,
+migration and measured limitations](../docs/mobile-streaming.md).
 
 ## Windows 1.5 streaming and audit
 
@@ -60,7 +77,7 @@ backend/
 │   ├── ai/                       # Azure Speech/Foundry adapters + fakes
 │   ├── realtime/                 # Web PubSub gateway + in-memory fake
 │   ├── routers/                  # health, recordings, transcripts, realtime
-│   ├── worker.py                 # queue worker (bounded retries)
+│   ├── worker.py                 # queue leases, stream replay and bounded legacy retries
 │   └── __main__.py               # `voice-recorder api|worker|cleanup`
 └── tests/                        # pytest unit/API + opt-in Azurite integration
 ```

@@ -117,6 +117,14 @@ The script prints the API base URL and all resource outputs at the end.
 
 ### Parameters and secrets
 
+Android 1.3 additionally requires the updated queue worker. It renews its invisible
+queue work and recording lease for an active model session. Queue scaling must count
+both visible and invisible messages (`queueLengthStrategy=all`, the KEDA default),
+so an active session is not mistaken for an empty queue. Minimum worker replicas
+can stay at zero; source audio/attempt results never depend on container memory.
+`VR_RECORDING_STREAM_DEPLOYMENT` and `VR_RECORDING_STREAM_REPLAY_SPEED` select the
+deployment and bounded replay pacing. Update worker/API/cleanup before the APK.
+
 Windows 1.5 requires the existing Foundry resource to contain a
 `MAI-Transcribe-2-Streaming` deployment. The API uses the existing managed identity
 and Cognitive Services User grant; no desktop Entra login/key, new public Storage

@@ -114,6 +114,18 @@ fun HomeScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             StatusHero(state, status)
+            state.activeRecording?.takeIf { it.transcriptionMode == "streaming" }?.let { recording ->
+                if (recording.streamPreview.isNotBlank()) {
+                    Text(recording.streamPreview, maxLines = 3, overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp).testTag("streamPreview"))
+                }
+                if (recording.streamError != null) {
+                    Text("Cloud stream is retrying; uploaded audio is retained.",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.testTag("streamRetryHint"))
+                }
+            }
 
             if (state.uploadAuthRequired) {
                 Column(

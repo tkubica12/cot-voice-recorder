@@ -3,6 +3,7 @@ package com.tomaskubica.voiceprompt.data.db
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import androidx.room.ColumnInfo
 
 /**
  * One row per recording, keyed by the client-generated UUID (idempotency key). The server
@@ -25,6 +26,13 @@ data class RecordingEntity(
     val stoppedAtEpochMs: Long? = null,
     val createdAtEpochMs: Long,
     val updatedAtEpochMs: Long,
+    @ColumnInfo(defaultValue = "'chunked'") val transcriptionMode: String = "chunked",
+    @ColumnInfo(defaultValue = "'legacy_overlap'") val audioLayout: String = "legacy_overlap",
+    @ColumnInfo(defaultValue = "1") val refinementEnabled: Boolean = true,
+    @ColumnInfo(defaultValue = "''") val streamPreview: String = "",
+    @ColumnInfo(defaultValue = "0") val streamedAudioMs: Long = 0,
+    @ColumnInfo(defaultValue = "0") val streamAttempt: Int = 0,
+    val streamError: String? = null,
 )
 
 /**

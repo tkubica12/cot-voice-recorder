@@ -17,7 +17,7 @@ from ..domain import (
     Transcript,
     can_transition,
 )
-from ..errors import BlobNotFound, ConcurrencyConflict, TerminalError
+from ..errors import BlobNotFound, ConcurrencyConflict, TerminalError, TransientError
 from ..logging_config import get_logger
 from ..models import TranscriptCompletedEvent
 from ..prompts import build_transcription_prompt
@@ -33,7 +33,13 @@ _EVENT_NS = uuid.uuid5(uuid.NAMESPACE_URL, "voice-recorder/event")
 
 
 def _delete_audio(ctx: ServiceContext, recording_id: str, index: int) -> None:
-    ctx.blobs.delete(ctx.settings.audio_container, audio_path(recording_id, index))
+    chunk = ctx.chunks.get(recording_id, index)
+    path = (
+        chunk.blob_path
+        if chunk is not None and chunk.blob_path
+        else audio_path(recording_id, index)
+    )
+    ctx.blobs.delete(ctx.settings.audio_container, path)
 
 
 def transcribe_chunk(ctx: ServiceContext, recording_id: str, index: int) -> None:
@@ -92,6 +98,8 @@ def finalize(ctx: ServiceContext, recording_id: str) -> None:
     if recording is None:
         return
     if recording.state == RecordingState.COMPLETED or recording.transcript_id is not None:
+        if recording.transcription_mode == "streaming":
+            _finish_stream_delivery(ctx, recording_id)
         return
     if recording.state == RecordingState.FAILED:
         return
@@ -108,8 +116,6 @@ def finalize(ctx: ServiceContext, recording_id: str) -> None:
             fail_recording(ctx, recording_id, FailureReason.MISSING_CHUNKS)
             return
         # A late chunk is still being transcribed; retry finalize shortly.
-        from ..errors import TransientError
-
         raise TransientError("waiting for all chunks to be transcribed")
 
     # Acquire the finalize lock by moving to REFINING (idempotent resume if already there).
@@ -125,12 +131,19 @@ def finalize(ctx: ServiceContext, recording_id: str) -> None:
 
     expected = recording.expected_chunk_count or 0
     by_index = {c.index: c for c in chunks}
-    ordered_texts = [(by_index[i].text or "") for i in range(expected)]
-    raw_text = stitch_chunks(
-        ordered_texts,
-        min_overlap_chars=ctx.settings.overlap_min_chars,
-        max_overlap_tokens=60,
-    )
+    if recording.transcription_mode == "streaming":
+        if not recording.stream_raw_path:
+            raise TerminalError("Streaming transcript publication is missing")
+        raw_text = ctx.blobs.get(ctx.settings.raw_container, recording.stream_raw_path).decode(
+            "utf-8"
+        )
+    else:
+        ordered_texts = [(by_index[i].text or "") for i in range(expected)]
+        raw_text = stitch_chunks(
+            ordered_texts,
+            min_overlap_chars=ctx.settings.overlap_min_chars,
+            max_overlap_tokens=60,
+        )
     ctx.blobs.put(
         ctx.settings.raw_container,
         raw_path(recording_id),
@@ -138,7 +151,11 @@ def finalize(ctx: ServiceContext, recording_id: str) -> None:
         content_type="text/plain; charset=utf-8",
     )
 
-    refined = ctx.refiner.refine(raw_text, deployment=recording.refine_model)
+    refined = (
+        ctx.refiner.refine(raw_text, deployment=recording.refine_model)
+        if recording.refinement_enabled
+        else raw_text
+    )
 
     transcript_id = str(uuid.uuid5(_TRANSCRIPT_NS, recording_id))
     now = ctx.clock.now()
@@ -157,11 +174,14 @@ def finalize(ctx: ServiceContext, recording_id: str) -> None:
         recording_id=recording_id,
         preview=preview,
         language=recording.language,
-        refine_model=recording.refine_model,
+        refine_model=recording.refine_model if recording.refinement_enabled else "none",
         completed_at=now,
         expires_at=expires_at,
         character_count=len(refined),
         body_path=transcript_path(transcript_id),
+        transcribe_model=ctx.settings.recording_stream_deployment
+        if recording.transcription_mode == "streaming"
+        else None,
     )
     ctx.transcripts.create(transcript)
 
@@ -180,19 +200,63 @@ def finalize(ctx: ServiceContext, recording_id: str) -> None:
             break
         except ConcurrencyConflict:
             continue
+    else:
+        raise TransientError("Could not publish completed recording due to concurrent updates")
 
-    event = TranscriptCompletedEvent(
-        event_id=str(uuid.uuid5(_EVENT_NS, recording_id)),
-        transcript_id=transcript_id,
-        recording_id=recording_id,
-        completed_at=now,
-        preview=preview,
-    )
-    ctx.realtime.notify_completed(ctx.user_id, event)
+    if recording.transcription_mode == "streaming":
+        _finish_stream_delivery(ctx, recording_id)
+    else:
+        event = TranscriptCompletedEvent(
+            event_id=str(uuid.uuid5(_EVENT_NS, recording_id)),
+            transcript_id=transcript_id,
+            recording_id=recording_id,
+            completed_at=now,
+            preview=preview,
+        )
+        ctx.realtime.notify_completed(ctx.user_id, event)
     logger.info(
         "recording_completed",
         extra={"recording_id": recording_id, "transcript_id": transcript_id},
     )
+
+
+def _finish_stream_delivery(ctx: ServiceContext, recording_id: str) -> None:
+    recording = ctx.recordings.get(recording_id)
+    if recording is None or recording.transcript_id is None:
+        raise TransientError("Completed streaming recording has no canonical transcript")
+    transcript = ctx.transcripts.get(recording.transcript_id)
+    if transcript is None:
+        raise TransientError("Completed streaming transcript metadata is unavailable")
+    event = TranscriptCompletedEvent(
+        event_id=str(uuid.uuid5(_EVENT_NS, recording_id)),
+        transcript_id=transcript.transcript_id,
+        recording_id=recording_id,
+        completed_at=transcript.completed_at,
+        preview=transcript.preview,
+    )
+    if not recording.stream_delivery_completed:
+        ctx.realtime.notify_completed(ctx.user_id, event)
+        for _ in range(5):
+            current = ctx.recordings.get(recording_id)
+            if current is None:
+                raise TransientError("Completed streaming recording disappeared")
+            if current.stream_delivery_completed:
+                break
+            try:
+                ctx.recordings.update(
+                    current.with_changes(stream_delivery_completed=True, updated_at=ctx.clock.now())
+                )
+                break
+            except ConcurrencyConflict:
+                continue
+        else:
+            raise TransientError("Could not acknowledge streaming transcript notification")
+    for chunk in ctx.chunks.list_for_recording(recording_id):
+        _delete_audio(ctx, recording_id, chunk.index)
+    for path, _ in ctx.blobs.list_paths(
+        ctx.settings.raw_container, prefix=f"stream/{recording_id}/"
+    ):
+        ctx.blobs.delete(ctx.settings.raw_container, path)
 
 
 def _grace_exceeded(ctx: ServiceContext, recording: object) -> bool:

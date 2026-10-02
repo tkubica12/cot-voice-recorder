@@ -72,6 +72,18 @@ class Recording:
     finalize_enqueued: bool = False
     # Opaque optimistic-concurrency token (Table ETag / in-memory version).
     etag: str | None = None
+    transcription_mode: str = "chunked"
+    audio_layout: str = "legacy_overlap"
+    refinement_enabled: bool = True
+    stream_lease_id: str | None = None
+    stream_lease_expires_at: datetime | None = None
+    stream_raw_path: str | None = None
+    stream_asr_ready: bool = False
+    stream_attempt: int = 0
+    streamed_samples: int = 0
+    stream_preview: str = ""
+    stream_error: str | None = None
+    stream_delivery_completed: bool = False
 
     def with_changes(self, **changes: object) -> Recording:
         return replace(self, **changes)  # type: ignore[arg-type]
@@ -91,6 +103,8 @@ class Chunk:
     overlap_ms: int | None = None
     started_at: datetime | None = None
     etag: str | None = None
+    start_sample: int | None = None
+    sample_count: int | None = None
 
     def with_changes(self, **changes: object) -> Chunk:
         return replace(self, **changes)  # type: ignore[arg-type]
