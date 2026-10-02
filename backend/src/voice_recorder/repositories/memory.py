@@ -119,6 +119,10 @@ class InMemoryTranscriptRepository:
             self._by_id[transcript.transcript_id] = stored
             return stored
 
+    def create_if_absent(self, transcript: Transcript) -> Transcript:
+        with self._lock:
+            return self._by_id.setdefault(transcript.transcript_id, transcript)
+
     def get(self, transcript_id: str) -> Transcript | None:
         with self._lock:
             return self._by_id.get(transcript_id)

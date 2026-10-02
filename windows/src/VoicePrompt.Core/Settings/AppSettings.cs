@@ -34,6 +34,9 @@ public sealed class AppSettings
     [JsonPropertyName("dictation_refinement_enabled")]
     public bool DictationRefinementEnabled { get; set; }
 
+    [JsonPropertyName("dictation_streaming_enabled")]
+    public bool DictationStreamingEnabled { get; set; } = true;
+
     public const int DefaultDictationFinalWaitMilliseconds = 1500;
     public const int MinDictationFinalWaitMilliseconds = 500;
     public const int MaxDictationFinalWaitMilliseconds = 5000;
@@ -59,6 +62,7 @@ public sealed class AppSettings
         DictationToggleShortcut = DictationToggleShortcut,
         DictationLanguage = DictationLanguage,
         DictationRefinementEnabled = DictationRefinementEnabled,
+        DictationStreamingEnabled = DictationStreamingEnabled,
         DictationFinalWaitMilliseconds = DictationFinalWaitMilliseconds,
     };
 

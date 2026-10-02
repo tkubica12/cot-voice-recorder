@@ -24,7 +24,7 @@ namespace VoicePrompt.App;
 /// </summary>
 public sealed class AppHost : IAsyncDisposable, IDictationHost
 {
-    public const string AppVersion = "1.4.5";
+    public const string AppVersion = "1.5.1";
 
     private static readonly TimeSpan CleanupInterval = TimeSpan.FromMinutes(30);
 
@@ -35,6 +35,11 @@ public sealed class AppHost : IAsyncDisposable, IDictationHost
     private HttpClient? _refinementHttp;
     private readonly bool _firstRun;
     private Task? _cleanupLoop;
+    private Task? _auditLoop;
+    private DictationAuditOutbox? _auditOutbox;
+    private readonly SemaphoreSlim _auditWake = new(0, 1);
+    private DateTimeOffset _lastAuditWarning;
+    public event Action? DictationAuditsChanged;
 
     private AppHost(
         AppPaths paths,
@@ -91,6 +96,40 @@ public sealed class AppHost : IAsyncDisposable, IDictationHost
         DictationApi.TranscribeDictationAsync(wav, language, ct);
     Task<DictationRefinement> IDictationHost.RefineAsync(string text, string previousText, CancellationToken ct) =>
         DictationRefinementApi.RefineDictationAsync(text, previousText, ct);
+    IDictationStreamFactory? IDictationHost.CreateStreamingFactory(string context) =>
+        new DictationStreamClient(() => BoundBackend(context), new BoundCredentials(this, context));
+    void IDictationHost.SyncDictationAudits()
+    {
+        lock (_auditWake)
+            if (!_shutdown.IsCancellationRequested && _auditWake.CurrentCount == 0) _auditWake.Release();
+    }
+
+    private Uri BoundBackend(string context)
+    {
+        if (context != RecoveryContext || !Auth.Status.CanCallBackend)
+            throw new ApiException(ApiErrorKind.Unauthorized, 401, null,
+                "Use the original account and backend for this dictation.");
+        return new Uri(Settings.BackendBaseUrl + "/");
+    }
+
+    private sealed class BoundCredentials(AppHost host, string context) : IBackendCredentials
+    {
+        public async Task<string?> GetIdTokenAsync(CancellationToken ct)
+        {
+            _ = host.BoundBackend(context);
+            var token = await host.Auth.GetValidIdTokenAsync(ct).ConfigureAwait(false);
+            _ = host.BoundBackend(context);
+            return token;
+        }
+
+        public async Task<bool> TryRefreshAfterUnauthorizedAsync(CancellationToken ct)
+        {
+            _ = host.BoundBackend(context);
+            var success = await host.Auth.ForceRefreshAsync(ct).ConfigureAwait(false) == RefreshOutcome.Success;
+            _ = host.BoundBackend(context);
+            return success;
+        }
+    }
 
     /// <summary>False when no Desktop OAuth client JSON was found (safe unconfigured state).</summary>
     public bool OAuthConfigured { get; }
@@ -163,6 +202,23 @@ public sealed class AppHost : IAsyncDisposable, IDictationHost
         host.DictationRefinementApi = new ApiClient(host._refinementHttp, new AuthBackendCredentials(auth),
             new ApiRetryOptions { MaxRetries = 0 },
             baseUrl: () => new Uri(settings.BackendBaseUrl + "/"));
+        host._auditOutbox = new DictationAuditOutbox(host.Recovery, history, clock,
+            () => host.RecoveryContext, () => auth.Status.CanCallBackend && !host.DictationBusy,
+            (state, ct) =>
+            {
+                var endpoint = host.BoundBackend(state.Context);
+                var archiveApi = new ApiClient(host._dictationHttp,
+                    new BoundCredentials(host, state.Context),
+                    baseUrl: () => endpoint);
+                return archiveApi.ArchiveDictationAsync(state, ct);
+            }, log, () =>
+            {
+                if (clock.UtcNow - host._lastAuditWarning < TimeSpan.FromMinutes(5)) return;
+                host._lastAuditWarning = clock.UtcNow;
+                notifier.Notify("Cloud dictation audit pending",
+                    "Text is saved locally. The audit upload will retry; check connection and Google sign-in.",
+                    NotificationKind.Warning);
+            });
         return host;
     }
 
@@ -171,6 +227,7 @@ public sealed class AppHost : IAsyncDisposable, IDictationHost
     {
         History.Cleanup();
         _cleanupLoop ??= Task.Run(() => CleanupLoopAsync(_shutdown.Token));
+        _auditLoop ??= Task.Run(() => AuditLoopAsync(_shutdown.Token));
 
         if (_firstRun)
         {
@@ -225,6 +282,7 @@ public sealed class AppHost : IAsyncDisposable, IDictationHost
             {
                 await Task.Delay(CleanupInterval, ct).ConfigureAwait(false);
             }
+
             catch (OperationCanceledException)
             {
                 return;
@@ -246,6 +304,26 @@ public sealed class AppHost : IAsyncDisposable, IDictationHost
         }
     }
 
+    private async Task AuditLoopAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                await _auditOutbox!.DrainAsync(ct).ConfigureAwait(false);
+                DictationAuditsChanged?.Invoke();
+                await _auditWake.WaitAsync(TimeSpan.FromSeconds(30), ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
+            catch (Exception ex)
+            {
+                Log.Warn($"dictation audit: synchronization failed ({ex.GetType().Name})");
+                try { await Task.Delay(TimeSpan.FromSeconds(30), ct).ConfigureAwait(false); }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
+            }
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
         _shutdown.Cancel();
@@ -262,12 +340,14 @@ public sealed class AppHost : IAsyncDisposable, IDictationHost
                 // expected
             }
         }
+        if (_auditLoop is not null) await _auditLoop.ConfigureAwait(false);
 
         _apiHttp.Dispose();
         _dictationHttp?.Dispose();
         _refinementHttp?.Dispose();
         _tokenHttp.Dispose();
         _shutdown.Dispose();
+        _auditWake.Dispose();
         Log.Info("host: stopped");
     }
 }

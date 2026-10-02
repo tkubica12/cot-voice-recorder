@@ -172,6 +172,16 @@ class AzureTableTranscriptRepository:
         self._client.upsert_entity(_to_transcript_entity(transcript))
         return transcript
 
+    def create_if_absent(self, transcript: Transcript) -> Transcript:
+        try:
+            self._client.create_entity(_to_transcript_entity(transcript))
+        except ResourceExistsError:
+            existing = self.get(transcript.transcript_id)
+            if existing is None:
+                raise ConcurrencyConflict("Transcript disappeared during publication") from None
+            return existing
+        return transcript
+
     def get(self, transcript_id: str) -> Transcript | None:
         try:
             entity = self._client.get_entity(_TRANSCRIPT_PK, transcript_id)
@@ -303,6 +313,9 @@ def _to_transcript_entity(transcript: Transcript) -> dict[str, Any]:
             "expires_at": transcript.expires_at,
             "character_count": transcript.character_count,
             "body_path": transcript.body_path,
+            "source": transcript.source,
+            "transcribe_model": transcript.transcribe_model,
+            "content_digest": transcript.content_digest,
         }
     )
 
@@ -319,4 +332,7 @@ def _from_transcript_entity(entity: Any) -> Transcript:
         character_count=int(entity["character_count"]),
         body_path=str(entity["body_path"]),
         etag=entity.metadata.get("etag") if hasattr(entity, "metadata") else None,
+        source=str(entity.get("source", "recording")),
+        transcribe_model=entity.get("transcribe_model"),
+        content_digest=entity.get("content_digest"),
     )

@@ -103,9 +103,10 @@ public sealed class TranscriptCoordinator
             CompletedAt = transcript.CompletedAt == default ? _clock.UtcNow : transcript.CompletedAt,
             CachedAt = _clock.UtcNow,
             CharacterCount = transcript.CharacterCount,
+            RawBody = transcript.RawBody != transcript.Body ? transcript.RawBody : null,
         });
 
-        if (_notificationsPaused())
+        if (_notificationsPaused() || transcript.Source == "windows_dictation")
         {
             _log.Info("event: transcript cached (notifications paused; no auto-copy)");
             return Finish(TranscriptHandlingResult.CachedWhilePaused);

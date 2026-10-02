@@ -141,6 +141,7 @@
                   <TextBlock Text="{Binding PendingChunks, StringFormat={}{0} sealed chunks pending (recovery also finishes the audio tail)}" />
                   <TextBlock Text="{Binding Language, StringFormat={}Language: {0}}" />
                   <TextBlock Text="{Binding Error}" TextWrapping="Wrap" />
+                  <TextBlock Text="{Binding AuditPending, StringFormat={}Cloud audit upload pending: {0}}" />
                 </StackPanel>
               </DataTemplate>
             </ListBox.ItemTemplate>
@@ -208,8 +209,10 @@
             <TextBlock Style="{StaticResource SectionHeader}" Text="Local dictation with cloud MAI" />
             <CheckBox x:Name="DictationEnabledCheck" Content="Enable global dictation shortcut"
                       AutomationProperties.Name="Enable dictation" />
+            <CheckBox x:Name="DictationStreamingCheck" Content="Use live MAI streaming (recommended)"
+                      AutomationProperties.Name="Use streaming dictation" />
             <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap"
-                       Text="Hold to talk and release to finish, or use the hands-free shortcut to start/stop. Esc discards. There is no five-minute stop. MAI transcribes in the background; a non-activating overlay previews recent words. Encrypted local checkpoints are saved about every two seconds for crash recovery (48-hour retention, 256 MiB storage limit)." />
+                       Text="Google sign-in only: live MAI streaming is relayed by the backend. The overlay shows provisional words; only confirmed text is pasted. Audio is saved locally about every two seconds. If streaming is late after Stop, use Recovery to finish without automatic paste. Completed streaming dictations (original and final text) are uploaded asynchronously for 48-hour cloud audit. Uncheck streaming to use legacy WAV batches. Esc discards. Recovery storage is encrypted and limited to 256 MiB." />
             <TextBlock Style="{StaticResource Caption}" Text="Shortcut (for example Ctrl+Alt+Space)" Margin="0,8,0,4" />
             <TextBox x:Name="DictationShortcutBox" AutomationProperties.Name="Dictation shortcut" />
             <TextBlock Style="{StaticResource Caption}" Text="Hands-free start/stop shortcut" Margin="0,8,0,4" />

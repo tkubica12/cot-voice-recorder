@@ -54,6 +54,7 @@ public partial class MainWindow : Window
         PauseCheck.IsChecked = _host.Settings.NotificationsPaused;
         DictationEnabledCheck.IsChecked = _host.Settings.DictationEnabled;
         DictationRefinementCheck.IsChecked = _host.Settings.DictationRefinementEnabled;
+        DictationStreamingCheck.IsChecked = _host.Settings.DictationStreamingEnabled;
         DictationFinalWaitBox.SelectedIndex = _host.Settings.DictationFinalWaitMilliseconds / 500 - 1;
         DictationShortcutBox.Text = _host.Settings.DictationShortcut;
         DictationToggleShortcutBox.Text = _host.Settings.DictationToggleShortcut;
@@ -72,6 +73,7 @@ public partial class MainWindow : Window
         _host.Auth.StatusChanged += OnAuthStatusChanged;
         _host.History.Changed += OnHistoryChanged;
         _dictation.RecoveryChanged += () => Dispatcher.BeginInvoke(() => _ = RefreshRecoveryAsync());
+        _host.DictationAuditsChanged += () => Dispatcher.BeginInvoke(() => _ = RefreshRecoveryAsync());
         _host.Coordinator.Handled += _ => Dispatcher.BeginInvoke(RefreshHistory);
 
         RefreshHistory();
@@ -296,6 +298,7 @@ public partial class MainWindow : Window
                     RecordingId = full.RecordingId,
                     Preview = full.Preview,
                     Body = full.Body,
+                    RawBody = full.RawBody != full.Body ? full.RawBody : null,
                     CompletedAt = full.CompletedAt,
                     CachedAt = _host.Clock.UtcNow,
                     CharacterCount = full.CharacterCount,
@@ -435,6 +438,7 @@ public partial class MainWindow : Window
         {
             _host.Settings.DictationEnabled = DictationEnabledCheck.IsChecked == true;
             _host.Settings.DictationRefinementEnabled = DictationRefinementCheck.IsChecked == true;
+            _host.Settings.DictationStreamingEnabled = DictationStreamingCheck.IsChecked == true;
             if (DictationFinalWaitBox.SelectedIndex < 0)
                 throw new InvalidOperationException("Choose a final AI wait duration.");
             _host.Settings.DictationFinalWaitMilliseconds = (DictationFinalWaitBox.SelectedIndex + 1) * 500;
@@ -454,6 +458,7 @@ public partial class MainWindow : Window
             _host.Settings.DictationToggleShortcut = before.DictationToggleShortcut;
             _host.Settings.DictationLanguage = before.DictationLanguage;
             _host.Settings.DictationRefinementEnabled = before.DictationRefinementEnabled;
+            _host.Settings.DictationStreamingEnabled = before.DictationStreamingEnabled;
             _host.Settings.DictationFinalWaitMilliseconds = before.DictationFinalWaitMilliseconds;
             _host.Log.Warn($"dictation: settings failed ({ex.GetType().Name})");
             DictationStatusText.Text = "Could not save dictation settings. Check the shortcut and final AI wait duration.";

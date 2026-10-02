@@ -91,6 +91,12 @@ class CompleteConflictError(ProblemError):
     title = "Complete conflict"
 
 
+class ConflictError(ProblemError):
+    status = 409
+    code = "conflict"
+    title = "Conflict"
+
+
 class PayloadTooLargeError(ProblemError):
     status = 413
     code = "payload-too-large"

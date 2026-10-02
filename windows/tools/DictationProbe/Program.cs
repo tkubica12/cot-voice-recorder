@@ -27,6 +27,8 @@ internal static class Program
             return HotkeyBurst(args[1]);
         if (args.Length == 2 && args[0] == "--live")
             return LiveAsync(args[1]).GetAwaiter().GetResult();
+        if (args.Length == 2 && args[0] == "--stream-live")
+            return StreamingLiveAsync(args[1]).GetAwaiter().GetResult();
         if (args.Length == 1 && args[0] == "--refine-live")
             return RefineLiveAsync().GetAwaiter().GetResult();
         if (args.Length == 1 && args[0] == "--microphone")
@@ -48,7 +50,7 @@ internal static class Program
         var hotkeysOnly = args.Length == 1 && args[0] == "--hotkeys";
         if (args.Length != 0 && !hotkeysOnly)
         {
-            Console.Error.WriteLine("Usage: DictationProbe [--live synthetic.wav | --refine-live | --microphone | --editor-live synthetic.wav | --hotkeys | --hotkey-burst app.dll]");
+            Console.Error.WriteLine("Usage: DictationProbe [--live synthetic.wav | --stream-live synthetic.wav | --refine-live | --microphone | --editor-live synthetic.wav | --hotkeys | --hotkey-burst app.dll]");
             return 2;
         }
         try
@@ -402,6 +404,8 @@ internal static class Program
         private readonly HttpClient _tokens = new() { Timeout = TimeSpan.FromSeconds(30) };
         private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(25) };
         public ApiClient Api { get; }
+        public IDictationStreamFactory Streams { get; }
+        public string Context { get; }
         public LiveConnection()
         {
             var fs = PhysicalFileSystem.Instance;
@@ -411,8 +415,13 @@ internal static class Program
                 new TokenStore(paths.TokensFile, new DpapiSecretProtector(), fs),
                 new SystemBrowser(), LoopbackAuthListenerFactory.Instance, SystemClock.Instance);
             Require(auth.Status.CanCallBackend, "Sign in to VoicePrompt before the live probe.");
-            _http.BaseAddress = new Uri(new SettingsStore(paths.SettingsFile, fs).Load().BackendBaseUrl);
-            Api = new ApiClient(_http, new AuthBackendCredentials(auth), new ApiRetryOptions { MaxRetries = 0 });
+            var settings = new SettingsStore(paths.SettingsFile, fs).Load();
+            var endpoint = new Uri(settings.BackendBaseUrl + "/");
+            _http.BaseAddress = endpoint;
+            var credentials = new AuthBackendCredentials(auth);
+            Api = new ApiClient(_http, credentials, new ApiRetryOptions { MaxRetries = 0 });
+            Streams = new DictationStreamClient(() => endpoint, credentials);
+            Context = settings.BackendBaseUrl + "\n" + auth.Status.Email;
         }
         public void Dispose() { _http.Dispose(); _tokens.Dispose(); }
     }
@@ -484,6 +493,7 @@ internal static class Program
                 Console.WriteLine($"PASS live run={run + 1} chunks={chunks.Length} chars={result.Length} "
                     + $"total-ms={total.ElapsedMilliseconds} request-ms={string.Join(',', requests)}");
             }
+
             // Stream the same synthetic audio at capture cadence to measure the actual tail.
             var streamingChunker = new PcmChunker();
             await using var streaming = new DictationSession(
@@ -507,6 +517,63 @@ internal static class Program
             Console.Error.WriteLine($"FAIL live {ex.GetType().Name}"
                 + (ex is ApiException api ? $" HTTP={api.StatusCode}" : $": {ex.Message}"));
             return 1;
+        }
+    }
+
+    private static async Task<int> StreamingLiveAsync(string path)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "VoicePrompt-stream-probe-" + Guid.NewGuid().ToString("N"));
+        string? id = null;
+        try
+        {
+            using var live = new LiveConnection();
+            var pcm = ReadPcm(path);
+            var store = new RecoveryStore(root, new DpapiSecretProtector());
+            var journal = store.Create("auto", live.Context, streaming: true);
+            id = journal.Snapshot.Id;
+            var firstFeedback = -1L;
+            await using var session = new StreamingDictationSession(journal, live.Streams,
+                (wav, ct) => live.Api.TranscribeDictationAsync(wav, "auto", ct));
+            var recording = Stopwatch.StartNew();
+            for (var offset = 0; offset < pcm.Length; offset += 1280)
+            {
+                session.Append(pcm.AsSpan(offset, Math.Min(1280, pcm.Length - offset)));
+                if (firstFeedback < 0 && session.Progress.Preview.Length > 0)
+                    firstFeedback = recording.ElapsedMilliseconds;
+                var scheduled = TimeSpan.FromSeconds(Math.Min(offset + 1280, pcm.Length) / 32000d);
+                var remaining = scheduled - recording.Elapsed;
+                if (remaining > TimeSpan.Zero) await Task.Delay(remaining);
+            }
+            var stop = Stopwatch.StartNew();
+            session.FinishCapture();
+            var text = await session.WaitForCompletionAsync(TimeSpan.FromSeconds(2), CancellationToken.None)
+                ?? throw new TimeoutException("Streaming exceeded the two-second stop budget.");
+            Require(!string.IsNullOrWhiteSpace(text), "Streaming did not complete within the two-second stop budget.");
+            var stopToText = stop.ElapsedMilliseconds;
+            Require(session.Progress.TranscribedBytes == pcm.Length, "Not all source audio was confirmed.");
+            session.PrepareAudit(text, DateTimeOffset.UtcNow, false);
+            await live.Api.ArchiveDictationAsync(journal.Snapshot, CancellationToken.None);
+            var archived = await live.Api.GetTranscriptAsync(Guid.ParseExact(id, "N").ToString("D"), CancellationToken.None);
+            Require(archived.Body == text && archived.RawBody == text
+                && archived.Source == "windows_dictation", "Cloud audit differs from the completed local result.");
+            Require(archived.ExpiresAt - archived.CompletedAt == TimeSpan.FromHours(48), "Incorrect cloud audit retention.");
+            Console.WriteLine($"PASS streaming relay: audio-ms={pcm.Length / 32}; first-preview-ms={firstFeedback}; "
+                + $"stop-to-text-ms={stopToText}; chars={text.Length}; audit=acknowledged; no clipboard/paste; id={archived.TranscriptId}");
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"FAIL streaming relay: {ex.GetType().Name}"
+                + (ex is ApiException api ? $" HTTP={api.StatusCode}" : ""));
+            return 1;
+        }
+        finally
+        {
+            if (id is not null && Directory.Exists(root))
+            {
+                new RecoveryStore(root, new DpapiSecretProtector()).Delete(id);
+                Directory.Delete(root);
+            }
         }
     }
 

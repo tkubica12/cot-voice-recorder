@@ -108,6 +108,9 @@ class Transcript:
     character_count: int
     body_path: str
     etag: str | None = None
+    source: str = "recording"
+    transcribe_model: str | None = None
+    content_digest: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

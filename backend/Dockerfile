@@ -5,9 +5,9 @@
 # ---------------------------------------------------------------------------
 FROM python:3.13-slim AS builder
 
-# Optional: override the package index (e.g. a mirror/proxy). Defaults to PyPI.
-ARG UV_DEFAULT_INDEX=""
-ARG PIP_INDEX_URL=""
+# Override only with another approved project feed.
+ARG UV_DEFAULT_INDEX="https://packagefeedproxy.microsoft.io/pypi/simple/"
+ARG PIP_INDEX_URL="https://packagefeedproxy.microsoft.io/pypi/simple/"
 ENV UV_DEFAULT_INDEX=${UV_DEFAULT_INDEX} \
     PIP_INDEX_URL=${PIP_INDEX_URL} \
     UV_LINK_MODE=copy \

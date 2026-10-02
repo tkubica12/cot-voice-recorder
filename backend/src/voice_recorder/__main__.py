@@ -24,6 +24,8 @@ def _run_api(args: argparse.Namespace) -> int:
         host=args.host,
         port=args.port,
         log_config=None,
+        ws_max_size=16384,
+        ws_max_queue=4,
     )
     return 0
 

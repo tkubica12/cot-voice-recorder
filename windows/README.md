@@ -8,6 +8,23 @@ connection** (the backend is never polled) and when a `transcript.completed` eve
 fetches the transcript, copies it to the clipboard, and shows a tray notification. A compact
 settings/history window lists recent transcripts; selecting an old one copies it again.
 
+**Windows 1.5.0:** live dictation now uses **MAI-Transcribe-2-Streaming through a thin
+backend WebSocket proxy**, authenticated with the existing Google login. No Microsoft
+login or Azure key is installed on Windows. The overlay replaces provisional text;
+only confirmed text is pasted. DPAPI audio checkpoints, reconnect replay and batch
+Recovery remain available; unfinished text after the two-second stop budget stays
+in Recovery rather than being pasted partially. Settings -> **Use live MAI streaming**
+is on by default and can be unchecked for the legacy short-WAV path.
+
+Completed streaming dictations also upload original/final text asynchronously for
+**48-hour cloud audit**. A durable encrypted outbox retries failed uploads without
+delaying paste; the Recovery tab identifies pending audit uploads. Audit entries are
+retrievable from cloud History but never trigger automatic clipboard copying.
+Explicitly discarded/provisional text is not audited. Android remains unchanged.
+**Windows 1.5.1:** successful paste immediately hides the overlay; skipped-paste
+status and actionable fallback notifications remain visible.
+See [the current streaming/recovery/audit contract](../docs/windows-dictation.md).
+
 **Windows dictation:** hold **Ctrl+Alt+Space**, speak into the default microphone, and release
 to paste. Current source adds **Ctrl+Alt+Shift+Space** for hands-free start/stop; focus the
 destination before stopping (it is selected at stop, not start). Both shortcuts are configurable.
@@ -224,7 +241,7 @@ Silent install / uninstall:
   only the existing one-time authentication refresh remains.
 - **Cache.** `history.json` under LocalAppData, written atomically (temp file + replace), pruned
   to the newest 200 entries and a **48-hour** retention window on startup and every 30 minutes.
-  **No audio is ever stored.**
+  Audio is stored only in the separate DPAPI-encrypted dictation recovery journal.
 - **Privacy.** Logs are redacted (JWTs, `Bearer` headers, `access_token`/`code`/`client_secret`
   query values) and transcript bodies are never logged or put in a notification.
 - **Single instance.** A `Local\`-scoped named mutex per Windows user; a second launch asks the

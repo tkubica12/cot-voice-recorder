@@ -14,6 +14,9 @@ info:
     Windows can also send short dictation WAV batches directly to MAI through the
     authenticated backend, receiving clean text without storage, queues, or Web PubSub.
     An independent optional endpoint polishes only a supplied current text block.
+    Windows 1.5 adds a Google-authenticated PCM WebSocket relay and an independent,
+    idempotent final-transcript audit PUT. Audit retains original/final text for 48 hours
+    without publishing clipboard-triggering events. No audio is stored by the relay.
 
     ## Conventions
     - **IDs** are UUIDs (string, format `uuid`).
@@ -42,7 +45,7 @@ security:
 
 tags:
   - name: dictation
-    description: Ephemeral low-latency Windows dictation.
+    description: Streaming/short-batch Windows dictation and final-text audit.
   - name: recordings
     description: Recording session lifecycle and chunk upload.
   - name: transcripts
@@ -51,6 +54,26 @@ tags:
     description: Web PubSub negotiation for push notifications.
   - name: health
     description: Unauthenticated liveness/readiness probes.
+
+x-websocket-endpoints:
+  /v1/dictation/stream:
+    description: |
+      Google ID-token Authorization header; no credentials in the URL.
+      Query: language=auto|cs|en, start_byte=nonnegative even absolute PCM byte cursor.
+      Backend chooses MAI-Transcribe-2-Streaming; clients cannot choose a model or endpoint.
+      Ready: {"type":"ready","protocol":1,"start_byte":0}.
+      Send raw mono 16000 Hz PCM16 little-endian binary packets (1..16384 bytes, even),
+      and exact JSON controls {"type":"commit"} or {"type":"finish"}.
+      Receive delta/intermediate events with item_id/text. Deltas append; intermediate
+      replaces the provisional suffix after the latest delta. confirmed carries a full
+      segment text and absolute byte_end, in capture order. Only confirmed events allow
+      releasing durable client audio. done carries the final byte_end.
+      Errors contain a safe code (unauthorized, forbidden, invalid_request,
+      too_many_requests, unavailable, stream_failed), never Azure credentials.
+      Four streams per API process, 32 pending commits, 55-minute connection deadline,
+      30-second final drain. Reconnect replays client audio after its confirmed cursor;
+      there is no per-packet ACK. Model session configuration is immutable.
+      The live path has no Storage/Queue/LLM/Web PubSub operations. Audit is a separate PUT.
 
 paths:
   /health/live:
@@ -319,6 +342,56 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/Problem"
+
+  /v1/dictation/transcripts/{session_id}:
+    put:
+      operationId: archiveDictation
+      tags: [dictation]
+      summary: Archive a completed Windows dictation without clipboard notifications.
+      description: |
+        Idempotency key is the client recovery UUID, also the returned transcript_id.
+        Original/final text and actual streaming/fallback model are retained 48 hours
+        from completed_at. Identical retries do not extend retention; different content
+        for the same UUID returns 409. Timestamps must be timezone-aware, unexpired,
+        and no more than five minutes ahead. Each text is capped at 1048576 UTF-8 bytes;
+        total JSON body is bounded to 12599296 bytes (including worst-case escaping).
+        Immutable content paths are published before metadata. No audio, queue work,
+        LLM call, or transcript.completed event is created. The desktop's encrypted
+        outbox retries this request independently of paste and is removed only on ACK.
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DictationArchiveRequest"
+      responses:
+        "200":
+          description: Original archive acknowledgement.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TranscriptSummary"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: A different archive already exists for this UUID.
+        "413":
+          description: Audit body exceeds supported bounds.
+        "415":
+          description: Requires uncompressed application/json.
+        "422":
+          description: Invalid body, timestamp or text bounds.
+        "500":
+          description: Storage publication failed; client must retain its outbox.
 
   /v1/recordings:
     post:
@@ -897,6 +970,36 @@ components:
           maxLength: 8000
           default: ""
 
+    DictationArchiveRequest:
+      type: object
+      additionalProperties: false
+      required: [text, raw_text, completed_at]
+      properties:
+        text:
+          type: string
+          minLength: 1
+          maxLength: 1048576
+          pattern: '\S'
+        raw_text:
+          type: string
+          minLength: 1
+          maxLength: 1048576
+          pattern: '\S'
+        language:
+          type: string
+          enum: [auto, cs, en]
+          default: auto
+        completed_at:
+          type: string
+          format: date-time
+        polished:
+          type: boolean
+          default: false
+        transcribe_model:
+          type: string
+          enum: [MAI-Transcribe-2-Streaming, MAI-Transcribe-2, MAI-Transcribe-2-Streaming+MAI-Transcribe-2]
+          default: MAI-Transcribe-2-Streaming
+
     DictationResult:
       type: object
       additionalProperties: false
@@ -1120,7 +1223,14 @@ components:
         language:
           $ref: "#/components/schemas/Language"
         refine_model:
-          $ref: "#/components/schemas/RefineModel"
+          type: string
+          enum: [gpt-6-luna, gpt-5.6-luna, gpt-5.6-terra, none]
+        source:
+          type: string
+          enum: [recording, windows_dictation]
+          default: recording
+        transcribe_model:
+          type: [string, "null"]
 
     Transcript:
       type: object
@@ -1151,7 +1261,16 @@ components:
         language:
           $ref: "#/components/schemas/Language"
         refine_model:
-          $ref: "#/components/schemas/RefineModel"
+          type: string
+          enum: [gpt-6-luna, gpt-5.6-luna, gpt-5.6-terra, none]
+        source:
+          type: string
+          enum: [recording, windows_dictation]
+          default: recording
+        transcribe_model:
+          type: [string, "null"]
+        raw_body:
+          type: [string, "null"]
         completed_at:
           type: string
           format: date-time

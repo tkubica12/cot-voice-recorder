@@ -7,14 +7,18 @@ using VoicePrompt.Core.Infrastructure;
 namespace VoicePrompt.Core.Dictation;
 
 public sealed record RecoveryInfo(string Id, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt,
-    string Language, long CapturedBytes, int PendingChunks, bool CaptureComplete, string? Error);
+    string Language, long CapturedBytes, int PendingChunks, bool CaptureComplete, string? Error,
+    bool AuditPending = false);
 
 /// <param name="EndByte">Absolute source PCM end position; zero means unknown for legacy chunks.</param>
 public sealed record RecoveryChunk(int Index, bool OverlapsPrevious, string? Text, long EndByte = 0);
 
 public sealed record RecoveryState(string Id, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt,
     string Language, long CapturedBytes, byte[] Tail, bool CaptureComplete,
-    IReadOnlyList<RecoveryChunk> Chunks, string Context = "");
+    IReadOnlyList<RecoveryChunk> Chunks, string Context = "", bool Streaming = false,
+    long ConfirmedBytes = 0, string ConfirmedText = "", string? AuditText = null,
+    DateTimeOffset? AuditCompletedAt = null, bool AuditPolished = false,
+    bool UsedStreaming = false, bool UsedFallback = false, int LastSegmentWords = 0);
 
 /// <summary>
 /// Encrypted, crash-recoverable dictation storage. All processes writing a root must belong to
@@ -66,7 +70,7 @@ public sealed class RecoveryStore
         }
     }
 
-    public RecoveryJournal Create(string language, string context = "")
+    public RecoveryJournal Create(string language, string context = "", bool streaming = false)
     {
         ValidateLanguage(language);
         ArgumentNullException.ThrowIfNull(context);
@@ -79,7 +83,7 @@ public sealed class RecoveryStore
             var directory = SessionPath(id);
             Directory.CreateDirectory(directory);
             var now = _clock.UtcNow;
-            var state = new RecoveryState(id, now, now, language, 0, [], false, [], context);
+            var state = new RecoveryState(id, now, now, language, 0, [], false, [], context, streaming);
             WriteManifest(new Manifest(state, []));
             return Track(id);
         }
@@ -112,7 +116,8 @@ public sealed class RecoveryStore
                     {
                         var s = manifest.State;
                         result.Add(new(s.Id, s.CreatedAt, s.UpdatedAt, s.Language, s.CapturedBytes,
-                            s.Chunks.Count(c => c.Text is null), s.CaptureComplete, null));
+                            s.Chunks.Count(c => c.Text is null), s.CaptureComplete, null,
+                            s.AuditText is not null));
                     }
                     finally { Clear(manifest); }
                 }
@@ -201,6 +206,8 @@ public sealed class RecoveryStore
                 foreach (var audio in added)
                 {
                     ValidateAudio(audio.Wav);
+                    if (current.State.Streaming && (audio.OverlapsPrevious || audio.EndByte == 0))
+                        throw new IOException("Streaming audio checkpoints must have exact, nonoverlapping positions.");
                     previousEnd = ValidateEndByte(audio.EndByte, capturedBytes, previousEnd);
                 }
                 newTail = tail.ToArray();
@@ -298,6 +305,76 @@ public sealed class RecoveryStore
         }
     }
 
+    internal void SaveStreamingResult(RecoveryJournal journal, long through, string text, byte[] contextAudio,
+        bool fallback, int segmentWords)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        lock (_shared.Gate)
+        {
+            journal.EnsureOpen();
+            var current = Load(journal.Id);
+            try
+            {
+                var state = current.State;
+                if (!state.Streaming || through < state.ConfirmedBytes || through > state.CapturedBytes
+                    || through % 2 != 0 || Utf8.GetByteCount(text) > MaxTextBytes
+                    || contextAudio.Length > Math.Min(through, PcmChunker.BytesPerSecond * PcmChunker.OverlapMilliseconds / 1000)
+                    || contextAudio.Length % 2 != 0
+                    || segmentWords < -1 || segmentWords > MaxTextBytes
+                    || !text.StartsWith(state.ConfirmedText, StringComparison.Ordinal)
+                    || (through == state.ConfirmedBytes && text != state.ConfirmedText))
+                    throw new IOException("Invalid streaming confirmation.");
+                if (segmentWords < 0)
+                    segmentWords = text[state.ConfirmedText.Length..].Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length;
+                var acknowledged = current.Stored.Where(c => c.Chunk.EndByte <= through).ToArray();
+                foreach (var entry in acknowledged)
+                    current.Stored[entry.Chunk.Index] = entry with { Chunk = entry.Chunk with { Text = "" } };
+                WriteManifest(new(state with
+                {
+                    UpdatedAt = UpdatedAt(state), ConfirmedBytes = through, ConfirmedText = text,
+                    Tail = contextAudio,
+                    UsedStreaming = state.UsedStreaming || !fallback,
+                    UsedFallback = state.UsedFallback || fallback,
+                    LastSegmentWords = segmentWords,
+                    Chunks = current.Stored.Select(c => c.Chunk).ToArray()
+                }, current.Stored));
+                foreach (var entry in acknowledged)
+                {
+                    var path = AudioPath(journal.Id, entry.Chunk.Index);
+                    GuardPath(path);
+                    File.Delete(path);
+                }
+            }
+            finally { Clear(current); }
+        }
+    }
+
+    internal void PrepareAudit(RecoveryJournal journal, string text, DateTimeOffset completedAt, bool polished)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        lock (_shared.Gate)
+        {
+            journal.EnsureOpen();
+            var current = Load(journal.Id);
+            try
+            {
+                var state = current.State;
+                if (!state.Streaming || !state.CaptureComplete || state.ConfirmedBytes != state.CapturedBytes
+                    || string.IsNullOrWhiteSpace(text) || Utf8.GetByteCount(text) > MaxTextBytes
+                    || (state.AuditText is not null && (state.AuditText != text
+                        || state.AuditCompletedAt != completedAt || state.AuditPolished != polished)))
+                    throw new IOException("Cannot freeze an incomplete or conflicting dictation audit.");
+                WriteManifest(new(state with
+                {
+                    UpdatedAt = UpdatedAt(state), AuditText = text,
+                    AuditCompletedAt = completedAt, AuditPolished = polished,
+                    Tail = [],
+                }, current.Stored));
+            }
+            finally { Clear(current); }
+        }
+    }
+
     private DateTimeOffset UpdatedAt(RecoveryState state) =>
         _clock.UtcNow > state.UpdatedAt ? _clock.UtcNow : state.UpdatedAt;
 
@@ -316,7 +393,7 @@ public sealed class RecoveryStore
             if (reader.ReadInt32() != 0x5650524A)
                 throw new IOException("Unsupported or corrupt recovery manifest.");
             var version = reader.ReadInt32();
-            if (version is not (1 or 2 or 3) || ReadString(reader, 32) != id)
+            if (version is not (1 or 2 or 3 or 4) || ReadString(reader, 32) != id)
                 throw new IOException("Unsupported or corrupt recovery manifest.");
             var created = new DateTimeOffset(reader.ReadInt64(), TimeSpan.Zero);
             var updated = new DateTimeOffset(reader.ReadInt64(), TimeSpan.Zero);
@@ -369,9 +446,41 @@ public sealed class RecoveryStore
             }
             // Legacy journals remain unbound; the caller must not infer a destination for them.
             var context = version >= 2 ? ReadString(reader, MaxContextBytes) : "";
+            long confirmed = 0;
+            var confirmedText = "";
+            string? audit = null;
+            DateTimeOffset? completedAt = null;
+            var polished = false;
+            var usedStreaming = false;
+            var usedFallback = false;
+            var segmentWords = 0;
+            if (version == 4)
+            {
+                confirmed = reader.ReadInt64();
+                confirmedText = ReadString(reader, MaxTextBytes);
+                usedStreaming = ReadBoolean(reader);
+                usedFallback = ReadBoolean(reader);
+                segmentWords = reader.ReadInt32();
+                if (confirmed < 0 || confirmed > captured || confirmed % 2 != 0
+                    || segmentWords < 0 || segmentWords > MaxTextBytes
+                    || tail.Length > Math.Min(confirmed, PcmChunker.BytesPerSecond * PcmChunker.OverlapMilliseconds / 1000)
+                    || tail.Length % 2 != 0
+                    || stored.Any(c => c.Chunk.OverlapsPrevious || c.Chunk.EndByte == 0
+                        || (c.Chunk.Text is not null && c.Chunk.EndByte > confirmed)))
+                    throw new IOException("Invalid streaming recovery cursor.");
+                if (ReadBoolean(reader))
+                {
+                    audit = ReadString(reader, MaxTextBytes);
+                    completedAt = new DateTimeOffset(reader.ReadInt64(), TimeSpan.Zero);
+                    polished = ReadBoolean(reader);
+                    if (!complete || confirmed != captured || string.IsNullOrWhiteSpace(audit))
+                        throw new IOException("Invalid dictation audit checkpoint.");
+                }
+            }
             if (stream.Position != stream.Length) throw new IOException("Trailing recovery manifest data.");
             var state = new RecoveryState(id, created, updated, language, captured, tail, complete,
-                stored.Select(c => c.Chunk).ToArray(), context);
+                stored.Select(c => c.Chunk).ToArray(), context, version == 4, confirmed, confirmedText,
+                audit, completedAt, polished, usedStreaming, usedFallback, segmentWords);
             tail = null;
             return new(state, stored);
         }
@@ -395,7 +504,7 @@ public sealed class RecoveryStore
             {
                 var s = manifest.State;
                 writer.Write(0x5650524A);
-                writer.Write(3);
+                writer.Write(s.Streaming ? 4 : 3);
                 WriteString(writer, s.Id);
                 writer.Write(s.CreatedAt.UtcTicks);
                 writer.Write(s.UpdatedAt.UtcTicks);
@@ -415,6 +524,21 @@ public sealed class RecoveryStore
                     writer.Write(entry.Chunk.EndByte);
                 }
                 WriteString(writer, s.Context);
+                if (s.Streaming)
+                {
+                    writer.Write(s.ConfirmedBytes);
+                    WriteString(writer, s.ConfirmedText);
+                    writer.Write(s.UsedStreaming);
+                    writer.Write(s.UsedFallback);
+                    writer.Write(s.LastSegmentWords);
+                    writer.Write(s.AuditText is not null);
+                    if (s.AuditText is not null)
+                    {
+                        WriteString(writer, s.AuditText);
+                        writer.Write(s.AuditCompletedAt!.Value.UtcTicks);
+                        writer.Write(s.AuditPolished);
+                    }
+                }
                 writer.Flush();
             }
             var bytes = stream.ToArray();
@@ -629,6 +753,11 @@ public sealed class RecoveryJournal : IDisposable
     public void Checkpoint(byte[] tail, long capturedBytes, IReadOnlyList<AudioChunk> added, bool complete = false) =>
         _store.Checkpoint(this, tail, capturedBytes, added, complete);
     public void SaveResult(int index, string text) => _store.SaveResult(this, index, text);
+    public void SaveStreamingResult(long through, string text, byte[]? contextAudio = null, bool fallback = false,
+        int segmentWords = -1) =>
+        _store.SaveStreamingResult(this, through, text, contextAudio ?? [], fallback, segmentWords);
+    public void PrepareAudit(string text, DateTimeOffset completedAt, bool polished) =>
+        _store.PrepareAudit(this, text, completedAt, polished);
     public byte[] ReadAudio(int index) => _store.ReadAudio(this, index);
     public void Delete() => _store.Delete(Id);
     public void Dispose() => IsDisposed = true;

@@ -64,6 +64,8 @@ internal static class ControllerProbe
         }
         await Release();
         Require(!controller.IsRecording, "Releasing the shortcut did not stop.");
+        await UntilAsync(() => desktop.Pastes == 1);
+        Require(!controller.IsIndicatorVisible, "Successful paste left the dictation overlay visible.");
         for (var repeat = 0; repeat < 40; repeat++)
         {
             Message();
@@ -106,6 +108,7 @@ internal static class ControllerProbe
         down.Remove(0x11);
         await UntilAsync(() => !controller.IsBusy);
         Require(desktop.Pastes == 1 && host.History.All().Count == 2, "Focus change pasted or lost history.");
+        Require(controller.IsIndicatorVisible, "Skipped paste lost its visible fallback status.");
         Require(!controller.IsRecording, "Releasing a modifier did not stop capture.");
         Message();
         Require(starts == 4, "An incomplete chord restarted capture.");

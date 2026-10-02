@@ -5,11 +5,12 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from .dictation_edits import MAX_EDIT_CHARS, MAX_EDITS, MAX_PREVIOUS_CHARS, MAX_TEXT_CHARS
 
 RefineModel = Literal["gpt-6-luna", "gpt-5.6-luna", "gpt-5.6-terra"]
+TranscriptRefineModel = Literal["gpt-6-luna", "gpt-5.6-luna", "gpt-5.6-terra", "none"]
 
 
 class StrictModel(BaseModel):
@@ -37,6 +38,19 @@ class DictationRefineResult(StrictModel):
 class DictationRefineRequest(StrictModel):
     text: str = Field(..., strict=True, min_length=1, max_length=MAX_TEXT_CHARS, pattern=r"\S")
     previous_text: str = Field("", strict=True, max_length=MAX_PREVIOUS_CHARS)
+
+
+class DictationArchiveRequest(StrictModel):
+    text: str = Field(..., strict=True, min_length=1, max_length=1_048_576, pattern=r"\S")
+    raw_text: str = Field(..., strict=True, min_length=1, max_length=1_048_576, pattern=r"\S")
+    language: Literal["auto", "cs", "en"] = "auto"
+    completed_at: AwareDatetime
+    polished: bool = False
+    transcribe_model: Literal[
+        "MAI-Transcribe-2-Streaming",
+        "MAI-Transcribe-2",
+        "MAI-Transcribe-2-Streaming+MAI-Transcribe-2",
+    ] = "MAI-Transcribe-2-Streaming"
 
 
 class ClientInfo(StrictModel):
@@ -99,7 +113,9 @@ class TranscriptSummary(StrictModel):
     completed_at: datetime
     expires_at: datetime
     language: str
-    refine_model: RefineModel
+    refine_model: TranscriptRefineModel
+    source: Literal["recording", "windows_dictation"] = "recording"
+    transcribe_model: str | None = None
 
 
 class Transcript(StrictModel):
@@ -108,10 +124,13 @@ class Transcript(StrictModel):
     body: str
     preview: str = Field(..., max_length=140)
     language: str
-    refine_model: RefineModel
+    refine_model: TranscriptRefineModel
     completed_at: datetime
     expires_at: datetime
     character_count: int = Field(..., ge=0)
+    source: Literal["recording", "windows_dictation"] = "recording"
+    transcribe_model: str | None = None
+    raw_body: str | None = None
 
 
 class TranscriptListPage(StrictModel):

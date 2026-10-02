@@ -1365,6 +1365,7 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "pyjwt", extra = ["crypto"] },
     { name = "uvicorn", extra = ["standard"] },
+    { name = "websockets" },
 ]
 
 [package.optional-dependencies]
@@ -1396,6 +1397,7 @@ requires-dist = [
     { name = "pyyaml", marker = "extra == 'dev'", specifier = ">=6.0,<7.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8,<1.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34,<1.0" },
+    { name = "websockets", specifier = ">=17.1,<18" },
 ]
 provides-extras = ["dev"]
 

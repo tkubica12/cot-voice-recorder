@@ -7,7 +7,7 @@ public sealed record DictationProgress(long CapturedBytes, long SavedBytes, long
     int PendingChunks, string Transcript, string Preview, Exception? ServiceError, Exception? Failure);
 
 /// <summary>One audio producer; durable disk backlog; at most two transcription requests in memory.</summary>
-public sealed class RecoverableDictationSession : IAsyncDisposable
+public sealed class RecoverableDictationSession : IRecoverableDictationSession
 {
     private readonly object _gate = new();
     private readonly RecoveryJournal _journal;

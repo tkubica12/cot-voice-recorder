@@ -12,6 +12,32 @@ Windows dictation uses a separate, optional refinement endpoint configured by
 `VR_REFINE_DEPLOYMENT_DEFAULT` (`gpt-6-luna` by default); Android recording refinement
 continues to use the model saved at recording creation, defaulting to GPT-6 Luna in new clients.
 
+## Windows 1.5 streaming and audit
+
+`/v1/dictation/stream` relays binary 16 kHz PCM16 to the configured Foundry
+`MAI-Transcribe-2-Streaming` deployment over WebSocket. It verifies the same allowlisted
+Google ID token before accessing Azure. Azure authentication is server-side managed
+identity only. Clients cannot select an upstream URL/model or send arbitrary Realtime
+commands. Provisional suffixes and ordered completed byte cursors are returned; the
+live path has no Blob, Table, Queue, LLM or Web PubSub operation.
+
+`PUT /v1/dictation/transcripts/{session_id}` independently archives original/final
+Windows text after completion. The desktop keeps an encrypted durable outbox until
+acknowledgement. Immutable content envelopes are published before create-if-absent
+metadata; identical retries return the original receipt and conflicting content returns
+409. Expiry is fixed at completion + 48 hours. Both normal bodies and unpublished
+orphans are reclaimed by the updated cleanup job. `source=windows_dictation` and
+`raw_body` are additive transcript fields; unpolished entries use `refine_model=none`.
+There is no completion notification, so mobile-to-Windows automatic clipboard flow
+is unchanged. The relay itself does not provide durable cloud audio or audit.
+
+Settings: `VR_DICTATION_STREAM_ENABLED` defaults true,
+`VR_DICTATION_STREAM_DEPLOYMENT` defaults `MAI-Transcribe-2-Streaming`. The WSS endpoint
+is derived from the configured Foundry resource root, not client input. Existing
+Cognitive Services User access on that resource is required. Preview limitations
+and the exact client/backend protocol are in `openapi\voice-recorder.yaml` and
+`docs\windows-dictation.md`.
+
 Implements the contract in [`../openapi/voice-recorder.yaml`](../openapi/voice-recorder.yaml)
 and the behavior in [`../docs/architecture.md`](../docs/architecture.md).
 

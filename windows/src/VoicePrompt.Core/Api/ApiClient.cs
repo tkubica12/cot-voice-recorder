@@ -121,6 +121,26 @@ public sealed class ApiClient
     public Task<Transcript> GetTranscriptAsync(string transcriptId, CancellationToken ct) =>
         SendAsync<Transcript>(HttpMethod.Get, $"/v1/transcripts/{Uri.EscapeDataString(transcriptId)}", null, ct);
 
+    public async Task ArchiveDictationAsync(RecoveryState state, CancellationToken ct)
+    {
+        if (!state.Streaming || state.AuditText is null || state.AuditCompletedAt is null)
+            throw new ArgumentException("Dictation audit is not ready.", nameof(state));
+        var model = state.UsedFallback
+            ? state.UsedStreaming ? "MAI-Transcribe-2-Streaming+MAI-Transcribe-2" : "MAI-Transcribe-2"
+            : "MAI-Transcribe-2-Streaming";
+        var payload = JsonSerializer.Serialize(new
+        {
+            text = state.AuditText, raw_text = state.ConfirmedText, language = state.Language,
+            completed_at = state.AuditCompletedAt, polished = state.AuditPolished, transcribe_model = model,
+        }, DictationJson);
+        var receipt = await SendAsync<TranscriptSummary>(HttpMethod.Put,
+            "/v1/dictation/transcripts/" + state.Id, payload, ct).ConfigureAwait(false);
+        if (receipt.TranscriptId != Guid.ParseExact(state.Id, "N").ToString("D")
+            || receipt.Source != "windows_dictation"
+            || receipt.ExpiresAt <= receipt.CompletedAt)
+            throw new ApiException(ApiErrorKind.Unexpected, 200, null, "Invalid cloud audit acknowledgement.");
+    }
+
     /// <summary>
     /// <c>GET /v1/transcripts</c> — one page of transcript summaries (newest first). Previews
     /// only; the full body is fetched per transcript on demand.

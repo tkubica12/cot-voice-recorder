@@ -117,6 +117,17 @@ The script prints the API base URL and all resource outputs at the end.
 
 ### Parameters and secrets
 
+Windows 1.5 requires the existing Foundry resource to contain a
+`MAI-Transcribe-2-Streaming` deployment. The API uses the existing managed identity
+and Cognitive Services User grant; no desktop Entra login/key, new public Storage
+access, or Speech network-rule change is required. `VR_DICTATION_STREAM_ENABLED`
+and `VR_DICTATION_STREAM_DEPLOYMENT` are declared in the app environment.
+Deploy the updated **API and cleanup job** image: the live relay is storage-free,
+but the separate completed-text audit uses new immutable blob paths and 48-hour
+cleanup. The Android worker need not restart for this desktop-only change.
+Both `pip` (uv bootstrap) and `uv` use the approved Microsoft package feed during
+container builds; an alternate approved project feed can override both.
+
 - `infra/main.parameters.json` holds **non-secret** dev values (region, names, Foundry
   reference) and the **deny-all auth placeholder** (`not-configured` audience,
   `nobody@invalid.example`). The service starts but no real Google token can authenticate.

@@ -128,6 +128,7 @@ if (-not $SkipBuild) {
         )
         if ($PackageFeedProxy) {
             $buildArgs += @('--build-arg', "UV_DEFAULT_INDEX=$PackageFeedProxy")
+            $buildArgs += @('--build-arg', "PIP_INDEX_URL=$PackageFeedProxy")
         }
         $buildArgs += @('.')
         # `az acr build` can crash the local CLI while streaming UTF-8 logs on a

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import json
 
 from ..errors import BlobNotFound
 from ..models import Transcript as TranscriptModel
@@ -37,6 +38,11 @@ def get_transcript(ctx: ServiceContext, transcript_id: str) -> TranscriptModel:
         body = ctx.blobs.get(ctx.settings.transcript_container, meta.body_path).decode("utf-8")
     except BlobNotFound as exc:
         raise NotFoundError("Transcript not found or expired.") from exc
+    raw_body = None
+    if meta.source == "windows_dictation":
+        payload = json.loads(body)
+        body = payload["text"]
+        raw_body = payload["raw_text"]
     return TranscriptModel(
         transcript_id=meta.transcript_id,
         recording_id=meta.recording_id,
@@ -47,6 +53,9 @@ def get_transcript(ctx: ServiceContext, transcript_id: str) -> TranscriptModel:
         completed_at=meta.completed_at,
         expires_at=meta.expires_at,
         character_count=meta.character_count,
+        source=meta.source,
+        transcribe_model=meta.transcribe_model,
+        raw_body=raw_body,
     )
 
 
@@ -64,6 +73,8 @@ def list_transcripts(ctx: ServiceContext, *, limit: int, cursor: str | None) -> 
             expires_at=item.expires_at,
             language=item.language,
             refine_model=item.refine_model,
+            source=item.source,
+            transcribe_model=item.transcribe_model,
         )
         for item in items
         if item.expires_at > now

@@ -1,19 +1,93 @@
 # Windows dictation: design and operating contract
 
-## Decision
+## Windows 1.5: streaming proxy, durable capture and cloud audit
+
+The default desktop path is now **Windows -> authenticated backend WebSocket ->
+MAI-Transcribe-2-Streaming**. Google sign-in remains the only desktop login. Azure
+credentials stay on the API's managed identity; no Microsoft login, model key,
+server token, or client-selected upstream endpoint is sent to Windows. Android's
+durable Blob/Queue/worker pipeline is unchanged.
+
+`/v1/dictation/stream` is a thin PCM relay, not a recording queue. It fixes mono
+PCM16 at 16 kHz and the configured deployment, forwards provisional hypotheses,
+and attaches absolute source byte positions to ordered completed commits. No
+Storage, LLM or Web PubSub work is on this live path. It has four process-local
+stream slots, a 16 KiB incoming packet bound, 32 pending commits, a 55-minute
+connection deadline and a 30-second final drain. The client sends 20 ms packets,
+commits at energy-detected pauses (without dropping quiet audio), and rolls the
+connection after 50 minutes. Capture continues while reconnecting.
+
+Windows recovery manifest v4 stores nonoverlapping audio checkpoints about every
+two seconds, a confirmed byte cursor and the confirmed original text. Provisional
+suffixes replace previous hypotheses and are only shown in the overlay; they
+never become delivered text after a failed connection. A completed commit is
+durably published before its fully covered audio files are removed. Up to 600 ms
+of confirmed context is retained for overlap-safe batch recovery, then erased
+when the final audit is frozen. Journals remain DPAPI-encrypted, account/backend
+bound, retained for 48 hours and limited to 256 MiB. A crash can still lose the
+last incomplete checkpoint plus queued microphone buffers; this is not a
+lossless audio archive or protection against disk/user-key loss.
+
+Reconnect replays from the last locally persisted completed cursor, including
+audio whose earlier network send succeeded without a final result. Packet
+acknowledgement alone cannot release audio. If the complete original transcript
+is not ready within the two-second stop budget (less elapsed capture shutdown
+and delivery allowance), nothing incomplete is pasted: use Recovery. Recovery
+transcribes remaining audio through the existing MAI-Transcribe-2 WAV endpoint
+and saves History without automatic paste. Old v1-v3 journals remain on their
+original recovery path. Optional LLM polishing remains opt-in, consumes only its
+configured remaining stop-time budget, and receives confirmed text, not changing
+provisional hypotheses. With streaming on, the overlay always shows the live ASR
+hypothesis rather than an older polishing window.
+
+**Cloud audit is explicit, asynchronous and separate from paste.** Completed
+streaming dictations, including those completed through Recovery, freeze original
+and final text, completion time and actual streaming/fallback usage in an encrypted
+local outbox. `PUT /v1/dictation/transcripts/{recovery-uuid}` publishes an immutable,
+idempotent cloud envelope. The original completion time fixes its 48-hour expiry;
+identical retries do not extend retention and conflicting content returns 409.
+Audit uploads run while idle, retry every 30 seconds with ordinary API backoff and
+the existing Google refresh rule, and survive restart. The outbox is deleted only
+after cloud acknowledgement and cannot cross account/backend bindings. Failures
+are logged and produce a rate-limited warning. History/paste never wait for audit.
+
+Cloud audit entries have `source=windows_dictation`, retain `raw_body`, and are
+available through the existing transcript/history API. They emit **no**
+`transcript.completed` event; Windows also refuses automatic clipboard copying
+for this source if such an event unexpectedly arrives. Interrupted/provisional
+or explicitly discarded dictations are not audited. An already-sent cloud request
+cannot be recalled locally. This is an application transcript archive, not an
+independently attested, tamper-proof compliance log. The cloud cleanup job must
+run the updated image to reclaim audit bodies and orphaned publications.
+
+Settings -> **Use live MAI streaming** defaults on (including older settings files
+without the new property). Uncheck it to restore legacy short WAV dictation; that
+mode still has local-only History. Existing Google configuration, shortcuts,
+history and optional polishing choice survive upgrade. Backend
+`VR_DICTATION_STREAM_ENABLED=false` disables the relay; deployment is selected
+with `VR_DICTATION_STREAM_DEPLOYMENT`.
+
+The MAI feature remains public preview without SLA. Neither healthy-path timing
+nor replay promises two-second completion during an outage. The reproducible live
+probe is `windows\tools\DictationProbe --stream-live synthetic.wav`: it uses the
+installed Google configuration, replays a synthetic WAV at capture cadence,
+requires full confirmation within two seconds after stop, archives and retrieves
+the exact result with 48-hour retention, and never records a microphone or pastes.
+
+## Original short-batch decision (legacy mode and recovery)
 
 Add Handy-style global push-to-talk and hands-free shortcuts to the existing tray app. Capture the Windows
 default microphone locally, transcribe with **MAI-Transcribe-2 in Azure**, and paste the
 complete text once when stopped. This is local capture, **not offline transcription**.
 Android's durable recording/cleanup workflow remains separate and unchanged.
 
-The desktop sends short WAV requests to `POST /v1/dictation/transcribe`, authenticated
+Legacy desktop dictation and batch recovery send WAV requests to `POST /v1/dictation/transcribe`, authenticated
 with the same Google ID token as the existing API. The API invokes MAI directly using its
 user-assigned managed identity and private Speech endpoint. No Blob, Table, Queue,
 worker or Web PubSub operation is on the dictation critical path. Optional text polishing
 uses a separate bounded request to `POST /v1/dictation/refine` while capture continues;
 it is disabled by default and requires the updated API and desktop build.
-Successful dictation text is saved to Windows' existing 48-hour history, not cloud history.
+Legacy-mode dictation text is saved to Windows' existing 48-hour history, not cloud history.
 
 ### Why this path
 
@@ -30,7 +104,7 @@ This adds idle compute cost. It does not eliminate deployment/restart delay, fir
 identity/JWKS fetches, network latency, or MAI inference time. The worker still scales to zero.
 Express's advertised subsecond platform startup is not an end-to-end transcription guarantee.
 
-## Audio and latency
+## Legacy short-batch audio and latency
 
 - Start capture immediately on the shortcut; do not await cloud requests first.
 - Capture PCM16, 16 kHz, mono, using 40 ms microphone buffers and 20 ms analysis frames.
@@ -91,8 +165,10 @@ from the taskbar. It does not take keyboard focus. "Listening" stays stable whil
 runs concurrently; the latest approximately 30 words (bounded to 220 Unicode code points)
 appear only as the contiguous, ordered transcript advances. Later results cannot jump ahead
 of missing earlier chunks. Separate saved-audio and transcribed-through timestamps distinguish
-recognition from durable capture. "Finishing" and a brief "Pasted"/"Saved - paste skipped"
-status complete the interaction. There is no incremental clipboard paste.
+recognition from durable capture. "Finishing" remains visible until delivery. Since
+Windows 1.5.1, successful paste hides the overlay immediately rather than keeping a
+900 ms "Pasted" status. "Saved - paste skipped" still appears briefly when automatic
+paste is not possible. There is no incremental clipboard paste.
 
 Hold-to-talk captures the foreground HWND, process/thread and native focused child at start,
 then checks for changes during capture and before paste. Hands-free allows focus changes while

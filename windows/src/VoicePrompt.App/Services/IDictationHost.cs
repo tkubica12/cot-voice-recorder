@@ -17,4 +17,6 @@ internal interface IDictationHost
     string RecoveryContext { get; }
     Task<string> TranscribeAsync(byte[] wav, string language, CancellationToken ct);
     Task<DictationRefinement> RefineAsync(string text, string previousText, CancellationToken ct);
+    IDictationStreamFactory? CreateStreamingFactory(string context) => null;
+    void SyncDictationAudits() { }
 }

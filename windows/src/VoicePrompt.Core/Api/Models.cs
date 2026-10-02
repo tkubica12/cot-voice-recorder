@@ -14,6 +14,9 @@ public sealed class Transcript
     [JsonPropertyName("completed_at")] public DateTimeOffset CompletedAt { get; init; }
     [JsonPropertyName("expires_at")] public DateTimeOffset ExpiresAt { get; init; }
     [JsonPropertyName("character_count")] public int CharacterCount { get; init; }
+    [JsonPropertyName("source")] public string Source { get; init; } = "recording";
+    [JsonPropertyName("raw_body")] public string? RawBody { get; init; }
+    [JsonPropertyName("transcribe_model")] public string? TranscribeModel { get; init; }
 }
 
 /// <summary>Response from <c>POST /v1/realtime/negotiate</c>.</summary>
@@ -35,6 +38,8 @@ public sealed class TranscriptSummary
     [JsonPropertyName("expires_at")] public DateTimeOffset ExpiresAt { get; init; }
     [JsonPropertyName("language")] public string? Language { get; init; }
     [JsonPropertyName("refine_model")] public string? RefineModel { get; init; }
+    [JsonPropertyName("source")] public string Source { get; init; } = "recording";
+    [JsonPropertyName("transcribe_model")] public string? TranscribeModel { get; init; }
 }
 
 /// <summary>One page of <c>GET /v1/transcripts</c> results (cursor paginated).</summary>

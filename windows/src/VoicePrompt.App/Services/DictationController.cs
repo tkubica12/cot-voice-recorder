@@ -29,7 +29,8 @@ public sealed class DictationController : IAsyncDisposable
     private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromMilliseconds(100) };
     private readonly Stopwatch _duration = new();
     private IWaveIn? _microphone;
-    private RecoverableDictationSession? _session;
+    private IRecoverableDictationSession? _session;
+    private IDictationStreamFactory? _streamFactory;
     private DictationPolisher? _polisher;
     private IDictationDesktop? _desktop;
     private CancellationTokenSource? _cancel;
@@ -51,6 +52,8 @@ public sealed class DictationController : IAsyncDisposable
     private bool _deliveryCompleted;
     private int _overflow;
     private string? _recoveryId;
+    private bool _streamingMode;
+    private bool _retainAudit;
 
     public DictationController(AppHost host, INotifier notifier, Dispatcher dispatcher)
         : this(host, notifier, dispatcher, new DictationHotkey(), () => new WaveInEvent
@@ -86,6 +89,7 @@ public sealed class DictationController : IAsyncDisposable
 
     public bool IsBusy => _busy;
     internal bool IsRecording => _recording;
+    internal bool IsIndicatorVisible => _indicator.IsVisible;
     internal DictationProgress? Progress => _session?.Progress;
     internal DictationPolishProgress? PolishProgress => _polisher?.Progress;
     public event Action? RecoveryChanged;
@@ -128,7 +132,9 @@ public sealed class DictationController : IAsyncDisposable
             _desktop = _desktopFactory();
             var language = _host.Settings.DictationLanguage;
             var context = _host.RecoveryContext;
-            var journal = _host.Recovery.Create(language, context);
+            _streamFactory = _host.Settings.DictationStreamingEnabled
+                ? _host.CreateStreamingFactory(context) : null;
+            var journal = _host.Recovery.Create(language, context, streaming: _streamFactory is not null);
             _recoveryId = journal.Snapshot.Id;
             _session = CreateSession(journal, language, context);
             if (_host.Settings.DictationRefinementEnabled)
@@ -177,6 +183,8 @@ public sealed class DictationController : IAsyncDisposable
         _recovering = false;
         _overflow = 0;
         _recoveryId = null;
+        _streamingMode = _retainAudit = false;
+        _streamFactory = null;
         _cancel = new CancellationTokenSource();
         _hotkey.EnableCancel(true);
     }
@@ -216,11 +224,16 @@ public sealed class DictationController : IAsyncDisposable
         }
     }
 
-    private RecoverableDictationSession CreateSession(RecoveryJournal journal, string language, string context)
+    private IRecoverableDictationSession CreateSession(RecoveryJournal journal, string language, string context,
+        bool recovery = false)
     {
         try
         {
-            return new RecoverableDictationSession(journal, (wav, ct) => TranscribeAsync(wav, language, context, ct));
+            _streamingMode = journal.Snapshot.Streaming;
+            return _streamingMode
+                ? new StreamingDictationSession(journal, _streamFactory,
+                    (wav, ct) => TranscribeAsync(wav, language, context, ct), recovery, _host.Log)
+                : new RecoverableDictationSession(journal, (wav, ct) => TranscribeAsync(wav, language, context, ct));
         }
         catch
         {
@@ -245,7 +258,7 @@ public sealed class DictationController : IAsyncDisposable
             });
     }
 
-    private async Task ConsumeAudioAsync(Channel<byte[]> channel, RecoverableDictationSession session)
+    private async Task ConsumeAudioAsync(Channel<byte[]> channel, IRecoverableDictationSession session)
     {
         try
         {
@@ -305,7 +318,7 @@ public sealed class DictationController : IAsyncDisposable
                 + (_toggleMode ? "press toggle to finish" : "release to finish")
             : "Finishing transcription - Esc discards";
         var preview = progress.Preview;
-        if (_polisher is not null)
+        if (_polisher is not null && !_streamingMode)
         {
             var polishing = _polisher.Progress;
             if (!string.IsNullOrWhiteSpace(polishing.Text))
@@ -360,7 +373,10 @@ public sealed class DictationController : IAsyncDisposable
             var progress = _session!.Progress;
             _host.Log.Info($"dictation: checkpoint complete; pcm-bytes={progress.CapturedBytes}; pending-chunks={progress.PendingChunks}");
             if (_preserve) return;
-            var text = await _session!.WaitForCompletionAsync(_finishTimeout, _cancel!.Token);
+            var wait = _streamingMode ? DictationStopBudget.Remaining(
+                TimeSpan.FromSeconds(2), tailLatency.Elapsed, DeliveryAllowance) : _finishTimeout;
+            if (wait > _finishTimeout) wait = _finishTimeout;
+            var text = await _session!.WaitForCompletionAsync(wait, _cancel!.Token);
             _cancel.Token.ThrowIfCancellationRequested();
             if (text is null)
             {
@@ -391,6 +407,13 @@ public sealed class DictationController : IAsyncDisposable
                 SaveHistory(text, polished.RawText, fallbackBlocks);
                 _host.Log.Info($"dictation: background polishing frozen; elapsed-ms={polishingLatency.ElapsedMilliseconds}; final-budget-ms={remaining.TotalMilliseconds:F0}; successful-windows={polished.SuccessfulBlocks}; raw-tail-words={polished.UnprocessedWords}; fallback-blocks={fallbackBlocks}; last-failure={polished.LastFailure ?? "none"}");
             }
+            if (_session is StreamingDictationSession streaming)
+            {
+                var saved = _host.History.Get(HistoryId) ?? throw new IOException("Dictation History was not saved.");
+                streaming.PrepareAudit(text, saved.CompletedAt,
+                    _polisher?.Progress.SuccessfulBlocks > 0);
+                _retainAudit = true;
+            }
             var result = await _deliver(text, _cancel.Token);
             _deliveryCompleted = true;
             _host.Log.Info($"dictation: {result}; stop-to-delivery-ms={tailLatency.ElapsedMilliseconds}");
@@ -398,10 +421,14 @@ public sealed class DictationController : IAsyncDisposable
             _discard = true;
             _timer.Stop();
             _hotkey.EnableCancel(false);
-            _indicator.Present(result == DictationDeliveryResult.PasteSent ? "Pasted" : "Saved - paste skipped",
-                recording: false, preview: RecoverableDictationSession.PreviewTail(text),
-                dismiss: true);
-            _terminalPresented = true;
+            if (result == DictationDeliveryResult.PasteSent)
+                _indicator.Hide();
+            else
+            {
+                _indicator.Present("Saved - paste skipped", recording: false,
+                    preview: RecoverableDictationSession.PreviewTail(text), dismiss: true);
+                _terminalPresented = true;
+            }
             if (result != DictationDeliveryResult.PasteSent)
                 _notifier.Notify("Dictation saved", result == DictationDeliveryResult.ClipboardFailed
                     ? "Clipboard busy. Use History to copy the dictation."
@@ -434,12 +461,26 @@ public sealed class DictationController : IAsyncDisposable
                 throw new InvalidOperationException("Use the original signed-in account and backend for recovery.");
             }
             _recoveryId = id;
-            _session = CreateSession(journal, state.Language, state.Context);
+            _session = CreateSession(journal, state.Language, state.Context, recovery: true);
             await Task.Run(() => _session.FinishCapture());
             var text = await _session.WaitForCompletionAsync(_finishTimeout, _cancel!.Token, resetTimeoutOnProgress: true);
             _cancel.Token.ThrowIfCancellationRequested();
             if (text is null) throw new IOException("Transcription is still pending. Saved audio is intact; retry later.");
-            if (!string.IsNullOrWhiteSpace(text)) SaveHistory(text);
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                SaveHistory(state.AuditText ?? text,
+                    state.AuditPolished ? state.ConfirmedText : null,
+                    completedAt: state.AuditCompletedAt);
+                if (_session is StreamingDictationSession streaming)
+                {
+                    if (state.AuditText is null)
+                    {
+                        var saved = _host.History.Get(HistoryId) ?? throw new IOException("Recovered History was not saved.");
+                        streaming.PrepareAudit(text, saved.CompletedAt, false);
+                    }
+                    _retainAudit = true;
+                }
+            }
             _discard = true;
             _notifier.Notify("Dictation recovered", string.IsNullOrWhiteSpace(text)
                 ? "No speech detected in the recovered audio."
@@ -448,15 +489,19 @@ public sealed class DictationController : IAsyncDisposable
         finally { await CleanupAsync(); }
     }
 
-    private void SaveHistory(string text, string? rawText = null, int fallbackBlocks = 0)
+    private string HistoryId => _streamingMode
+        ? Guid.ParseExact(_recoveryId!, "N").ToString("D") : "dictation-" + _recoveryId;
+
+    private void SaveHistory(string text, string? rawText = null, int fallbackBlocks = 0,
+        DateTimeOffset? completedAt = null)
     {
-        var id = "dictation-" + _recoveryId;
+        var id = HistoryId;
         _host.History.Add(new HistoryEntry
         {
             TranscriptId = id, RecordingId = id, Body = text,
             RawBody = rawText, RefinementFallbackBlocks = fallbackBlocks,
             Preview = string.Concat(text.EnumerateRunes().Take(160).Select(r => r.ToString())),
-            CompletedAt = _host.Clock.UtcNow, CachedAt = _host.Clock.UtcNow, CharacterCount = text.Length,
+            CompletedAt = completedAt ?? _host.Clock.UtcNow, CachedAt = _host.Clock.UtcNow, CharacterCount = text.Length,
         });
     }
 
@@ -498,7 +543,7 @@ public sealed class DictationController : IAsyncDisposable
         }
         if (_explicitDiscard && !_deliveryCompleted && _recoveryId is not null)
         {
-            try { _host.History.Remove("dictation-" + _recoveryId); }
+            try { _host.History.Remove(HistoryId); }
             catch (Exception ex)
             {
                 _host.Log.Warn($"dictation: cancelled history removal failed ({ex.GetType().Name})");
@@ -506,7 +551,7 @@ public sealed class DictationController : IAsyncDisposable
                     "The cancelled text could not be removed from History. Clear it manually.", NotificationKind.Warning);
             }
         }
-        if (_discard && _recoveryId is not null)
+        if (_discard && _recoveryId is not null && (!_retainAudit || _explicitDiscard))
         {
             try { await Task.Run(() => _host.Recovery.Delete(_recoveryId)); }
             catch (Exception ex)
@@ -523,6 +568,7 @@ public sealed class DictationController : IAsyncDisposable
         _captureStopped = null;
         _desktop = null;
         _recording = _busy = _host.DictationBusy = false;
+        _host.SyncDictationAudits();
         RecoveryChanged?.Invoke();
     }
 

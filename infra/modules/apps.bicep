@@ -139,6 +139,14 @@ var commonEnv = [
     value: 'MAI-Transcribe-2'
   }
   {
+    name: 'VR_DICTATION_STREAM_ENABLED'
+    value: 'true'
+  }
+  {
+    name: 'VR_DICTATION_STREAM_DEPLOYMENT'
+    value: 'MAI-Transcribe-2-Streaming'
+  }
+  {
     name: 'VR_SPEECH_TRANSCRIBE_STYLE'
     value: 'verbatim'
   }

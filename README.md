@@ -2,6 +2,18 @@
 
 **Think out loud anywhere. Paste a clean prompt on your PC.**
 
+**Latest Windows release: 1.5.1.** Streaming dictation and 48-hour cloud audit, with
+the overlay hidden immediately after successful paste.
+See the [release notes](docs/releases/v1.5.1.md).
+
+**Windows 1.5.0:** live dictation streams to MAI-Transcribe-2-Streaming through the
+Google-authenticated backend; no additional Microsoft login is needed. A provisional
+overlay, encrypted local audio checkpoints, reconnect replay and batch Recovery provide
+fast feedback without giving up interrupted recordings. Completed dictations upload
+original/final text asynchronously for 48-hour cloud audit, without automatic clipboard
+notifications. Settings can restore the legacy WAV path. Android is unchanged.
+See [streaming, recovery and audit details](docs/windows-dictation.md).
+
 VoicePrompt is a personal voice-to-prompt pipeline for the moments when typing is the
 wrong interface. Record a long, unstructured train of thought on Android, let the cloud
 transcribe and lightly clean it up, then paste the result from the Windows clipboard into

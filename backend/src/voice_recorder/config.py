@@ -86,6 +86,8 @@ class Settings(BaseSettings):
     speech_model: str = "MAI-Transcribe-2"
     speech_transcribe_style: TranscribeStyle = "verbatim"
     speech_timeout_seconds: float = 180.0
+    dictation_stream_enabled: bool = True
+    dictation_stream_deployment: str = "MAI-Transcribe-2-Streaming"
     refine_deployment_default: str = "gpt-6-luna"
     refine_deployment_alternative: str = "gpt-5.6-terra"
 

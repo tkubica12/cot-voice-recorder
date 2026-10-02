@@ -37,6 +37,7 @@ public sealed class DictationSession : IAsyncDisposable
             await _slots.WaitAsync(_cancel.Token).ConfigureAwait(false);
             try
             {
+                _cancel.Token.ThrowIfCancellationRequested();
                 return await _transcribe(wav, _cancel.Token).ConfigureAwait(false);
             }
             finally
@@ -84,21 +85,33 @@ public sealed class DictationSession : IAsyncDisposable
             var skip = 0;
             if (overlap)
             {
-                for (var count = Math.Min(12, Math.Min(previousTokenCount, Math.Min(tokens.Count, incoming.Length))); count > 0; count--)
-                {
-                    var tail = tokens.TakeLast(count).Select(Normalize).ToArray();
-                    var head = incoming.Take(count).Select(Normalize);
-                    if (tail.SequenceEqual(head) && tail.Any(t => t.Length > 0))
-                    {
-                        skip = count;
-                        break;
-                    }
-                }
+                skip = OverlapCount(tokens, incoming, previousTokenCount);
             }
             tokens.AddRange(incoming.Skip(skip));
             previousTokenCount = incoming.Length;
         }
         return string.Join(' ', tokens);
+    }
+
+    internal static string AppendPreservingPrefix(string previous, string incoming, bool overlap,
+        int? previousWords = null)
+    {
+        if (string.IsNullOrWhiteSpace(incoming)) return previous;
+        var words = incoming.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        var prior = previous.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        var skip = overlap ? OverlapCount(prior, words, previousWords ?? prior.Length) : 0;
+        var suffix = string.Join(' ', words.Skip(skip));
+        return suffix.Length == 0 ? previous : previous.Length == 0 ? suffix : previous + " " + suffix;
+    }
+
+    private static int OverlapCount(IEnumerable<string> previous, string[] incoming, int previousCount)
+    {
+        var tail = previous.TakeLast(Math.Min(12, previousCount)).Select(Normalize).ToArray();
+        for (var count = Math.Min(tail.Length, incoming.Length); count > 0; count--)
+            if (tail.TakeLast(count).SequenceEqual(incoming.Take(count).Select(Normalize))
+                && tail.TakeLast(count).Any(t => t.Length > 0))
+                return count;
+        return 0;
     }
 
     private static string Normalize(string token) =>
