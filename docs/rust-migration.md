@@ -538,3 +538,9 @@ session lockem; po delayed blocking refresh se live token znovu kontroluje.
 Kontrolovana concurrency fixture nejprve dokonci sign-out a az potom obnovi
 refresh future: stary bearer ani SignedIn se nesmi vratit. Osobni tokens a placene
 AI nebyly pouzity. Native engines/UI/outbox a Rust cloud zustavaji otevrene.
+
+Protocol commit `68b35c0` ma successful Windows i Linux
+[CI](https://github.com/tkubica12/cot-voice-recorder/actions/runs/41338054588),
+vcetne nove kompletni BMP/stitch/legacy snapshot parity. Lokalni workspace ma
+93 passing testu, release/fmt/Clippy a dosavadni client/lifecycle parity prosly.
+Navazuje native legacy/streaming session engine a auth/backend-bound outbox.
