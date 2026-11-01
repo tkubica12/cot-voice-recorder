@@ -219,23 +219,24 @@ impl AzureStorage {
         &self,
         table: &str,
         values: &serde_json::Map<String, serde_json::Value>,
-    ) -> Result<()> {
+    ) -> Result<String> {
         let uri = Self::uri(&self.table, &[table])?;
         let body = encode_entity(values)?;
-        self.request(
-            Method::POST,
-            uri,
-            Some(body),
-            &[
-                ("Content-Type", "application/json"),
-                ("Accept", "application/json;odata=nometadata"),
-                ("Prefer", "return-no-content"),
-            ],
-        )
-        .await?;
-        Ok(())
+        let response = self
+            .request(
+                Method::POST,
+                uri,
+                Some(body),
+                &[
+                    ("Content-Type", "application/json"),
+                    ("Accept", "application/json;odata=nometadata"),
+                    ("Prefer", "return-no-content"),
+                ],
+            )
+            .await?;
+        response_etag(&response)
     }
-    pub async fn replace(&self, table: &str, entity: &Entity) -> Result<()> {
+    pub async fn replace(&self, table: &str, entity: &Entity) -> Result<String> {
         let partition = entity
             .values
             .get("PartitionKey")
@@ -249,18 +250,19 @@ impl AzureStorage {
         if entity.etag.is_empty() || entity.etag == "*" {
             return Err(invalid());
         }
-        self.request(
-            Method::PUT,
-            entity_uri(&self.table, table, partition, row)?,
-            Some(encode_entity(&entity.values)?),
-            &[
-                ("Content-Type", "application/json"),
-                ("Accept", "application/json;odata=nometadata"),
-                ("If-Match", &entity.etag),
-            ],
-        )
-        .await?;
-        Ok(())
+        let response = self
+            .request(
+                Method::PUT,
+                entity_uri(&self.table, table, partition, row)?,
+                Some(encode_entity(&entity.values)?),
+                &[
+                    ("Content-Type", "application/json"),
+                    ("Accept", "application/json;odata=nometadata"),
+                    ("If-Match", &entity.etag),
+                ],
+            )
+            .await?;
+        response_etag(&response)
     }
     pub async fn delete_entity(
         &self,
@@ -436,6 +438,19 @@ fn odata_key(value: &str) -> Result<String> {
         return Err(invalid());
     }
     Ok(value.replace('\'', "''"))
+}
+fn response_etag(response: &Response) -> Result<String> {
+    response
+        .headers()
+        .get("ETag")
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| !value.is_empty() && *value != "*")
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            StorageError::Failure(Problem::unavailable(
+                "Table write returned no usable version ETag.",
+            ))
+        })
 }
 fn entity_uri(base: &url::Url, table: &str, partition: &str, row: &str) -> Result<url::Url> {
     AzureStorage::uri(
@@ -671,6 +686,70 @@ mod tests {
             Err(StorageError::MessageGone)
         ));
         storage.delete_queue("work", &renewed).await.unwrap();
+        server.await.unwrap();
+        identity_server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn repository_returns_its_own_write_version_without_a_racy_followup_get() {
+        use tokio::io::AsyncWriteExt;
+        let (identity, identity_server) = identity_fixture().await;
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            for (method, version) in [("POST", "writer-v1"), ("PUT", "writer-v2")] {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let (headers, body) = read_request(&mut stream).await;
+                assert!(
+                    headers.starts_with(method),
+                    "Followup GET could return a different writer's entity."
+                );
+                let entity: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                assert_eq!(entity["stream_lease_id"], "owner-a");
+                if method == "PUT" {
+                    assert!(headers.to_lowercase().contains("if-match: writer-v1"));
+                }
+                stream.write_all(format!("HTTP/1.1 204 No Content\r\nETag: {version}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").as_bytes()).await.unwrap();
+            }
+        });
+        let repository = crate::repository::Repository::Azure(Arc::new(fixture(port, identity)));
+        let entity = Entity { values:serde_json::json!({"PartitionKey":"recording","RowKey":"fixture","stream_lease_id":"owner-a"}).as_object().unwrap().clone(), etag:String::new() };
+        let first = repository.insert("recordings", entity).await.unwrap();
+        assert_eq!(first.etag, "writer-v1");
+        let second = repository.replace("recordings", first).await.unwrap();
+        assert_eq!(second.etag, "writer-v2");
+        assert_eq!(second.values["stream_lease_id"], "owner-a");
+        server.await.unwrap();
+        identity_server.await.unwrap();
+    }
+    #[tokio::test]
+    async fn missing_or_wildcard_write_etags_fail_instead_of_adopting_a_different_snapshot() {
+        use tokio::io::AsyncWriteExt;
+        let (identity, identity_server) = identity_fixture().await;
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            for header in ["", "ETag: *\r\n"] {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                read_request(&mut stream).await;
+                stream.write_all(format!("HTTP/1.1 204 No Content\r\n{header}Content-Length: 0\r\nConnection: close\r\n\r\n").as_bytes()).await.unwrap();
+            }
+        });
+        let storage = fixture(port, identity);
+        let values = serde_json::json!({"PartitionKey":"recording","RowKey":"fixture"})
+            .as_object()
+            .unwrap()
+            .clone();
+        for _ in 0..2 {
+            assert!(matches!(
+                storage.insert("recordings", &values).await,
+                Err(StorageError::Failure(_))
+            ));
+        }
         server.await.unwrap();
         identity_server.await.unwrap();
     }

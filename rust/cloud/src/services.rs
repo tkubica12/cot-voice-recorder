@@ -48,7 +48,7 @@ pub fn uuid() -> Result<String, Problem> {
         &hex[20..]
     ))
 }
-fn storage(error: StorageError) -> Problem {
+pub(crate) fn storage(error: StorageError) -> Problem {
     match error {
         StorageError::NotFound => Problem::not_found("Stored entity or body was not found."),
         StorageError::Conflict => {

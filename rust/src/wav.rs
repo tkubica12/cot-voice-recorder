@@ -195,6 +195,7 @@ pub fn to_wav(pcm: &[u8]) -> Result<Vec<u8>, WavError> {
     if pcm.is_empty() || pcm.len() % 2 != 0 {
         return Err(WavError::IncompletePcm);
     }
+
     let data_size = u32::try_from(pcm.len()).map_err(|_| WavError::TooLarge)?;
     let riff_size = data_size.checked_add(36).ok_or(WavError::TooLarge)?;
     let capacity = pcm
@@ -216,4 +217,38 @@ pub fn to_wav(pcm: &[u8]) -> Result<Vec<u8>, WavError> {
     wav.extend_from_slice(&data_size.to_le_bytes());
     wav.extend_from_slice(pcm);
     Ok(wav)
+}
+
+pub fn capture_pcm(data: &[u8]) -> Result<&[u8], WavError> {
+    validate_capture_wav(data, ParseMode::Strict)?;
+    let mut offset = 12;
+    while offset <= data.len() - 8 {
+        let size = u32_at(data, offset + 4) as usize;
+        let body = offset + 8;
+        if &data[offset..offset + 4] == b"data" {
+            return Ok(&data[body..body + size]);
+        }
+        offset = body + size + (size & 1);
+    }
+    Err(WavError::InvalidContainer("WAV is missing its data chunk."))
+}
+
+#[cfg(test)]
+mod extraction_tests {
+    use super::*;
+    #[test]
+    fn exact_capture_pcm_handles_ancillary_riff_chunks_instead_of_assuming_a_44_byte_header() {
+        let pcm = [1, 2, 3, 4, 5, 6];
+        let wav = to_wav(&pcm).unwrap();
+        assert_eq!(capture_pcm(&wav).unwrap(), pcm);
+        let mut padded = wav[..36].to_vec();
+        padded.extend_from_slice(b"JUNK");
+        padded.extend_from_slice(&3u32.to_le_bytes());
+        padded.extend_from_slice(&[0, 0, 0, 0]);
+        padded.extend_from_slice(&wav[36..]);
+        let size = (padded.len() - 8) as u32;
+        padded[4..8].copy_from_slice(&size.to_le_bytes());
+        assert_eq!(capture_pcm(&padded).unwrap(), pcm);
+        assert!(capture_pcm(&padded[..padded.len() - 1]).is_err());
+    }
 }

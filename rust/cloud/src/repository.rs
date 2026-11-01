@@ -52,11 +52,9 @@ impl Repository {
             .ok_or_else(|| StorageError::Failure(Problem::internal()))?;
         match self {
             Self::Azure(storage) => {
-                storage.insert(table, &values.values).await?;
-                storage
-                    .entity(table, pk, rk)
-                    .await?
-                    .ok_or(StorageError::NotFound)
+                let mut values = values;
+                values.etag = storage.insert(table, &values.values).await?;
+                Ok(values)
             }
             Self::Memory(memory) => {
                 let key = (table.into(), pk.into(), rk.into());
@@ -89,11 +87,9 @@ impl Repository {
             .ok_or_else(|| StorageError::Failure(Problem::internal()))?;
         match self {
             Self::Azure(storage) => {
-                storage.replace(table, &values).await?;
-                storage
-                    .entity(table, pk, rk)
-                    .await?
-                    .ok_or(StorageError::NotFound)
+                let mut values = values;
+                values.etag = storage.replace(table, &values).await?;
+                Ok(values)
             }
             Self::Memory(memory) => {
                 let key = (table.into(), pk.into(), rk.into());

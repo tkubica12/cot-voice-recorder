@@ -35,6 +35,7 @@ pub struct Config {
     pub transcribe_deployment: String,
     pub webpubsub_ttl_minutes: u32,
     pub dictation_stream_enabled: bool,
+    pub recording_stream_lease_seconds: u32,
 }
 
 fn endpoint(value: &str, allow_loopback: bool) -> Result<Url, Problem> {
@@ -201,6 +202,9 @@ impl Config {
             } else {
                 true
             },
+            recording_stream_lease_seconds: value("VR_RECORDING_STREAM_LEASE_SECONDS", "120")
+                .parse()
+                .map_err(|_| Problem::validation("Invalid recording stream lease duration."))?,
         };
         for name in [
             &config.hub,
@@ -236,6 +240,7 @@ impl Config {
             )
             || config.transcribe_provider == "azure_speech" && config.speech.is_none()
             || !(1..=1440).contains(&config.webpubsub_ttl_minutes)
+            || !(90..=300).contains(&config.recording_stream_lease_seconds)
         {
             return Err(Problem::validation(
                 "Invalid transcription provider/style/timeout.",

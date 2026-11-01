@@ -16,4 +16,5 @@ pub mod relay;
 pub mod repository;
 pub mod services;
 pub mod storage;
+pub mod stream_worker;
 pub mod streaming;

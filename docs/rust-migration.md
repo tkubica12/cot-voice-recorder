@@ -733,3 +733,29 @@ Rust CI i backend CI; CI tohoto dalsiho inkrementu se overuje samostatne.
 Nasleduje leased continuous replay a legacy/finalization/cleanup. Produkcni
 bootstrap/container wiring, distributed-fault acceptance, real-world a
 feature-matched performance zustavaji nedokoncene.
+
+## Continuous worker lease a PCM primitives
+
+Rust nyni zachovava claim/update-owned/renew/release protokol stavajiciho
+continuous workeru ve stejnych recording lease polich. Claim resetuje replay
+progress na nulu; owner/expiry se kontroluji pri kazde CAS aktualizaci.
+Sixteen concurrent claimants maji jedineho viteze; po expiraci a prevzeti
+puvodni owner nemuze publikovat ready ani zrusit lease sveho nastupce.
+
+Pri navazani byla opravena Rust repository race: po uspesnem Table PUT/POST
+nasledny GET mohl vratit data a ETag jineho writeru. Nyni vraci vlastni response
+ETag a vlastni hodnoty; missing/wildcard ETag je explicitni chyba, ne fallback
+na cizi snapshot. Zachovava se If-Match a 412 conflict, bez unconditional retry.
+
+Strict PCM extractor respektuje ancillary RIFF chunks a nepredpoklada vzdy
+44byte header. Durable chunk reader kontroluje checksum, exact sample metadata,
+gap/redundant range a zahazuje jen proven duplicate source samples legacy
+overlapu. Contiguous replay zachovava kazdy sample. Jde o primitives, ne jeste
+o bezici kompletni worker; supervisor, queue receipt heartbeat, stream replay
+loop, legacy finalization a cleanup zustavaji aktivni praci.
+
+Proslo 169 workspace testu (53 cloud, vcetne 4 lease/replay a 2 own-ETag
+HTTP scenaru), locked release/fmt/Clippy a ctyri actual C#/Python audio parity
+skupiny. Predchozi live-relay commit 1ae68df ma potvrzene oba Rust CI OS a
+backend CI. Azure ani placeny model nebyly pouzity. Na produkcnich recordings
+se zadny alternate engine nespousti.

@@ -28,6 +28,9 @@ Implemented:
 - Server-owned MAI upstream and authenticated live PCM WebSocket relay, with
   ordered confirmations, explicit cursors, bounded commit backpressure and
   no confirmed/done output after a missing-completion timeout.
+- Continuous recording lease primitives and strict durable PCM/sample replay
+  reader. Table write results retain their own response ETag, not a racy
+  subsequent GET snapshot. These are not yet the complete running worker.
 
 Stored domain/entity codecs, strict wire defaults, content-digest/sample validation
 and conditional repository primitives now exist.
@@ -41,11 +44,12 @@ cargo test --manifest-path rust\Cargo.toml --offline --locked -p voiceprompt-clo
 cargo clippy --manifest-path rust\Cargo.toml --workspace --offline --locked --all-targets -- -D warnings
 ```
 
-The 47 direct cloud tests use generated in-memory RSA keys and local HTTP/WebSocket
+The 53 direct cloud tests use generated in-memory RSA keys and local HTTP/WebSocket
 fixtures. They exercise real signature validation, cached JWKS, rejected
 HS256/unsigned/wrong claims, UAMI selection, Table CAS, Queue lease receipts,
 actual HTTP handlers, multipart/provider contracts, physical-call cancellation,
-ordered PCM relay and actual 15-second/30-second timeout boundaries.
+ordered PCM relay, actual 15-second/30-second timeout boundaries, lease takeover/
+late-publication fencing and exact contiguous/legacy sample replay.
 No Azure, paid model, production data or credentials are used. These are not
 private-endpoint/UAMI acceptance against the actual cloud.
 
