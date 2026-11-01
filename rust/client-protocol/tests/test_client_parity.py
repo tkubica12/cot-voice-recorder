@@ -28,6 +28,36 @@ def run(command: list[str], data: bytes = b"") -> subprocess.CompletedProcess[by
 
 
 class ClientParityTests(unittest.TestCase):
+    def test_native_settings_files_are_compatible_with_csharp(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="VoicePrompt-settings-parity-") as directory:
+            path = Path(directory).joinpath("settings.json")
+            fixture = {
+                "backend_base_url": "https://fixture.example.invalid",
+                "notifications_paused": True,
+                "auto_start": True,
+                "dictation_enabled": False,
+                "dictation_shortcut": "Ctrl+Alt+K",
+                "dictation_toggle_shortcut": "Ctrl+Alt+Shift+K",
+                "dictation_language": "cs",
+                "dictation_refinement_enabled": True,
+                "dictation_streaming_enabled": False,
+                "dictation_final_wait_milliseconds": 3500,
+            }
+            for writer, reader in [
+                ([str(PILOT), "--settings-save"], ["dotnet", str(REFERENCE), "settings-load"]),
+                (["dotnet", str(REFERENCE), "settings-save"], [str(PILOT), "--settings-load"]),
+            ]:
+                saved = run([*writer, str(path)], payload(fixture))
+                self.assertEqual(saved.returncode, 0, saved.stderr)
+                loaded = run([*reader, str(path)])
+                self.assertEqual(loaded.returncode, 0, loaded.stderr)
+                self.assertEqual(json.loads(loaded.stdout), fixture)
+                self.assertEqual(list(Path(directory).iterdir()), [path])
+            path.write_bytes(b"corrupt synthetic settings")
+            refused = run([str(PILOT), "--settings-load", str(path)])
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertEqual(path.read_bytes(), b"corrupt synthetic settings")
+
     def test_native_history_files_are_compatible_with_csharp(self) -> None:
         now = datetime.now(UTC).isoformat()
         with tempfile.TemporaryDirectory(prefix="VoicePrompt-history-parity-") as directory:

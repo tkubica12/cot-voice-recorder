@@ -1,13 +1,15 @@
 # Native Windows foundation
 
-This is an isolated **platform pilot**, not a dictation client or a production
-replacement. Its native tray menu can open a status window or exit. Closing the
-window or pressing Esc hides it. A second ordinary launch activates the existing
-pilot; benchmark launches with a readiness path instead reject duplicates.
+This is an isolated **native migration client**, not a dictation client or a
+production replacement. Its default mode remains the platform-only foundation.
+Closing the window or pressing Esc hides it. A second ordinary launch activates
+the existing pilot; benchmark launches with a readiness path reject duplicates.
 
-The pilot has **no Google login, network connection, microphone, clipboard writes,
-global shortcuts, transcript/history access, or autostart registration**. It never
-opens the installed app's tokens, settings or recovery directories. Its
+Without `--state-directory` it has no Google login, network connection, clipboard
+or transcript/history access. With that explicit argument it loads only
+`settings.json`, `tokens.bin` and `history.json` in the selected existing absolute
+directory. `--oauth-config` is also explicit; no installed configuration or user
+state is discovered. Its
 `Local\VoicePrompt.RustPilot.*` mutexes and window classes are separate from C#.
 It uses a stock system icon until the client packaging stage.
 
@@ -52,13 +54,57 @@ synthetic; these commands do not read real tokens or recordings. CI runs native
 unit/parity checks on Windows, not the tray self-test on a potentially headless
 runner. Non-Windows invocation fails explicitly; the audio crate is portable.
 
-The next increment adds an explicit-path encrypted `tokens.bin` store and fixture
-hooks for its cross-language tests. File replacement is same-directory, flushed,
+The explicit-path encrypted `tokens.bin` store has fixture hooks for
+cross-language tests. File replacement is same-directory, flushed,
 and never falls back to copy/delete across volumes. Corrupt files remain intact
 and return a redacted error; no existing token cache is loaded by tray startup.
 OAuth/client contracts are documented in
-[`client-protocol`](../client-protocol/README.md). They are not wired into the
-interactive tray yet.
+[`client-protocol`](../client-protocol/README.md).
+
+## Explicit-path native client
+
+The connected mode adds native sign-in/out, realtime status, a 48-hour History
+list and read-only text view, Copy latest/selected/original, persisted pause and
+reconnect. User-triggered sign-in opens the system browser and uses the bounded
+PKCE loopback flow. The realtime path fetches with a Google ID token, saves history
+before clipboard delivery and queues work to the native UI thread. No WebView
+or .NET runtime is used. No microphone, dictation, Recovery, global shortcut or
+autostart registration is implemented yet.
+
+```powershell
+# Use an explicitly chosen isolated directory; do not use installed app state for tests.
+rust\target\release\VoicePromptRustPilot.exe --instance-key isolated-client `
+  --state-directory D:\chosen-isolated-state
+
+# Only for an explicitly authorized real sign-in, not unattended tests:
+rust\target\release\VoicePromptRustPilot.exe --instance-key isolated-client `
+  --state-directory D:\chosen-isolated-state --oauth-config D:\chosen-desktop-client.json
+```
+
+Clipboard writes use immediate `CF_UNICODETEXT` publication from moveable global
+memory, transferring ownership only after successful `SetClipboardData`.
+Bounded retries apply only to a busy clipboard. Pause, suspended/sign-out state
+and dictation-busy policy are rechecked at the actual UI write; an abandoned UI
+request is cancelled so it cannot write later. Audit-source events never auto-copy.
+Manual cached copying works while paused or signed out.
+Notifications contain generic readiness/fallback messages, not transcript text.
+
+Settings preserve every current C# field and retain unknown fields on Rust writes.
+Invalid/corrupt settings fail explicitly instead of silently selecting production
+defaults. Per-minute history cleanup persists retention; read errors preserve files.
+Native controls provide keyboard dialog navigation and DPI-scaled geometry, but
+full accessibility/font/DPI acceptance and the complete Settings UI remain pending.
+This is not installer/upgrade single-instance compatibility with C#.
+
+The desktop-only lifecycle runner uses temporary synthetic caches. Its self-test
+disables both OAuth configuration and the real clipboard and checks hidden startup
+focus plus the actual native History list. It is not a production E2E or a real
+clipboard/paste test. CI does not run this desktop-dependent command.
+
+```powershell
+backend\.venv\Scripts\python.exe rust\windows-pilot\tests\test_client_lifecycle.py `
+  --pilot rust\target\release\VoicePromptRustPilot.exe
+```
 
 ## Measure this limited foundation
 
@@ -78,6 +124,8 @@ The defaults are 30 process starts and 301 memory/CPU samples over five minutes.
 The collector measures new-process to observed **native tray + DPAPI readiness**,
 not OS cold-cache startup, Google login, transcription, the cloud, or user-perceived
 dictation latency. Readiness is published atomically without overwriting.
+Connected mode refuses foundation readiness arguments to prevent mislabeled
+performance evidence.
 The native process has a one-hour failsafe; memory runs are limited to 55 minutes.
 
 `native-foundation-startup.json` retains every trial and the binary hash;

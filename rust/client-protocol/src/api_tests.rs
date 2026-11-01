@@ -7,7 +7,7 @@ use std::net::TcpListener;
 use std::sync::Mutex;
 
 #[derive(Clone, Default)]
-struct Store(Arc<Mutex<Option<CachedTokens>>>);
+pub(crate) struct Store(Arc<Mutex<Option<CachedTokens>>>);
 
 impl TokenPersistence for Store {
     type Error = std::io::Error;
@@ -35,7 +35,9 @@ fn jwt() -> String {
     )
 }
 
-fn server(replies: Vec<(u16, String)>) -> (url::Url, std::thread::JoinHandle<Vec<String>>) {
+pub(crate) fn server(
+    replies: Vec<(u16, String)>,
+) -> (url::Url, std::thread::JoinHandle<Vec<String>>) {
     let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
     let port = listener.local_addr().unwrap().port();
     let task = std::thread::spawn(move || {
@@ -66,7 +68,7 @@ fn server(replies: Vec<(u16, String)>) -> (url::Url, std::thread::JoinHandle<Vec
     )
 }
 
-async fn make_client(base: url::Url) -> (ApiClient<Store>, String) {
+pub(crate) async fn make_client(base: url::Url) -> (ApiClient<Store>, String) {
     let store = Store::default();
     let token = jwt();
     store
@@ -97,10 +99,12 @@ async fn make_client(base: url::Url) -> (ApiClient<Store>, String) {
     )
 }
 
-fn transcript() -> String {
+pub(crate) fn transcript() -> String {
+    let now = OffsetDateTime::now_utc();
     serde_json::json!({
         "transcript_id":"t","recording_id":"r","body":"synthetic transcript","preview":"synthetic",
-        "completed_at":"2026-11-01T10:00:00Z","expires_at":"2026-11-03T10:00:00Z",
+        "completed_at":now.format(&time::format_description::well_known::Rfc3339).unwrap(),
+        "expires_at":(now + time::Duration::hours(48)).format(&time::format_description::well_known::Rfc3339).unwrap(),
         "character_count":20,"source":"recording","raw_body":null,
         "language":"en","refine_model":"none","transcribe_model":"fixture"
     })

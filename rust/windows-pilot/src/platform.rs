@@ -9,6 +9,8 @@ use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::client::{ClientCommand, ClientHost, ClientOptions, UiRequest};
+use voiceprompt_client_protocol::delivery::{ClipboardError, CopyResult, Notice};
 use voiceprompt_client_protocol::{MAX_AUTH_JSON_BYTES, ProtocolError, auth::CachedTokens};
 use windows::Win32::Foundation::{
     CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE, HINSTANCE, HLOCAL, HWND, LPARAM,
@@ -26,11 +28,13 @@ use windows::Win32::Storage::FileSystem::{
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::HiDpi::{
-    DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
+    DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForWindow, SetProcessDpiAwarenessContext,
 };
+use windows::Win32::UI::Input::KeyboardAndMouse::EnableWindow;
 use windows::Win32::UI::Shell::{
-    NIF_ICON, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_SETFOCUS, NIM_SETVERSION,
-    NIN_SELECT, NOTIFYICON_VERSION_4, NOTIFYICONDATAW, Shell_NotifyIconW,
+    NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIIF_INFO, NIIF_WARNING, NIM_ADD,
+    NIM_DELETE, NIM_MODIFY, NIM_SETFOCUS, NIM_SETVERSION, NIN_SELECT, NOTIFYICON_VERSION_4,
+    NOTIFYICONDATAW, Shell_NotifyIconW,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::{PCWSTR, w};
@@ -45,9 +49,22 @@ const EXIT_TIMER: usize = 1;
 const MENU_OPEN: usize = 1001;
 const MENU_EXIT: usize = 1002;
 const STATUS_CONTROL: usize = 1003;
+const CLIENT_TIMER: usize = 2;
+const SIGN_IN: usize = 1010;
+const SIGN_OUT: usize = 1011;
+const COPY_LATEST: usize = 1012;
+const PAUSE: usize = 1013;
+const RECONNECT: usize = 1014;
+const HISTORY_LIST: usize = 1015;
+const HISTORY_BODY: usize = 1016;
+const COPY_SELECTED: usize = 1017;
+const COPY_ORIGINAL: usize = 1018;
 
 thread_local! {
     static CALLBACK_ERROR: RefCell<Option<NativeError>> = const { RefCell::new(None) };
+    static CLIENT: RefCell<Option<ClientHost>> = const { RefCell::new(None) };
+    static UI_HISTORY: RefCell<Option<std::sync::Arc<Vec<voiceprompt_client_protocol::history::HistoryEntry>>>> =
+        const { RefCell::new(None) };
 }
 
 #[derive(Debug)]
@@ -234,6 +251,45 @@ pub struct NativeHistoryStore {
     gate: std::sync::Mutex<()>,
 }
 
+#[derive(Clone)]
+pub struct NativeSettingsStore {
+    path: PathBuf,
+}
+
+impl NativeSettingsStore {
+    pub fn new(path: PathBuf) -> Result<Self, NativeError> {
+        if path.file_name() != Some(OsStr::new("settings.json")) {
+            return Err(NativeError::InvalidArgument(
+                "Settings require an explicit settings.json path.",
+            ));
+        }
+        Ok(Self { path })
+    }
+
+    pub fn load(&self) -> Result<voiceprompt_client_protocol::settings::AppSettings, NativeError> {
+        let file = match std::fs::File::open(&self.path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Ok(voiceprompt_client_protocol::settings::AppSettings::default());
+            }
+            Err(error) => return Err(NativeError::Io("open settings", error)),
+        };
+        let mut data = Vec::new();
+        file.take((MAX_AUTH_JSON_BYTES + 1) as u64)
+            .read_to_end(&mut data)
+            .map_err(|error| NativeError::Io("read settings", error))?;
+        voiceprompt_client_protocol::settings::AppSettings::parse(&data)
+            .map_err(NativeError::Protocol)
+    }
+
+    pub fn save(
+        &self,
+        settings: &voiceprompt_client_protocol::settings::AppSettings,
+    ) -> Result<(), NativeError> {
+        atomic_write(&self.path, &settings.encode()?, WriteMode::Replace)
+    }
+}
+
 impl NativeHistoryStore {
     pub fn new(path: PathBuf) -> Result<Self, NativeError> {
         if path.file_name() != Some(OsStr::new("history.json")) {
@@ -321,6 +377,29 @@ impl voiceprompt_client_protocol::runtime::TokenPersistence for EncryptedTokenSt
     }
     fn clear(&self) -> Result<(), Self::Error> {
         self.clear()
+    }
+}
+
+impl voiceprompt_client_protocol::delivery::HistoryPersistence for NativeHistoryStore {
+    type Error = NativeError;
+
+    fn all(
+        &self,
+        now: time::OffsetDateTime,
+    ) -> Result<Vec<voiceprompt_client_protocol::history::HistoryEntry>, Self::Error> {
+        self.all(now)
+    }
+
+    fn add(
+        &self,
+        entry: voiceprompt_client_protocol::history::HistoryEntry,
+        now: time::OffsetDateTime,
+    ) -> Result<(), Self::Error> {
+        self.add(entry, now)
+    }
+
+    fn cleanup(&self, now: time::OffsetDateTime) -> Result<usize, Self::Error> {
+        self.cleanup(now)
     }
 }
 
@@ -539,6 +618,32 @@ fn context_menu(hwnd: HWND) -> Result<(), NativeError> {
             "AppendMenuW",
             AppendMenuW(menu.0, MF_STRING, MENU_OPEN, w!("Open pilot status")),
         )?;
+        let connected = CLIENT.with(|client| client.borrow().is_some());
+        if connected {
+            api(
+                "AppendMenuW",
+                AppendMenuW(menu.0, MF_STRING, COPY_LATEST, w!("Copy latest")),
+            )?;
+            let paused = CLIENT.with(|client| {
+                client
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|host| host.policy.paused())
+            });
+            api(
+                "AppendMenuW",
+                AppendMenuW(
+                    menu.0,
+                    MF_STRING | if paused { MF_CHECKED } else { MF_UNCHECKED },
+                    PAUSE,
+                    w!("Pause automatic copy and notifications"),
+                ),
+            )?;
+            api(
+                "AppendMenuW",
+                AppendMenuW(menu.0, MF_STRING, RECONNECT, w!("Reconnect")),
+            )?;
+        }
         api(
             "AppendMenuW",
             AppendMenuW(menu.0, MF_SEPARATOR, 0, PCWSTR::null()),
@@ -566,6 +671,7 @@ fn context_menu(hwnd: HWND) -> Result<(), NativeError> {
         match command {
             MENU_OPEN => show_status(hwnd),
             MENU_EXIT => PostQuitMessage(0),
+            COPY_LATEST | PAUSE | RECONNECT => client_command(hwnd, command)?,
             0 => {
                 let data = NOTIFYICONDATAW {
                     cbSize: size_of::<NOTIFYICONDATAW>() as u32,
@@ -588,6 +694,245 @@ fn context_menu(hwnd: HWND) -> Result<(), NativeError> {
             "PostMessageW",
             PostMessageW(Some(hwnd), WM_NULL, WPARAM(0), LPARAM(0)),
         )?;
+    }
+    Ok(())
+}
+
+fn selected_id(hwnd: HWND) -> Result<Option<String>, NativeError> {
+    let list = api("GetDlgItem (history)", unsafe {
+        GetDlgItem(Some(hwnd), HISTORY_LIST as i32)
+    })?;
+    let index = unsafe { SendMessageW(list, LB_GETCURSEL, None, None) }.0;
+    Ok(UI_HISTORY.with(|history| {
+        history.borrow().as_ref().and_then(|entries| {
+            usize::try_from(index)
+                .ok()
+                .and_then(|index| entries.get(index))
+                .map(|entry| entry.transcript_id.clone())
+        })
+    }))
+}
+
+fn client_command(hwnd: HWND, command: usize) -> Result<(), NativeError> {
+    let command = match command {
+        SIGN_IN => ClientCommand::SignIn,
+        SIGN_OUT => ClientCommand::SignOut,
+        COPY_LATEST => ClientCommand::Copy {
+            id: None,
+            original: false,
+        },
+        COPY_SELECTED | COPY_ORIGINAL => {
+            let Some(id) = selected_id(hwnd)? else {
+                return Ok(());
+            };
+            ClientCommand::Copy {
+                id: Some(id),
+                original: command == COPY_ORIGINAL,
+            }
+        }
+        PAUSE => ClientCommand::TogglePause,
+        RECONNECT => ClientCommand::Reconnect,
+        _ => return Ok(()),
+    };
+    CLIENT.with(|client| {
+        if let Some(host) = client.borrow().as_ref() {
+            if host.commands.try_send(command).is_err() {
+                eprintln!("Client command could not be queued.");
+                notify(
+                    hwnd,
+                    "VoicePrompt",
+                    "The client is busy or stopped. Try again.",
+                    true,
+                )?;
+            }
+        }
+        Ok(())
+    })
+}
+
+fn set_text(hwnd: HWND, id: usize, text: &str) -> Result<(), NativeError> {
+    let child = api("GetDlgItem", unsafe { GetDlgItem(Some(hwnd), id as i32) })?;
+    let text = wide(OsStr::new(text))?;
+    api("SetWindowTextW", unsafe {
+        SetWindowTextW(child, PCWSTR(text.as_ptr()))
+    })
+}
+
+fn notify(hwnd: HWND, title: &str, body: &str, warning: bool) -> Result<(), NativeError> {
+    let mut data = NOTIFYICONDATAW {
+        cbSize: size_of::<NOTIFYICONDATAW>() as u32,
+        hWnd: hwnd,
+        uID: 1,
+        uFlags: NIF_INFO,
+        dwInfoFlags: if warning { NIIF_WARNING } else { NIIF_INFO },
+        ..Default::default()
+    };
+    let title = wide(OsStr::new(title))?;
+    let body = wide(OsStr::new(body))?;
+    if title.len() > data.szInfoTitle.len() || body.len() > data.szInfo.len() {
+        return Err(NativeError::InvalidArgument(
+            "Native notification text exceeds its bounds.",
+        ));
+    }
+    data.szInfoTitle[..title.len()].copy_from_slice(&title);
+    data.szInfo[..body.len()].copy_from_slice(&body);
+    api(
+        "Shell_NotifyIconW (notification)",
+        unsafe { Shell_NotifyIconW(NIM_MODIFY, &data) }.ok(),
+    )
+}
+
+fn show_history_body(hwnd: HWND) -> Result<(), NativeError> {
+    let selected = selected_id(hwnd)?;
+    UI_HISTORY.with(|history| {
+        let history = history.borrow();
+        let entry = history.as_ref().and_then(|entries| {
+            entries
+                .iter()
+                .find(|entry| Some(&entry.transcript_id) == selected.as_ref())
+        });
+        set_text(
+            hwnd,
+            HISTORY_BODY,
+            entry.map_or("", |entry| entry.body.as_str()),
+        )
+    })
+}
+
+fn refresh_client_ui(hwnd: HWND) -> Result<(), NativeError> {
+    CLIENT.with(|client| {
+        let mut client = client.borrow_mut();
+        let Some(host) = client.as_mut() else { return Ok(()) };
+        for _ in 0..8 {
+            let request = match host.requests.try_recv() {
+                Ok(request) => request,
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                    return Err(NativeError::Verification("The client UI request channel stopped."));
+                }
+            };
+            match request {
+                UiRequest::Clipboard { text, automatic, cancelled, reply } => {
+                    let result = if cancelled.load(Ordering::Acquire) || reply.is_closed() {
+                        Err(ClipboardError::Cancelled)
+                    } else if !host.clipboard_enabled {
+                        Err(ClipboardError::Unavailable)
+                    } else if automatic.as_ref().is_some_and(|policy| !policy.allows_auto_copy()) {
+                        Ok(CopyResult::Suppressed)
+                    } else {
+                        crate::clipboard::write(hwnd, &text).map(|()| CopyResult::Copied)
+                    };
+                    let _ = reply.send(result);
+                }
+                UiRequest::Notice(notice) => {
+                    let (title, body, warning) = match notice {
+                        Notice::TranscriptCopied if host.policy.paused() => continue,
+                        Notice::TranscriptCopied => ("Transcript copied", "Ready on the clipboard.", false),
+                        Notice::FetchFailed => ("VoicePrompt", "Could not fetch the transcript.", true),
+                        Notice::HistoryFailed => ("VoicePrompt", "The transcript could not be saved. Check the history directory and disk.", true),
+                        Notice::ClipboardFailed => ("VoicePrompt", "Transcript ready, but the clipboard could not be written. Use Copy latest.", true),
+                    };
+                    if let Err(error) = notify(hwnd, title, body, warning) {
+                        eprintln!("Client notification: {error}");
+                        set_text(hwnd, STATUS_CONTROL, "A notification failed. Open History for the cached transcript.")?;
+                    }
+                }
+                UiRequest::CopyOutcome(result) => {
+                    let (body, warning) = match result {
+                        Ok(CopyResult::Copied) => ("Cached transcript copied.", false),
+                        Ok(CopyResult::Empty) => ("No matching cached transcript or original is available.", false),
+                        Ok(CopyResult::Suppressed) => ("Copy was suppressed.", false),
+                        Err(_) => ("The clipboard could not be written. Try again.", true),
+                    };
+                    if let Err(error) = notify(hwnd, "VoicePrompt", body, warning) {
+                        eprintln!("Manual copy notification: {error}");
+                    }
+                }
+            }
+        }
+        if !host.status.has_changed().map_err(|_| {
+            NativeError::Verification("The client status channel stopped.")
+        })? && UI_HISTORY.with(|history| history.borrow().is_some()) {
+            return Ok(());
+        }
+        let status = host.status.borrow_and_update().clone();
+        set_text(hwnd, STATUS_CONTROL, &format!(
+            "Isolated Rust client - dictation and Recovery are not implemented yet.\r\nSign-in: {:?}{} | Realtime: {:?}\r\n{}\r\nNo installed VoicePrompt data is discovered automatically.",
+            status.auth, if status.signing_in { " (browser flow pending)" } else { "" },
+            status.realtime, status.issue.unwrap_or(""),
+        ))?;
+        set_text(hwnd, PAUSE, if host.policy.paused() { "Resume auto-copy" } else { "Pause auto-copy" })?;
+        for id in [SIGN_IN, SIGN_OUT, COPY_LATEST, PAUSE, RECONNECT, COPY_SELECTED, COPY_ORIGINAL] {
+            let control = api("GetDlgItem", unsafe { GetDlgItem(Some(hwnd), id as i32) })?;
+            let enabled = match id {
+                SIGN_IN => status.auth != voiceprompt_client_protocol::state::AuthState::NotConfigured && !status.signing_in,
+                SIGN_OUT => status.auth == voiceprompt_client_protocol::state::AuthState::SignedIn || status.signing_in,
+                COPY_LATEST | COPY_SELECTED | COPY_ORIGINAL => !status.history.is_empty(),
+                _ => true,
+            };
+            unsafe { let _ = EnableWindow(control, enabled); }
+        }
+        let changed = UI_HISTORY.with(|history| {
+            history.borrow().as_ref().is_none_or(|previous| !std::sync::Arc::ptr_eq(previous, &status.history))
+        });
+        if changed {
+            let selected = selected_id(hwnd)?;
+            let list = api("GetDlgItem (history)", unsafe { GetDlgItem(Some(hwnd), HISTORY_LIST as i32) })?;
+            unsafe { let _ = SendMessageW(list, LB_RESETCONTENT, None, None); }
+            for entry in status.history.iter() {
+                let label = format!("{}  {}", entry.completed_at, entry.preview.chars().take(120).collect::<String>());
+                let text = wide(OsStr::new(&label))?;
+                let result = unsafe { SendMessageW(list, LB_ADDSTRING, None, Some(LPARAM(text.as_ptr() as isize))) };
+                if result.0 < 0 {
+                    return Err(NativeError::Verification("History list could not accept an entry."));
+                }
+            }
+            let selected = selected.and_then(|id| status.history.iter().position(|entry| entry.transcript_id == id)).unwrap_or(0);
+            UI_HISTORY.with(|history| *history.borrow_mut() = Some(status.history));
+            unsafe { let _ = SendMessageW(list, LB_SETCURSEL, Some(WPARAM(selected)), None); }
+            show_history_body(hwnd)?;
+        }
+        Ok(())
+    })
+}
+
+fn layout(hwnd: HWND, width: i32, height: i32) -> Result<(), NativeError> {
+    let dpi = unsafe { GetDpiForWindow(hwnd) }.max(96) as i32;
+    let scale = |value: i32| value * dpi / 96;
+    let left = scale(16);
+    let content = (width - left * 2).max(1);
+    for (id, x, y, w, h) in [
+        (STATUS_CONTROL, left, scale(12), content, scale(92)),
+        (SIGN_IN, left, scale(112), scale(80), scale(28)),
+        (SIGN_OUT, scale(102), scale(112), scale(80), scale(28)),
+        (COPY_LATEST, scale(188), scale(112), scale(94), scale(28)),
+        (PAUSE, scale(288), scale(112), scale(130), scale(28)),
+        (RECONNECT, scale(424), scale(112), scale(90), scale(28)),
+        (HISTORY_LIST, left, scale(152), content, scale(128)),
+        (
+            HISTORY_BODY,
+            left,
+            scale(292),
+            content,
+            (height - scale(346)).max(1),
+        ),
+        (
+            COPY_SELECTED,
+            left,
+            (height - scale(42)).max(scale(310)),
+            scale(130),
+            scale(28),
+        ),
+        (
+            COPY_ORIGINAL,
+            scale(154),
+            (height - scale(42)).max(scale(310)),
+            scale(130),
+            scale(28),
+        ),
+    ] {
+        let child = api("GetDlgItem", unsafe { GetDlgItem(Some(hwnd), id as i32) })?;
+        api("MoveWindow", unsafe { MoveWindow(child, x, y, w, h, true) })?;
     }
     Ok(())
 }
@@ -633,25 +978,124 @@ fn dispatch(
                     Some(LPARAM(1)),
                 );
             }
+            for (id, label) in [
+                (SIGN_IN, w!("Sign in")),
+                (SIGN_OUT, w!("Sign out")),
+                (COPY_LATEST, w!("Copy latest")),
+                (PAUSE, w!("Pause auto-copy")),
+                (RECONNECT, w!("Reconnect")),
+                (COPY_SELECTED, w!("Copy selected")),
+                (COPY_ORIGINAL, w!("Copy original")),
+            ] {
+                let control = api("CreateWindowExW (button)", unsafe {
+                    CreateWindowExW(
+                        WINDOW_EX_STYLE::default(),
+                        w!("BUTTON"),
+                        label,
+                        WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                        0,
+                        0,
+                        1,
+                        1,
+                        Some(hwnd),
+                        Some(HMENU(id as *mut c_void)),
+                        Some(instance),
+                        None,
+                    )
+                })?;
+                unsafe {
+                    let _ = SendMessageW(
+                        control,
+                        WM_SETFONT,
+                        Some(WPARAM(GetStockObject(DEFAULT_GUI_FONT).0 as usize)),
+                        Some(LPARAM(1)),
+                    );
+                    let _ = EnableWindow(control, false);
+                }
+            }
+            for (id, class, style) in [
+                (
+                    HISTORY_LIST,
+                    w!("LISTBOX"),
+                    WS_CHILD
+                        | WS_VISIBLE
+                        | WS_TABSTOP
+                        | WS_VSCROLL
+                        | WINDOW_STYLE(LBS_NOTIFY as u32),
+                ),
+                (
+                    HISTORY_BODY,
+                    w!("EDIT"),
+                    WS_CHILD
+                        | WS_VISIBLE
+                        | WS_TABSTOP
+                        | WS_VSCROLL
+                        | WINDOW_STYLE((ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL) as u32),
+                ),
+            ] {
+                let control = api("CreateWindowExW (history)", unsafe {
+                    CreateWindowExW(
+                        WS_EX_CLIENTEDGE,
+                        class,
+                        PCWSTR::null(),
+                        style,
+                        0,
+                        0,
+                        1,
+                        1,
+                        Some(hwnd),
+                        Some(HMENU(id as *mut c_void)),
+                        Some(instance),
+                        None,
+                    )
+                })?;
+                unsafe {
+                    let _ = SendMessageW(
+                        control,
+                        WM_SETFONT,
+                        Some(WPARAM(GetStockObject(DEFAULT_GUI_FONT).0 as usize)),
+                        Some(LPARAM(1)),
+                    );
+                }
+            }
             Ok(LRESULT(0))
         }
         WM_SIZE => {
-            let child = api("GetDlgItem (status)", unsafe {
-                GetDlgItem(Some(hwnd), STATUS_CONTROL as i32)
-            })?;
             let width = (lparam.0 as u32 & 0xffff) as i32;
             let height = ((lparam.0 as u32 >> 16) & 0xffff) as i32;
-            api("MoveWindow (status)", unsafe {
-                MoveWindow(
-                    child,
-                    16,
-                    16,
-                    (width - 32).max(1),
-                    (height - 32).max(1),
-                    true,
-                )
-            })?;
+            layout(hwnd, width, height)?;
             Ok(LRESULT(0))
+        }
+        WM_COMMAND => {
+            let id = wparam.0 & 0xffff;
+            let notification = (wparam.0 >> 16) & 0xffff;
+            if id == HISTORY_LIST && notification == LBN_SELCHANGE as usize {
+                show_history_body(hwnd)?;
+            } else if notification == BN_CLICKED as usize {
+                client_command(hwnd, id)?;
+            }
+            Ok(LRESULT(0))
+        }
+        WM_TIMER if wparam.0 == CLIENT_TIMER => {
+            refresh_client_ui(hwnd)?;
+            Ok(LRESULT(0))
+        }
+        WM_POWERBROADCAST => {
+            let command = match wparam.0 as u32 {
+                PBT_APMSUSPEND => Some(ClientCommand::Suspend),
+                PBT_APMRESUMEAUTOMATIC => Some(ClientCommand::Resume),
+                _ => None,
+            };
+            if let Some(command) = command {
+                CLIENT.with(|client| {
+                    if let Some(host) = client.borrow().as_ref() {
+                        if host.commands.try_send(command).is_err() {
+                            eprintln!("Power-state transition could not be queued.");
+                        }
+                    }
+                });
+            }
+            Ok(LRESULT(1))
         }
         WM_CLOSE => {
             unsafe {
@@ -789,6 +1233,17 @@ pub struct TrayOptions {
     pub ready_file: Option<PathBuf>,
     pub run_for_seconds: Option<u32>,
     pub self_test: bool,
+    pub client: Option<ClientOptions>,
+}
+
+struct ClientAttachment;
+
+impl Drop for ClientAttachment {
+    fn drop(&mut self) {
+        let host = CLIENT.with(|slot| slot.borrow_mut().take());
+        drop(host);
+        UI_HISTORY.with(|slot| *slot.borrow_mut() = None);
+    }
 }
 
 pub fn run_tray(options: TrayOptions) -> Result<(), NativeError> {
@@ -817,6 +1272,7 @@ pub fn run_tray(options: TrayOptions) -> Result<(), NativeError> {
         Err(error) => return Err(error),
     };
     CALLBACK_ERROR.with(|slot| *slot.borrow_mut() = None);
+    let _client_attachment = ClientAttachment;
     api("SetProcessDpiAwarenessContext", unsafe {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)
     })?;
@@ -854,8 +1310,8 @@ pub fn run_tray(options: TrayOptions) -> Result<(), NativeError> {
             WS_OVERLAPPEDWINDOW,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
-            520,
-            240,
+            570,
+            560,
             None,
             None,
             Some(instance),
@@ -890,6 +1346,48 @@ pub fn run_tray(options: TrayOptions) -> Result<(), NativeError> {
             ));
         }
     }
+    if let Some(client) = options.client {
+        if options.self_test && (client.oauth_config.is_some() || client.clipboard_enabled) {
+            return Err(NativeError::InvalidArgument(
+                "Self-test cannot use OAuth configuration or the system clipboard.",
+            ));
+        }
+        let host = ClientHost::start(client)?;
+        CLIENT.with(|slot| *slot.borrow_mut() = Some(host));
+        if unsafe { SetTimer(Some(hwnd), CLIENT_TIMER, 100, None) } == 0 {
+            return Err(NativeError::Api(
+                "SetTimer (client UI)",
+                windows::core::Error::from_thread(),
+            ));
+        }
+        refresh_client_ui(hwnd)?;
+        if options.self_test {
+            CLIENT.with(|slot| {
+                let client = slot.borrow();
+                let host = client
+                    .as_ref()
+                    .ok_or(NativeError::Verification("Client was not attached."))?;
+                if host.clipboard_enabled
+                    || host.status.borrow().auth
+                        != voiceprompt_client_protocol::state::AuthState::NotConfigured
+                {
+                    return Err(NativeError::Verification(
+                        "Isolated self-test must not sign in or access the clipboard.",
+                    ));
+                }
+                let list = api("GetDlgItem (history self-test)", unsafe {
+                    GetDlgItem(Some(hwnd), HISTORY_LIST as i32)
+                })?;
+                let count = unsafe { SendMessageW(list, LB_GETCOUNT, None, None) }.0;
+                if count != host.status.borrow().history.len() as isize {
+                    return Err(NativeError::Verification(
+                        "Native history list does not match the isolated cache.",
+                    ));
+                }
+                Ok(())
+            })?;
+        }
+    }
     let stop_after = options.run_for_seconds.or(options.self_test.then_some(1));
     if let Some(seconds) = stop_after {
         if unsafe { SetTimer(Some(hwnd), EXIT_TIMER, seconds * 1000, None) } == 0 {
@@ -914,11 +1412,15 @@ pub fn run_tray(options: TrayOptions) -> Result<(), NativeError> {
         if result.0 == 0 {
             break;
         }
+        if unsafe { IsDialogMessageW(hwnd, &message) }.as_bool() {
+            continue;
+        }
         unsafe {
             let _ = TranslateMessage(&message);
             DispatchMessageW(&message);
         }
     }
+    drop(_client_attachment);
     tray.remove()?;
     if let Some(error) = CALLBACK_ERROR.with(|slot| slot.borrow_mut().take()) {
         return Err(error);

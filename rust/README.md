@@ -15,8 +15,10 @@ The audio crate has no external crates and forbids unsafe code. The isolated
 [`windows-pilot`](windows-pilot/README.md) adds native tray/lifecycle and DPAPI
 primitives using the user-approved crates.io exception for this repository.
 [`client-protocol`](client-protocol/README.md) adds OAuth/PKCE/token-cache/JWT,
-loopback callback, auth-state and PubSub contracts. These are not yet a complete
-interactive sign-in or connected client.
+loopback callback, auth-state and PubSub contracts. The explicit-path native mode
+now wires these contracts into sign-in, realtime
+delivery, durable history and clipboard commands. It is still not a complete
+dictation client.
 Cargo.lock is committed. Fetch its locked packages once, then run checks offline.
 Python/npm/NuGet feeds remain unchanged. Never use GitHub source dependencies or
 disable security controls as a workaround.
@@ -28,7 +30,7 @@ From the repository root, with the existing Rust tools in PATH:
 ```powershell
 cargo fetch --manifest-path rust\Cargo.toml --locked
 cargo test --manifest-path rust\Cargo.toml --workspace --offline --locked
-cargo fmt --manifest-path rust\Cargo.toml --check
+cargo fmt --manifest-path rust\Cargo.toml --all --check
 cargo clippy --manifest-path rust\Cargo.toml --workspace --offline --locked --all-targets -- -D warnings
 cargo build --manifest-path rust\Cargo.toml --offline --locked --release --example audio_contract
 ```

@@ -46,7 +46,7 @@ jobs:
         run: cargo fetch --locked
 
       - name: Format
-        run: cargo fmt --check
+        run: cargo fmt --all --check
 
       - name: Test without registry access
         run: cargo test --workspace --offline --locked

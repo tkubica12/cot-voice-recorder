@@ -4,9 +4,34 @@
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     use std::io::{Read, Write};
     use std::path::PathBuf;
-    use voiceprompt_windows_pilot::{TrayOptions, protect, request_quit, run_tray, unprotect};
+    use voiceprompt_windows_pilot::{
+        ClientOptions, TrayOptions, protect, request_quit, run_tray, unprotect,
+    };
 
     let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    if args.len() == 2
+        && matches!(
+            args[0].to_str(),
+            Some("--settings-save" | "--settings-load")
+        )
+    {
+        use voiceprompt_client_protocol::{MAX_AUTH_JSON_BYTES, settings::AppSettings};
+        use voiceprompt_windows_pilot::NativeSettingsStore;
+        let store = NativeSettingsStore::new(PathBuf::from(&args[1]))?;
+        if args[0] == "--settings-save" {
+            let mut data = Vec::new();
+            std::io::stdin()
+                .lock()
+                .take((MAX_AUTH_JSON_BYTES + 1) as u64)
+                .read_to_end(&mut data)?;
+            store.save(&AppSettings::parse(&data)?)?;
+        } else {
+            std::io::stdout()
+                .lock()
+                .write_all(&store.load()?.encode()?)?;
+        }
+        return Ok(());
+    }
     if args.len() == 2 && matches!(args[0].to_str(), Some("--history-add" | "--history-load")) {
         use voiceprompt_client_protocol::history::{
             MAX_HISTORY_BYTES, encode_history, parse_history,
@@ -84,14 +109,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         ready_file: None,
         run_for_seconds: None,
         self_test: false,
+        client: None,
     };
+    let mut state_directory = None;
+    let mut oauth_config = None;
     let mut quit = false;
     let mut position = 0;
     while position < args.len() {
         match args[position].to_str() {
             Some("--self-test") => options.self_test = true,
             Some("--quit") => quit = true,
-            Some("--instance-key" | "--ready-file" | "--run-for-seconds") => {
+            Some("--instance-key" | "--ready-file" | "--run-for-seconds" | "--state-directory" | "--oauth-config") => {
                 let option = args[position].to_str().ok_or("Invalid option encoding.")?;
                 position += 1;
                 let value = args.get(position).ok_or("Missing option value.")?;
@@ -99,15 +127,36 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     "--instance-key" => options.instance_key = value.to_str().ok_or("Instance key must be ASCII.")?.into(),
                     "--ready-file" => options.ready_file = Some(PathBuf::from(value)),
                     "--run-for-seconds" => options.run_for_seconds = Some(value.to_str().ok_or("Invalid duration encoding.")?.parse()?),
+                    "--state-directory" => state_directory = Some(PathBuf::from(value)),
+                    "--oauth-config" => oauth_config = Some(PathBuf::from(value)),
                     _ => unreachable!(),
                 }
             }
-            _ => return Err("Usage: VoicePromptRustPilot [--self-test] [--instance-key key] [--ready-file path] [--run-for-seconds 1-3600] | --quit --instance-key key | --protect-stdin | --unprotect-stdin".into()),
+            _ => return Err("Usage: VoicePromptRustPilot [--self-test] [--instance-key key] [--ready-file path] [--run-for-seconds 1-3600] [--state-directory absolute-path [--oauth-config path]] | --quit --instance-key key | explicit-path cache/history/settings fixture commands".into()),
         }
         position += 1;
     }
+    if oauth_config.is_some() && state_directory.is_none() {
+        return Err("--oauth-config requires an explicit --state-directory.".into());
+    }
+    if let Some(state_directory) = state_directory {
+        if options.ready_file.is_some() {
+            return Err(
+                "Foundation measurement readiness cannot be combined with connected mode.".into(),
+            );
+        }
+        options.client = Some(ClientOptions {
+            state_directory,
+            oauth_config,
+            clipboard_enabled: !options.self_test,
+        });
+    }
     if quit {
-        if options.ready_file.is_some() || options.run_for_seconds.is_some() || options.self_test {
+        if options.ready_file.is_some()
+            || options.run_for_seconds.is_some()
+            || options.self_test
+            || options.client.is_some()
+        {
             return Err("--quit cannot be combined with startup options.".into());
         }
         request_quit(&options.instance_key)?;
@@ -121,6 +170,40 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 fn main() {
     if let Err(error) = run() {
         eprintln!("VoicePrompt Rust pilot: {error}");
+        let automated = std::env::args_os().skip(1).any(|argument| {
+            matches!(
+                argument.to_str(),
+                Some(
+                    "--self-test"
+                        | "--run-for-seconds"
+                        | "--ready-file"
+                        | "--settings-save"
+                        | "--settings-load"
+                        | "--cache-save"
+                        | "--cache-load"
+                        | "--cache-clear"
+                        | "--history-add"
+                        | "--history-load"
+                        | "--protect-stdin"
+                        | "--unprotect-stdin"
+                        | "--quit"
+                )
+            )
+        });
+        if !automated {
+            use windows::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
+            use windows::core::w;
+            unsafe {
+                let _ = MessageBoxW(
+                    None,
+                    w!(
+                        "The isolated Rust client could not start. Check its explicit configuration and state paths. Existing files have been preserved; diagnostics are written to stderr."
+                    ),
+                    w!("VoicePrompt Rust client"),
+                    MB_OK | MB_ICONERROR,
+                );
+            }
+        }
         std::process::exit(2);
     }
 }

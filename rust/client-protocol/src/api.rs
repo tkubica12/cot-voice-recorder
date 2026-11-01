@@ -13,7 +13,7 @@ const MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 
 #[cfg(test)]
 #[path = "api_tests.rs"]
-mod tests;
+pub(crate) mod tests;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ApiErrorKind {

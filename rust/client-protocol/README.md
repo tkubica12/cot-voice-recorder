@@ -1,8 +1,9 @@
 # Client authentication and realtime contracts
 
-This crate ports client-side contracts, not the complete interactive Google
-login or a connected realtime loop. The native tray still does not access real
-credentials, a microphone, production endpoints, or the clipboard.
+This crate ports client-side contracts and the transcript-delivery coordinator.
+The native tray has an opt-in explicit-state mode for interactive Google sign-in
+and realtime/clipboard/history delivery. Unattended tests use synthetic state and
+local HTTP/WebSocket fixtures, never real credentials, endpoints or clipboard data.
 
 Implemented:
 
@@ -36,6 +37,12 @@ Implemented:
   and surfaces corrupt data without discarding the file.
 - Delivery policy preserving pause, dictation-busy suppression and the
   `windows_dictation` audit source's no-autocopy rule.
+- Serialized coordinator: authenticated fetch -> durable history -> safe copy ->
+  generic notification, with bounded dedupe committed only after persistence.
+  Failed fetch/disk operations remain retryable; clipboard exhaustion keeps history
+  and exposes manual-copy fallback. Manual latest/selected/original works paused.
+- Current C# settings fields/defaults, bounded JSON and unknown-field preservation
+  for rollback. Malformed settings and unsafe backend URLs are explicit errors.
 
 Token/config/PKCE/claims/frame Debug output is redacted. Parsing errors do not
 embed input bodies. Invalid callback security fields, config endpoints, JWT
@@ -74,8 +81,9 @@ configuration or existing user tokens are involved.
 
 The native `--cache-save`, `--cache-load` and `--cache-clear` modes are fixture
 hooks taking an explicit `tokens.bin` path. Never point tests at an installed
-app's state. These hooks do not wire authentication into the tray UI.
+app's state. They are not interactive sign-in commands.
 
-Remaining: native user-initiated browser flow/UI, integration of realtime events with
-clipboard/history delivery and the rest of the dictation/audit API surfaces. Do not label
-the local fixture flow as end-to-end production/Google validation.
+The native explicit-state tray now wires the browser flow and delivery coordinator.
+Remaining: the dictation/recovery/audit API surfaces, full native Settings/Recovery,
+installer/upgrade and real Google/clipboard/device acceptance. Do not label the local
+fixture flow as end-to-end production/Google validation.

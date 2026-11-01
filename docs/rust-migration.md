@@ -17,9 +17,10 @@ zustat u klasicke ACA; na ACA Express se v teto migraci neprechazi.
 | Nativni Windows zaklad | Tray, izolovana instance a DPAPI implementovany; lokalni self-test a C# DPAPI parity prosly |
 | Mereni nativniho zakladu | Dokonceno: 30 startu a 301 vzorku za pet minut; vysledky nize |
 | CI nativniho inkrementu | Windows i Linux prosly na commitu `4b040a8` |
-| OAuth/token-store/PubSub klient | Kontrakty, encrypted cache, HTTP/auth, negotiate/fetch a WebSocket transport implementovany; zbyva native UI a clipboard/history integrace |
+| OAuth/token-store/PubSub klient | Explicit-path native sign-in/out, realtime status a coordinator/history/clipboard integrace implementovany; skutecny Google/clipboard E2E zbyva |
 | Diktovani/recovery UI | Zatim neprepsano |
-| History cache | JSON/retence/200 entries a atomicka native persistence implementovany; C# file parity overena; zbyva UI a clipboard pipeline |
+| History cache | JSON/retence/200 entries, atomicka persistence, native list/text a manual copy latest/selected/original implementovany; C# file parity overena |
+| Settings | Vsechna aktualni C# JSON pole a obousmerna file parity; nativne zatim pouze pause, ne kompletni Settings UI ani autostart |
 | Rust cloud API, worker, cleanup | Zatim neprepsano |
 | Hosting | Klasicka ACA zustava: API, KEDA queue worker a hourly cleanup Job; Express byl uzivatelem zrusen |
 
@@ -376,8 +377,8 @@ ping/pong, suspend/resume/reconnect/stop a zruseni spojeni po zmene auth.
 Lokalni WebSocket fixture overila subprotocol, doruceni a ukonceni pres stop
 i sign-out; jde o synteticky endpoint, nikoli Azure production.
 
-Stale chybi system-browser sign-in propojeny s native UI a clipboard/history
-integrace realtime klienta. Tato etapa
+V teto predchozi protokolove etape jeste chybel system-browser sign-in propojeny
+s native UI a clipboard/history integrace realtime klienta. Tato etapa
 neprihlasuje uzivatele a nepouziva jeho konfiguraci, tokeny ani cloud. Jeji
 unit/parity testy nejsou end-to-end test plneho Windows klienta.
 
@@ -391,4 +392,35 @@ History cache nyni zachovava C# JSON pole, original/final text, 48hodinovou
 retenci, newest-first limit 200 a replace-by-ID. Nativni atomicky zapis a
 obousmerna kompatibilita souboru jsou overeny syntetickymi fixturemi proti
 skutecnemu C# HistoryStore. Pause/dictation-busy/audit-source policy neprovadi
-autocopy. Zbyva navazujici clipboard adapter, coordinator a kompletni UI.
+autocopy.
+
+## Native delivery inkrement
+
+Explicitni `--state-directory` nyni zapojuje native tray do auth/realtime,
+atomicke historie a clipboardu. `--oauth-config` je take explicitni; vychozi
+foundation nezjistuje osobni stav ani konfiguraci. Connected mode nesmi pouzit
+foundation readiness marker, aby se neoznacovalo nove mereni jako stare.
+Nativni status okno obsahuje sign-in/out, realtime status, History list/text,
+manual copy latest/selected/original, pause persistence a reconnect.
+Neni to jeste kompletni Settings, diktovani, Recovery nebo instalator.
+
+Coordinator serializuje fetch/save/copy. Dedupe potvrzuje az uspesny durable
+zapis; pri chybe site nebo disku nezablokuje retry. Clipboard busy ma pet
+omezenych pokusu, jine chyby jsou terminalni a viditelne. Historie zustava
+manualnim fallbackem. Policy se kontroluje i pred skutecnym UI zapisovanim
+a cancellation zrusi odlozeny clipboard request. Audit nikdy neprovadi autocopy.
+Notifikace a diagnostika neobsahuji text prepisu.
+
+Settings zachovavaji vsechna aktualni C# pole/defaults, Rust take nezname pole
+kvuli rollbacku. Corrupt/invalid file neni uspesna prazdna konfigurace.
+Periodic cleanup trvale uplatnuje retenci historie. Testy pouzivaji jen
+synteticke temporary cesty a nikde neinstaluji/upgradeuji skutecnou aplikaci.
+
+Lokalne overeno: 60 Rust testu celeho workspace, release a Clippy bez warnings,
+vcetne skutecneho local HTTP authenticated fetch -> coordinator -> cache ->
+fake clipboard. Desktop-only lifecycle ma pet skupin: missing state,
+synteticky native History list a hidden focus, zachovani corrupt
+settings/history/tokens, skutecna aktivace explicitniho stavu v normalnim modu
+a odmitnuti mislabeled readiness. Skutecny systemovy
+clipboard i OAuth jsou v self-testu zakazane. Neni tim prokazano produkcni
+Google/clipboard/paste ani feature-matched performance.

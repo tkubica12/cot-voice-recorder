@@ -8,6 +8,7 @@ using VoicePrompt.Core.Dictation;
 using VoicePrompt.Core.Infrastructure;
 using VoicePrompt.Core.History;
 using VoicePrompt.Core.Realtime;
+using VoicePrompt.Core.Settings;
 
 try
 {
@@ -15,7 +16,16 @@ try
     Console.OpenStandardInput().CopyTo(input);
     var pcm = input.ToArray();
     using var output = new BinaryWriter(Console.OpenStandardOutput());
-    if (args.Length == 2 && args[0] is "history-add" or "history-load")
+    if (args.Length == 2 && args[0] is "settings-save" or "settings-load")
+    {
+        var store = new SettingsStore(args[1], PhysicalFileSystem.Instance);
+        if (args[0] == "settings-save")
+            store.Save(JsonSerializer.Deserialize<AppSettings>(pcm)
+                ?? throw new InvalidDataException("Invalid settings fixture."));
+        else
+            output.Write(JsonSerializer.SerializeToUtf8Bytes(store.Load()));
+    }
+    else if (args.Length == 2 && args[0] is "history-add" or "history-load")
     {
         var store = new HistoryStore(args[1], PhysicalFileSystem.Instance, SystemClock.Instance);
         if (args[0] == "history-add")
