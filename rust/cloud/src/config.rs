@@ -34,6 +34,7 @@ pub struct Config {
     pub transcribe_provider: String,
     pub transcribe_deployment: String,
     pub webpubsub_ttl_minutes: u32,
+    pub dictation_stream_enabled: bool,
 }
 
 fn endpoint(value: &str, allow_loopback: bool) -> Result<Url, Problem> {
@@ -195,6 +196,11 @@ impl Config {
             webpubsub_ttl_minutes: value("VR_WEBPUBSUB_TOKEN_TTL_MINUTES", "60")
                 .parse()
                 .map_err(|_| Problem::validation("Invalid Web PubSub token lifetime."))?,
+            dictation_stream_enabled: if values.contains_key("VR_DICTATION_STREAM_ENABLED") {
+                flag("VR_DICTATION_STREAM_ENABLED")?
+            } else {
+                true
+            },
         };
         for name in [
             &config.hub,

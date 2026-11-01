@@ -27,6 +27,8 @@ fn fixture() -> ApiState {
             2,
             std::time::Duration::from_secs(20),
         )),
+        streaming: None,
+        stream_slots: Arc::new(tokio::sync::Semaphore::new(4)),
     }
 }
 async fn json_body(response: Response) -> serde_json::Value {
@@ -373,4 +375,281 @@ async fn complete_ephemeral_http_paths_use_actual_rust_provider_and_return_only_
         serde_json::from_slice(part(&input.body, "definition")).unwrap();
     assert_eq!(definition["locales"], serde_json::json!(["en"]));
     server.finish().await;
+}
+
+type TestSocket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+async fn serve_ws(state: ApiState) -> (String, tokio::task::JoinHandle<()>) {
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let endpoint = format!("ws://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        axum::serve(listener, router(state)).await.unwrap();
+    });
+    (endpoint, server)
+}
+async fn connect_ws(endpoint: &str, query: &str, authorized: bool) -> TestSocket {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    let mut request = format!("{endpoint}/v1/dictation/stream{query}")
+        .into_client_request()
+        .unwrap();
+    if authorized {
+        request.headers_mut().insert(
+            "Authorization",
+            HeaderValue::from_static("Bearer synthetic-token"),
+        );
+    }
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        tokio_tungstenite::connect_async(request),
+    )
+    .await
+    .unwrap()
+    .unwrap()
+    .0
+}
+async fn ws_json(socket: &mut TestSocket) -> serde_json::Value {
+    let message = tokio::time::timeout(std::time::Duration::from_secs(5), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    serde_json::from_str(message.to_text().unwrap()).unwrap()
+}
+
+#[tokio::test]
+async fn actual_websocket_route_preserves_auth_query_unavailable_and_capacity_rejection_frames() {
+    use tokio_tungstenite::tungstenite::Message;
+    let (endpoint, server) = serve_ws(fixture()).await;
+    for (query, authorized, code, close_code) in [
+        ("", false, "unauthorized", 4401),
+        ("?start_byte=1", true, "invalid_request", 4400),
+        ("?language=invalid", true, "invalid_request", 4400),
+        ("", true, "unavailable", 4503),
+    ] {
+        let mut socket = connect_ws(&endpoint, query, authorized).await;
+        assert_eq!(
+            ws_json(&mut socket).await,
+            serde_json::json!({"type":"error","code":code})
+        );
+        let Message::Close(Some(close)) = socket.next().await.unwrap().unwrap() else {
+            panic!("Missing rejection close");
+        };
+        assert_eq!(u16::from(close.code), close_code);
+    }
+    server.abort();
+    let mut state = fixture();
+    state.streaming = Some(Arc::new(
+        crate::streaming::MaiStreamingProvider::new(
+            &state.services.config,
+            Arc::new(crate::identity::ManagedIdentity::fixture(
+                "http://127.0.0.1:9/token",
+            )),
+            "fixture-model",
+        )
+        .unwrap(),
+    ));
+    let _occupied = state
+        .stream_slots
+        .clone()
+        .acquire_many_owned(4)
+        .await
+        .unwrap();
+    let (endpoint, server) = serve_ws(state).await;
+    let mut socket = connect_ws(&endpoint, "", true).await;
+    assert_eq!(ws_json(&mut socket).await["code"], "too_many_requests");
+    server.abort();
+}
+
+#[tokio::test]
+async fn actual_pcm_relay_orders_out_of_order_completion_and_done_at_absolute_cursor() {
+    use crate::http_fixture::{config, serve, token};
+    use futures_util::SinkExt;
+    use tokio_tungstenite::tungstenite::Message;
+    let identity = serve(vec![token()]).await;
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let resource: url::Url = format!("http://{}/", listener.local_addr().unwrap())
+        .parse()
+        .unwrap();
+    let mut state = fixture();
+    state.streaming = Some(Arc::new(
+        crate::streaming::MaiStreamingProvider::new(
+            &config(&resource),
+            Arc::new(crate::identity::ManagedIdentity::fixture(
+                identity.endpoint.as_str(),
+            )),
+            "fixture-model",
+        )
+        .unwrap(),
+    ));
+    let upstream = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+        socket
+            .send(Message::Text(r#"{"type":"session.created"}"#.into()))
+            .await
+            .unwrap();
+        socket.next().await.unwrap().unwrap();
+        socket
+            .send(Message::Text(r#"{"type":"session.updated"}"#.into()))
+            .await
+            .unwrap();
+        let mut captured = Vec::new();
+        let mut commits = 0;
+        while let Some(Ok(Message::Text(data))) = socket.next().await {
+            let event: serde_json::Value = serde_json::from_str(&data).unwrap();
+            match event["type"].as_str().unwrap() {
+                "input_audio_buffer.append" => captured.extend(
+                    base64::engine::general_purpose::STANDARD
+                        .decode(event["audio"].as_str().unwrap())
+                        .unwrap(),
+                ),
+                "input_audio_buffer.commit" => {
+                    commits += 1;
+                    socket.send(Message::Text(serde_json::json!({"type":"input_audio_buffer.committed","item_id":format!("item-{commits}")}).to_string().into())).await.unwrap();
+                    if commits == 2 {
+                        for (item, text) in [
+                            ("item-2", "second confirmed"),
+                            ("item-1", "first confirmed"),
+                        ] {
+                            socket.send(Message::Text(serde_json::json!({"type":"conversation.item.input_audio_transcription.completed","item_id":item,"transcript":text}).to_string().into())).await.unwrap();
+                        }
+                    }
+                }
+                _ => panic!("Unexpected upstream request"),
+            }
+        }
+        assert_eq!(captured, [vec![1; 640], vec![2; 640]].concat());
+    });
+    let (endpoint, server) = serve_ws(state).await;
+    let mut socket = connect_ws(&endpoint, "?language=cs&start_byte=1280", true).await;
+    assert_eq!(
+        ws_json(&mut socket).await,
+        serde_json::json!({"type":"ready","protocol":1,"start_byte":1280})
+    );
+    socket
+        .send(Message::Binary(vec![1; 640].into()))
+        .await
+        .unwrap();
+    socket
+        .send(Message::Text(r#"{"type":"commit"}"#.into()))
+        .await
+        .unwrap();
+    socket
+        .send(Message::Binary(vec![2; 640].into()))
+        .await
+        .unwrap();
+    socket
+        .send(Message::Text(r#"{"type":"finish"}"#.into()))
+        .await
+        .unwrap();
+    assert_eq!(
+        ws_json(&mut socket).await,
+        serde_json::json!({"type":"confirmed","item_id":"item-1","text":"first confirmed","byte_end":1920})
+    );
+    assert_eq!(ws_json(&mut socket).await["byte_end"], 2560);
+    assert_eq!(
+        ws_json(&mut socket).await,
+        serde_json::json!({"type":"done","byte_end":2560})
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(5), upstream)
+        .await
+        .unwrap()
+        .unwrap();
+    identity.finish().await;
+    server.abort();
+}
+
+#[tokio::test]
+async fn missing_confirmation_times_out_at_thirty_seconds_without_done_or_provisional_paste() {
+    use crate::http_fixture::{config, serve, token};
+    use futures_util::SinkExt;
+    use tokio_tungstenite::tungstenite::Message;
+    let identity = serve(vec![token()]).await;
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let resource: url::Url = format!("http://{}/", listener.local_addr().unwrap())
+        .parse()
+        .unwrap();
+    let mut state = fixture();
+    state.streaming = Some(Arc::new(
+        crate::streaming::MaiStreamingProvider::new(
+            &config(&resource),
+            Arc::new(crate::identity::ManagedIdentity::fixture(
+                identity.endpoint.as_str(),
+            )),
+            "fixture-model",
+        )
+        .unwrap(),
+    ));
+    let slots = state.stream_slots.clone();
+    let upstream = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+        socket
+            .send(Message::Text(r#"{"type":"session.created"}"#.into()))
+            .await
+            .unwrap();
+        socket.next().await.unwrap().unwrap();
+        socket
+            .send(Message::Text(r#"{"type":"session.updated"}"#.into()))
+            .await
+            .unwrap();
+        while let Some(Ok(Message::Text(data))) = socket.next().await {
+            let event: serde_json::Value = serde_json::from_str(&data).unwrap();
+            if event["type"] == "input_audio_buffer.commit" {
+                socket
+                    .send(Message::Text(
+                        r#"{"type":"input_audio_buffer.committed","item_id":"pending"}"#.into(),
+                    ))
+                    .await
+                    .unwrap();
+                socket.send(Message::Text(r#"{"type":"conversation.item.input_audio_transcription.delta","item_id":"pending","delta":"provisional must not paste"}"#.into())).await.unwrap();
+            }
+        }
+    });
+    let (endpoint, server) = serve_ws(state).await;
+    let mut socket = connect_ws(&endpoint, "", true).await;
+    assert_eq!(ws_json(&mut socket).await["type"], "ready");
+    socket
+        .send(Message::Binary(vec![1; 640].into()))
+        .await
+        .unwrap();
+    let started = tokio::time::Instant::now();
+    socket
+        .send(Message::Text(r#"{"type":"finish"}"#.into()))
+        .await
+        .unwrap();
+    assert_eq!(ws_json(&mut socket).await["type"], "delta");
+    let error = tokio::time::timeout(std::time::Duration::from_secs(35), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let error: serde_json::Value = serde_json::from_str(error.to_text().unwrap()).unwrap();
+    assert_eq!(error["type"], "error");
+    assert_eq!(error["code"], "stream_failed");
+    assert!(started.elapsed() >= std::time::Duration::from_secs(30));
+    assert!(started.elapsed() < std::time::Duration::from_secs(35));
+    let Message::Close(Some(close)) = socket.next().await.unwrap().unwrap() else {
+        panic!("Missing failed-stream close");
+    };
+    assert_eq!(u16::from(close.code), 1011);
+    tokio::time::timeout(std::time::Duration::from_secs(5), upstream)
+        .await
+        .unwrap()
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while slots.available_permits() != 4 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    identity.finish().await;
+    server.abort();
 }

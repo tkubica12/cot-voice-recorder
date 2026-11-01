@@ -21,7 +21,7 @@ zustat u klasicke ACA; na ACA Express se v teto migraci neprechazi.
 | Diktovani/recovery UI | Native microphone/hotkeys/overlay/paste controller, oba enginy, journal, polishing a outbox implementovany; real-world a rozsahlejsi fault/E2E akceptace zbyva |
 | History cache | JSON/retence/200 entries, atomicka persistence, native list/text a manual copy latest/selected/original implementovany; C# file parity overena |
 | Settings a instalator | Vsechna C# JSON pole, nativni Settings/History/Recovery, DPI fonty, per-user autostart a kompatibilni IPC; installer sestaven, nebyl instalovan |
-| Rust cloud API, worker, cleanup | OIDC/JWKS, UAMI, REST/CAS, service/router, batch AI, refinement a PubSub implementovany; live relay, worker, cleanup, bootstrap a uplna akceptace zbyvaji |
+| Rust cloud API, worker, cleanup | OIDC/JWKS, UAMI, REST/CAS, service/router, batch AI/refinement/PubSub a live MAI relay implementovany; worker, cleanup, bootstrap a uplna akceptace zbyvaji |
 | Hosting | Klasicka ACA zustava: API, KEDA queue worker a hourly cleanup Job; Express byl uzivatelem zrusen |
 
 Nativni zaklad neni kompletni klient. Jeho rychlost a pamet nelze porovnat
@@ -707,3 +707,29 @@ Live MAI relay, continuous/legacy worker, cleanup, production bootstrap a
 container/klasicka ACA wiring jsou nadale aktivni nezavrsene casti celeho cile.
 Neprobehl skutecny Azure/OIDC/device/paste/installer test ani feature-matched
 performance acceptance. Prahy a neprodukcni hranice se nemeni.
+
+## Live MAI upstream a dictation relay
+
+Native Rust MAI provider zachovava server-owned MI bearer, resource-host rewrite,
+PCM16k/session.update, auto versus explicit language, bounded 2 MiB frames,
+15s initialization a 3s writes/close. Authenticated Axum WebSocket route zachovava
+ready/delta/intermediate/confirmed/done/error frames i 4401/4403/4400/4429/4503
+rejection codes; respektuje configured stream enable flag a ctyri session sloty.
+
+Relay udrzuje bounded 32 commits, oddeluje ACK/hypothesis od confirmed text,
+vydava out-of-order model completions v capture poradi a zachovava absolute
+byte_end. Audio packet max16KiB, exact posledni sample do hodinoveho audio capu,
+55min session a 30s final drain jsou zachovany. Cas session je stale zdrojovy
+limit, ne namereny hodinovy acceptance workload.
+
+Proslo 162 workspace testu (47 cloud), release/fmt/Clippy a actual asynchronous
+Python relay -> Rust cursor/confirmation parity. Prime socket E2E overuje exact
+PCM, auth/query/capacity errors a sorted confirmed/done. Prime casove testy
+zmerily skutecny 15s chybejici session.created a 30s chybejici completion:
+provisional text ani ACK neprinesly confirmed/done a slot se po timeoutu uvolnil.
+Nejde o placeny ani Azure E2E. Predchozi commit 536e3a0 ma potvrzene Windows/Linux
+Rust CI i backend CI; CI tohoto dalsiho inkrementu se overuje samostatne.
+
+Nasleduje leased continuous replay a legacy/finalization/cleanup. Produkcni
+bootstrap/container wiring, distributed-fault acceptance, real-world a
+feature-matched performance zustavaji nedokoncene.

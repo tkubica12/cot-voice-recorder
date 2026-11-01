@@ -15,6 +15,46 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Err("Entity fixture exceeds supported bounds.".into());
     }
     let values: serde_json::Value = serde_json::from_slice(&data)?;
+    if mode == "relay" {
+        let mut state = voiceprompt_cloud::relay::RelayState::new(
+            values["start"].as_u64().ok_or("Missing start cursor.")?,
+        );
+        let mut messages = Vec::new();
+        let mut accepted = true;
+        for action in values["actions"]
+            .as_array()
+            .ok_or("Missing relay actions.")?
+        {
+            let result = match action["kind"].as_str() {
+                Some("audio") => {
+                    let data = base64::Engine::decode(
+                        &base64::engine::general_purpose::STANDARD,
+                        action["data"].as_str().ok_or("Missing synthetic PCM.")?,
+                    )?;
+                    state.audio(&data).map(|_| Vec::new())
+                }
+                Some("control") => state
+                    .control(action["data"].as_str().ok_or("Missing control.")?)
+                    .map(|_| Vec::new()),
+                Some("event") => state.event(action["data"].clone()),
+                _ => return Err("Unknown relay fixture action.".into()),
+            };
+            match result {
+                Ok(events) => messages.extend(events),
+                Err(_) => {
+                    accepted = false;
+                    break;
+                }
+            }
+        }
+        if accepted {
+            messages.extend(state.done());
+        }
+        std::io::stdout().lock().write_all(&serde_json::to_vec(
+            &serde_json::json!({"accepted":accepted, "messages":messages}),
+        )?)?;
+        return Ok(());
+    }
     if mode == "archive" {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()

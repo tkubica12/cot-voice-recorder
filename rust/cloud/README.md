@@ -25,10 +25,13 @@ Implemented:
   refinement, and Web PubSub REST negotiation/preview-only delivery. Ephemeral
   dictation and refinement retain four/two physical slots after waiter cancellation
   or timeout. Provider bodies are not exposed.
+- Server-owned MAI upstream and authenticated live PCM WebSocket relay, with
+  ordered confirmations, explicit cursors, bounded commit backpressure and
+  no confirmed/done output after a missing-completion timeout.
 
 Stored domain/entity codecs, strict wire defaults, content-digest/sample validation
-and conditional repository primitives now exist. Live MAI relay,
-ordered worker replay, finalization, cleanup, container/ACA wiring and full external
+and conditional repository primitives now exist.
+Ordered worker replay, finalization, cleanup, container/ACA wiring and full external
 contracts remain unfinished. Blob enumeration and production bootstrap are not wired.
 Do not deploy the current library or run an alternate worker over existing data.
 
@@ -38,10 +41,11 @@ cargo test --manifest-path rust\Cargo.toml --offline --locked -p voiceprompt-clo
 cargo clippy --manifest-path rust\Cargo.toml --workspace --offline --locked --all-targets -- -D warnings
 ```
 
-The 35 direct cloud tests use generated in-memory RSA keys and local HTTP
+The 47 direct cloud tests use generated in-memory RSA keys and local HTTP/WebSocket
 fixtures. They exercise real signature validation, cached JWKS, rejected
 HS256/unsigned/wrong claims, UAMI selection, Table CAS, Queue lease receipts,
-actual HTTP handlers, multipart/provider contracts and physical-call cancellation.
+actual HTTP handlers, multipart/provider contracts, physical-call cancellation,
+ordered PCM relay and actual 15-second/30-second timeout boundaries.
 No Azure, paid model, production data or credentials are used. These are not
 private-endpoint/UAMI acceptance against the actual cloud.
 
@@ -93,6 +97,7 @@ preview and original/final text. All fixtures are synthetic and in memory.
 ```powershell
 backend\.venv\Scripts\python.exe rust\cloud\tests\test_edit_parity.py --oracle rust\target\release\examples\entity_contract.exe
 backend\.venv\Scripts\python.exe rust\cloud\tests\test_archive_parity.py --oracle rust\target\release\examples\entity_contract.exe
+backend\.venv\Scripts\python.exe rust\cloud\tests\test_relay_parity.py --oracle rust\target\release\examples\entity_contract.exe
 ```
 
 These do not prove live Azure connectivity, full WebSocket/worker parity,

@@ -1,7 +1,8 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use axum::extract::{Path, Request, State};
+use axum::extract::ws::{CloseFrame, Message};
+use axum::extract::{Path, Request, State, WebSocketUpgrade};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
@@ -33,6 +34,8 @@ pub struct ApiState {
     pub ai: Option<Arc<crate::ai::AzureAi>>,
     dictation_pool: Arc<crate::ai::ExecutionPool>,
     refinement_pool: Arc<crate::ai::ExecutionPool>,
+    pub streaming: Option<Arc<crate::streaming::MaiStreamingProvider>>,
+    stream_slots: Arc<tokio::sync::Semaphore>,
 }
 impl ApiState {
     pub fn new(services: Arc<Services>, verifier: Arc<GoogleVerifier>) -> Self {
@@ -50,6 +53,8 @@ impl ApiState {
                 2,
                 std::time::Duration::from_secs(20),
             )),
+            streaming: None,
+            stream_slots: Arc::new(tokio::sync::Semaphore::new(4)),
         }
     }
     async fn user(&self, headers: &HeaderMap) -> Result<User, Problem> {
@@ -91,6 +96,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/v1/realtime/negotiate", post(negotiate))
         .route("/v1/dictation/transcribe", post(transcribe))
         .route("/v1/dictation/refine", post(refine))
+        .route("/v1/dictation/stream", get(stream))
         .fallback(not_found)
         .method_not_allowed_fallback(method_not_allowed)
         .layer(middleware::from_fn(trace))
@@ -607,6 +613,136 @@ async fn refine(State(state): State<ApiState>, request: Request) -> Response {
         Ok(result) => Json(result).into_response(),
         Err(error) => failure_at(&path, &trace, error),
     }
+}
+
+async fn stream(
+    State(state): State<ApiState>,
+    upgrade: WebSocketUpgrade,
+    request: Request,
+) -> Response {
+    let authorized = state.user(request.headers()).await;
+    let uri = url::Url::parse(&format!("https://fixture.invalid{}", request.uri()));
+    let mut language = "auto".to_owned();
+    let mut start = Some(0);
+    if let Ok(uri) = uri {
+        for (key, value) in uri.query_pairs() {
+            match key.as_ref() {
+                "language" => language = value.into_owned(),
+                "start_byte" => {
+                    start = value
+                        .trim_matches(crate::edits::python_whitespace)
+                        .parse::<i64>()
+                        .ok()
+                        .and_then(|value| u64::try_from(value).ok())
+                }
+                _ => {}
+            }
+        }
+    } else {
+        start = None;
+    }
+    upgrade
+        .max_message_size(16384)
+        .max_frame_size(16384)
+        .on_upgrade(move |mut client| async move {
+            let reject = match authorized {
+                Err(error) => Some((
+                    if error.status == 403 {
+                        "forbidden"
+                    } else {
+                        "unauthorized"
+                    },
+                    if error.status == 403 { 4403 } else { 4401 },
+                )),
+                Ok(_)
+                    if !matches!(language.as_str(), "auto" | "cs" | "en")
+                        || !start
+                            .is_some_and(|value| value <= 48 * 3600 * 32000 && value % 2 == 0) =>
+                {
+                    Some(("invalid_request", 4400))
+                }
+                Ok(_)
+                    if state.streaming.is_none()
+                        || !state.services.config.dictation_stream_enabled =>
+                {
+                    Some(("unavailable", 4503))
+                }
+                Ok(_) => None,
+            };
+            if let Some((code, close_code)) = reject {
+                reject_stream(&mut client, code, close_code).await;
+                return;
+            }
+            let Ok(_permit) = state.stream_slots.clone().try_acquire_owned() else {
+                reject_stream(&mut client, "too_many_requests", 4429).await;
+                return;
+            };
+            let Some(provider) = state.streaming else {
+                reject_stream(&mut client, "unavailable", 4503).await;
+                return;
+            };
+            let Some(start) = start else {
+                reject_stream(&mut client, "invalid_request", 4400).await;
+                return;
+            };
+            let result = async {
+                let mut upstream = provider.session(&language).await?;
+                let result = async {
+                    crate::relay::send(
+                        &mut client,
+                        serde_json::json!({"type":"ready","start_byte":start,"protocol":1}),
+                    )
+                    .await?;
+                    crate::relay::relay(&mut client, &mut upstream, start).await
+                }
+                .await;
+                if upstream.close().await.is_err() {
+                    eprintln!("MAI streaming close was interrupted.");
+                }
+                result
+            }
+            .await;
+            if result.is_err() {
+                eprintln!("Dictation stream failed; saved audio remains replayable.");
+                if crate::relay::send(
+                    &mut client,
+                    serde_json::json!({"type":"error","code":"stream_failed",
+                "message":"Streaming interrupted. Saved audio can be replayed."}),
+                )
+                .await
+                .is_err()
+                {
+                    eprintln!("Dictation stream error delivery failed.");
+                }
+                close_stream(&mut client, 1011).await;
+            } else {
+                close_stream(&mut client, 1000).await;
+            }
+        })
+}
+async fn close_stream(client: &mut axum::extract::ws::WebSocket, code: u16) {
+    if !matches!(
+        tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            client.send(Message::Close(Some(CloseFrame {
+                code,
+                reason: "".into()
+            })))
+        )
+        .await,
+        Ok(Ok(()))
+    ) {
+        eprintln!("Dictation stream close delivery failed.");
+    }
+}
+async fn reject_stream(client: &mut axum::extract::ws::WebSocket, code: &str, close_code: u16) {
+    if crate::relay::send(client, serde_json::json!({"type":"error","code":code}))
+        .await
+        .is_err()
+    {
+        eprintln!("Dictation stream rejection delivery failed.");
+    }
+    close_stream(client, close_code).await;
 }
 
 #[cfg(test)]
