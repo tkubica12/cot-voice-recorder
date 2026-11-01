@@ -16,6 +16,9 @@ use crate::runtime::TokenPersistence;
 use crate::state::AuthState;
 
 const SUBPROTOCOL: &str = "json.webpubsub.azure.v1";
+const SEND_TIMEOUT: Duration = Duration::from_secs(3);
+type Socket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RealtimeState {
@@ -265,6 +268,8 @@ async fn receive_connection(
     if lifetime <= time::Duration::ZERO || lifetime > time::Duration::days(1) {
         return Err(RealtimeError::InvalidAccess);
     }
+    let renew_at = tokio::time::Instant::now()
+        + Duration::try_from(lifetime).map_err(|_| RealtimeError::InvalidAccess)?;
     let mut request = access
         .url
         .as_str()
@@ -287,9 +292,12 @@ async fn receive_connection(
         _ = control.changed() => return Ok(ConnectionEnd::ControlChanged),
         _ = auth.changed() => return Ok(ConnectionEnd::ControlChanged),
     };
+    if tokio::time::Instant::now() >= renew_at {
+        close_connection(&mut socket).await;
+        return Ok(ConnectionEnd::Renew);
+    }
     state.send_replace(RealtimeState::Connected);
-    let renewal =
-        tokio::time::sleep(Duration::try_from(lifetime).map_err(|_| RealtimeError::InvalidAccess)?);
+    let renewal = tokio::time::sleep_until(renew_at);
     tokio::pin!(renewal);
     let mut keepalive = tokio::time::interval(Duration::from_secs(30));
     let end = loop {
@@ -298,7 +306,12 @@ async fn receive_connection(
             _ = auth.changed() => break ConnectionEnd::ControlChanged,
             _ = &mut renewal => break ConnectionEnd::Renew,
             _ = keepalive.tick() => {
-                socket.send(Message::Ping(Vec::new().into())).await.map_err(|_| RealtimeError::Send)?;
+                if let Some(end) = send_controlled(
+                    &mut socket, Message::Ping(Vec::new().into()), control, auth,
+                    renewal.as_mut(),
+                ).await? {
+                    break end;
+                }
             }
             incoming = socket.next() => {
                 match incoming {
@@ -321,7 +334,14 @@ async fn receive_connection(
                             Err(error) => eprintln!("Realtime event rejected: {error}"),
                         }
                     }
-                    Some(Ok(Message::Ping(bytes))) => socket.send(Message::Pong(bytes)).await.map_err(|_| RealtimeError::Send)?,
+                    Some(Ok(Message::Ping(bytes))) => {
+                        if let Some(end) = send_controlled(
+                            &mut socket, Message::Pong(bytes), control, auth,
+                            renewal.as_mut(),
+                        ).await? {
+                            break end;
+                        }
+                    },
                     Some(Ok(Message::Close(_))) | None => break ConnectionEnd::PeerClosed,
                     Some(Ok(_)) => {},
                     Some(Err(_)) => return Err(RealtimeError::Receive),
@@ -329,13 +349,41 @@ async fn receive_connection(
             }
         }
     };
-    match tokio::time::timeout(Duration::from_secs(3), socket.close(None)).await {
+    close_connection(&mut socket).await;
+    Ok(end)
+}
+
+async fn send_controlled<S>(
+    socket: &mut tokio_tungstenite::WebSocketStream<S>,
+    message: Message,
+    control: &mut watch::Receiver<Control>,
+    auth: &mut watch::Receiver<AuthState>,
+    renewal: std::pin::Pin<&mut tokio::time::Sleep>,
+) -> Result<Option<ConnectionEnd>, RealtimeError>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    tokio::select! {
+        result = tokio::time::timeout(SEND_TIMEOUT, socket.send(message)) =>
+            result.map_err(|_| RealtimeError::Send)?
+                .map(|()| None).map_err(|_| RealtimeError::Send),
+        _ = control.changed() => Ok(Some(ConnectionEnd::ControlChanged)),
+        _ = auth.changed() => Ok(Some(ConnectionEnd::ControlChanged)),
+        _ = renewal => Ok(Some(ConnectionEnd::Renew)),
+    }
+}
+
+async fn close_connection(socket: &mut Socket) {
+    match tokio::time::timeout(SEND_TIMEOUT, socket.close(None)).await {
         Ok(Ok(())) => {}
         Ok(Err(_)) | Err(_) => eprintln!("Realtime close did not complete cleanly."),
     }
-    Ok(end)
 }
 
 #[cfg(test)]
 #[path = "websocket_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "websocket_fault_tests.rs"]
+mod fault_tests;

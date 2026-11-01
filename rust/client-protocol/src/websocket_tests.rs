@@ -4,7 +4,10 @@ use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, 
 
 // Tungstenite's callback fixes ErrorResponse to a non-boxed HTTP response.
 #[allow(clippy::result_large_err)]
-fn accept_protocol(request: &Request, mut response: Response) -> Result<Response, ErrorResponse> {
+pub(super) fn accept_protocol(
+    request: &Request,
+    mut response: Response,
+) -> Result<Response, ErrorResponse> {
     assert_eq!(request.headers()["Sec-WebSocket-Protocol"], SUBPROTOCOL);
     response.headers_mut().insert(
         "Sec-WebSocket-Protocol",

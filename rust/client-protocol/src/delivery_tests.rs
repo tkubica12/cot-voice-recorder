@@ -37,6 +37,7 @@ struct Writer {
     copies: Arc<StdMutex<Vec<String>>>,
     calls: Arc<AtomicUsize>,
     busy: Arc<AtomicUsize>,
+    busy_policy: Arc<StdMutex<Option<Arc<DeliveryPolicy>>>>,
 }
 
 impl ClipboardWriter for Writer {
@@ -60,7 +61,12 @@ impl ClipboardWriter for Writer {
                 Ordering::AcqRel,
                 Ordering::Acquire,
             ) {
-                Ok(_) => return Err(ClipboardError::Busy),
+                Ok(_) => {
+                    if let Some(policy) = self.busy_policy.lock().unwrap().as_ref() {
+                        policy.set_dictation_busy(true);
+                    }
+                    return Err(ClipboardError::Busy);
+                }
                 Err(current) => busy = current,
             }
         }
@@ -85,11 +91,19 @@ struct Source {
     fail: AtomicBool,
     audit: bool,
     delay: Duration,
+    pause_on_fetch: Option<Arc<DeliveryPolicy>>,
+    wait_on_fetch: Option<Arc<tokio::sync::Notify>>,
 }
 
 impl TranscriptSource for Source {
     async fn fetch(&self, id: &str) -> Result<Transcript, ApiError> {
         self.calls.fetch_add(1, Ordering::AcqRel);
+        if let Some(policy) = &self.pause_on_fetch {
+            policy.set_paused(true);
+        }
+        if let Some(wait) = &self.wait_on_fetch {
+            wait.notified().await;
+        }
         tokio::time::sleep(self.delay).await;
         if self.fail.load(Ordering::Acquire) {
             return Err(ApiError {
@@ -240,33 +254,30 @@ async fn clipboard_exhaustion_preserves_history_and_dedupe_with_visible_fallback
 
 #[tokio::test]
 async fn policy_changes_during_fetch_and_clipboard_backoff_suppress_copy() {
-    let value = coordinator(Source {
-        delay: Duration::from_millis(20),
-        ..Default::default()
-    });
-    let evt = event("a");
-    let (handled, ()) = tokio::join!(value.handle(&evt), async {
-        tokio::time::sleep(Duration::from_millis(5)).await;
-        value.policy.set_paused(true);
-    });
-    assert_eq!(handled.unwrap(), HandlingResult::CachedSuppressed);
+    let mut value = coordinator(Source::default());
+    value.source.pause_on_fetch = Some(value.policy.clone());
+    assert_eq!(
+        value.handle(&event("a")).await.unwrap(),
+        HandlingResult::CachedSuppressed
+    );
     assert!(value.clipboard.writer.copies.lock().unwrap().is_empty());
 
     value.policy.set_paused(false);
+    value.source.pause_on_fetch = None;
     value.clipboard.writer.busy.store(1, Ordering::Release);
-    let evt = event("b");
-    let (handled, ()) = tokio::join!(value.handle(&evt), async {
-        tokio::time::sleep(Duration::from_millis(30)).await;
-        value.policy.set_dictation_busy(true);
-    });
-    assert_eq!(handled.unwrap(), HandlingResult::CachedSuppressed);
+    *value.clipboard.writer.busy_policy.lock().unwrap() = Some(value.policy.clone());
+    assert_eq!(
+        value.handle(&event("b")).await.unwrap(),
+        HandlingResult::CachedSuppressed
+    );
     assert_eq!(value.clipboard.writer.calls.load(Ordering::Acquire), 1);
 }
 
 #[tokio::test]
 async fn aborted_fetch_is_not_deduped_and_invalid_clipboard_text_is_not_written() {
+    let wait = Arc::new(tokio::sync::Notify::new());
     let value = coordinator(Source {
-        delay: Duration::from_millis(50),
+        wait_on_fetch: Some(wait.clone()),
         ..Default::default()
     });
     assert!(
@@ -274,6 +285,7 @@ async fn aborted_fetch_is_not_deduped_and_invalid_clipboard_text_is_not_written(
             .await
             .is_err()
     );
+    wait.notify_one();
     assert_eq!(
         value.handle(&event("a")).await.unwrap(),
         HandlingResult::CopiedAndNotified

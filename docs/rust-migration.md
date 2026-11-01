@@ -424,3 +424,16 @@ settings/history/tokens, skutecna aktivace explicitniho stavu v normalnim modu
 a odmitnuti mislabeled readiness. Skutecny systemovy
 clipboard i OAuth jsou v self-testu zakazane. Neni tim prokazano produkcni
 Google/clipboard/paste ani feature-matched performance.
+
+Native delivery commit `a406337` je pushnuty. Linux CI proslo; Windows CI
+odhalilo zavislost noveho policy-race testu na presnem poradi kratkych timeru.
+Oprava testu pouziva explicitni udalosti na fetch/busy hranicich, nikoli
+predpoklad o rychlosti stroje. Nejde o obchazeni kontroly ani snizeni cile.
+
+Navazujici realtime fault inkrement ma sest novych primych Rust testu.
+Renewal deadline je absolutni uz pred handshake; handshake ji neprodluzuje.
+Ping/pong write ma tri-sekundovy limit a reaguje na stop/auth/renewal.
+Overena plna event fronta pri stop/sign-out, pomaly handshake az po expiraci,
+malformed i oversized frame, ukonceny consumer a skutecne zablokovany duplex
+transport. Cely workspace ma lokalne 66 passing Rust testu; pred oznacenim
+CI za uspesne je nutne overit novy Windows i Linux beh.

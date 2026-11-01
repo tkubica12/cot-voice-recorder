@@ -32,6 +32,10 @@ Implemented:
   buffers/messages and event backpressure, proactive URL renewal, ping/pong,
   suspend/resume/reconnect/stop controls and auth-change cancellation.
   Reconnect backoff preserves the existing 50%-100% jitter and 60-second cap.
+- Direct WebSocket fault tests cover absolute URL renewal even after a slow
+  handshake, full-channel stop/sign-out, malformed/oversized frames, consumer
+  shutdown and a non-reading transport. Ping/pong writes have a three-second
+  deadline and remain cancellable by auth/control/renewal.
 - Compatible history JSON, 48-hour retention, newest-first 200-entry bounds and
   replace-by-transcript-ID behavior. The native history store persists atomically
   and surfaces corrupt data without discarding the file.
