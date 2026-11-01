@@ -6,6 +6,7 @@ using System.Text.Json.Serialization;
 using VoicePrompt.Core.Auth;
 using VoicePrompt.Core.Dictation;
 using VoicePrompt.Core.Infrastructure;
+using VoicePrompt.Core.History;
 using VoicePrompt.Core.Realtime;
 
 try
@@ -14,7 +15,23 @@ try
     Console.OpenStandardInput().CopyTo(input);
     var pcm = input.ToArray();
     using var output = new BinaryWriter(Console.OpenStandardOutput());
-    if (args.Length == 2 && args[0] is "cache-save" or "cache-load" or "cache-clear")
+    if (args.Length == 2 && args[0] is "history-add" or "history-load")
+    {
+        var store = new HistoryStore(args[1], PhysicalFileSystem.Instance, SystemClock.Instance);
+        if (args[0] == "history-add")
+        {
+            var entries = JsonSerializer.Deserialize<List<HistoryEntry>>(pcm)
+                ?? throw new InvalidDataException("Invalid history fixture.");
+            if (entries.Count != 1) throw new InvalidDataException("Expected one history fixture.");
+            store.Add(entries[0]);
+        }
+        else
+        {
+            output.Write(JsonSerializer.SerializeToUtf8Bytes(store.All(),
+                new JsonSerializerOptions { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull }));
+        }
+    }
+    else if (args.Length == 2 && args[0] is "cache-save" or "cache-load" or "cache-clear")
     {
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("Token-store reference requires Windows.");

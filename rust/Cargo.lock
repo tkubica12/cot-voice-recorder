@@ -1251,6 +1251,7 @@ version = "0.1.0"
 name = "voiceprompt-windows-pilot"
 version = "0.1.0"
 dependencies = [
+ "time",
  "voiceprompt-client-protocol",
  "windows",
 ]

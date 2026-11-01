@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
@@ -28,6 +28,36 @@ def run(command: list[str], data: bytes = b"") -> subprocess.CompletedProcess[by
 
 
 class ClientParityTests(unittest.TestCase):
+    def test_native_history_files_are_compatible_with_csharp(self) -> None:
+        now = datetime.now(UTC).isoformat()
+        with tempfile.TemporaryDirectory(prefix="VoicePrompt-history-parity-") as directory:
+            path = Path(directory).joinpath("history.json")
+            fixture = [
+                {
+                    "transcript_id": "fixture",
+                    "recording_id": "r",
+                    "preview": "synthetic",
+                    "body": "synthetic body",
+                    "raw_body": "synthetic original",
+                    "completed_at": now,
+                    "cached_at": now,
+                    "character_count": 14,
+                }
+            ]
+            for writer, reader in [
+                ([str(PILOT), "--history-add"], ["dotnet", str(REFERENCE), "history-load"]),
+                (["dotnet", str(REFERENCE), "history-add"], [str(PILOT), "--history-load"]),
+            ]:
+                saved = run([*writer, str(path)], payload(fixture))
+                self.assertEqual(saved.returncode, 0, saved.stderr)
+                loaded = run([*reader, str(path)])
+                self.assertEqual(loaded.returncode, 0, loaded.stderr)
+                entries = json.loads(loaded.stdout)
+                self.assertEqual(len(entries), 1)
+                self.assertEqual(entries[0]["body"], "synthetic body")
+                self.assertEqual(entries[0]["raw_body"], "synthetic original")
+                self.assertEqual(list(Path(directory).iterdir()), [path])
+
     def compare(self, mode: str, data: bytes, *, is_json: bool = True) -> None:
         rust = run([str(CLIENT), mode], data)
         csharp = run(["dotnet", str(REFERENCE), mode], data)

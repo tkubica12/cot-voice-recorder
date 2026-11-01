@@ -16,6 +16,7 @@ unsafe_op_in_unsafe_fn = "deny"
 
 [dependencies]
 voiceprompt-client-protocol = { path = "../client-protocol" }
+time = { version = "=0.3.45", features = ["serde-well-known", "parsing", "formatting"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.2", features = [

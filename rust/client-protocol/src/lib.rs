@@ -1,5 +1,6 @@
 pub mod api;
 pub mod auth;
+pub mod history;
 pub mod loopback;
 pub mod network;
 pub mod realtime;

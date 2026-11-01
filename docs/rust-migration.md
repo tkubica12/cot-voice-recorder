@@ -19,6 +19,7 @@ zustat u klasicke ACA; na ACA Express se v teto migraci neprechazi.
 | CI nativniho inkrementu | Windows i Linux prosly na commitu `4b040a8` |
 | OAuth/token-store/PubSub klient | Kontrakty, encrypted cache, HTTP/auth, negotiate/fetch a WebSocket transport implementovany; zbyva native UI a clipboard/history integrace |
 | Diktovani/recovery UI | Zatim neprepsano |
+| History cache | JSON/retence/200 entries a atomicka native persistence implementovany; C# file parity overena; zbyva UI a clipboard pipeline |
 | Rust cloud API, worker, cleanup | Zatim neprepsano |
 | Hosting | Klasicka ACA zustava: API, KEDA queue worker a hourly cleanup Job; Express byl uzivatelem zrusen |
 
@@ -385,3 +386,9 @@ ID tokenem, structured RFC 9457 problem details, terminal 403, bounded 5xx retry
 a presne jeden refresh po 401. Tyto vetve jsou overene proti lokalnim HTTP
 fixturem; malformed success payload neni akceptovan jako hotovy transcript.
 Neni to produkcni ani kompletni client/cloud end-to-end overeni.
+
+History cache nyni zachovava C# JSON pole, original/final text, 48hodinovou
+retenci, newest-first limit 200 a replace-by-ID. Nativni atomicky zapis a
+obousmerna kompatibilita souboru jsou overeny syntetickymi fixturemi proti
+skutecnemu C# HistoryStore. Pause/dictation-busy/audit-source policy neprovadi
+autocopy. Zbyva navazujici clipboard adapter, coordinator a kompletni UI.

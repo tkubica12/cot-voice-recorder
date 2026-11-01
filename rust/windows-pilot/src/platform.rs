@@ -229,6 +229,88 @@ pub struct EncryptedTokenStore {
     path: PathBuf,
 }
 
+pub struct NativeHistoryStore {
+    path: PathBuf,
+    gate: std::sync::Mutex<()>,
+}
+
+impl NativeHistoryStore {
+    pub fn new(path: PathBuf) -> Result<Self, NativeError> {
+        if path.file_name() != Some(OsStr::new("history.json")) {
+            return Err(NativeError::InvalidArgument(
+                "History must use an explicit history.json path.",
+            ));
+        }
+        Ok(Self {
+            path,
+            gate: std::sync::Mutex::new(()),
+        })
+    }
+
+    fn read(&self) -> Result<Vec<voiceprompt_client_protocol::history::HistoryEntry>, NativeError> {
+        let file = match std::fs::File::open(&self.path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(NativeError::Io("open history cache", error)),
+        };
+        let mut data = Vec::new();
+        file.take((voiceprompt_client_protocol::history::MAX_HISTORY_BYTES + 1) as u64)
+            .read_to_end(&mut data)
+            .map_err(|error| NativeError::Io("read history cache", error))?;
+        voiceprompt_client_protocol::history::parse_history(&data).map_err(NativeError::Protocol)
+    }
+
+    pub fn all(
+        &self,
+        now: time::OffsetDateTime,
+    ) -> Result<Vec<voiceprompt_client_protocol::history::HistoryEntry>, NativeError> {
+        let _guard = self
+            .gate
+            .lock()
+            .map_err(|_| NativeError::Verification("History cache lock is poisoned."))?;
+        Ok(voiceprompt_client_protocol::history::live_entries(
+            self.read()?,
+            now,
+        ))
+    }
+
+    pub fn add(
+        &self,
+        entry: voiceprompt_client_protocol::history::HistoryEntry,
+        now: time::OffsetDateTime,
+    ) -> Result<(), NativeError> {
+        let _guard = self
+            .gate
+            .lock()
+            .map_err(|_| NativeError::Verification("History cache lock is poisoned."))?;
+        let entries = voiceprompt_client_protocol::history::add_entry(self.read()?, entry, now);
+        atomic_write(
+            &self.path,
+            &voiceprompt_client_protocol::history::encode_history(&entries)?,
+            WriteMode::Replace,
+        )
+    }
+
+    pub fn cleanup(&self, now: time::OffsetDateTime) -> Result<usize, NativeError> {
+        let _guard = self
+            .gate
+            .lock()
+            .map_err(|_| NativeError::Verification("History cache lock is poisoned."))?;
+        let before = self.read()?;
+        let count = before.len();
+        let live = voiceprompt_client_protocol::history::live_entries(before, now);
+        let removed = count - live.len();
+        if removed > 0 {
+            atomic_write(
+                &self.path,
+                &voiceprompt_client_protocol::history::encode_history(&live)?,
+                WriteMode::Replace,
+            )?;
+        }
+        Ok(removed)
+    }
+}
+
 impl voiceprompt_client_protocol::runtime::TokenPersistence for EncryptedTokenStore {
     type Error = NativeError;
     fn load(&self) -> Result<Option<CachedTokens>, Self::Error> {

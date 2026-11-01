@@ -7,6 +7,31 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     use voiceprompt_windows_pilot::{TrayOptions, protect, request_quit, run_tray, unprotect};
 
     let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    if args.len() == 2 && matches!(args[0].to_str(), Some("--history-add" | "--history-load")) {
+        use voiceprompt_client_protocol::history::{
+            MAX_HISTORY_BYTES, encode_history, parse_history,
+        };
+        use voiceprompt_windows_pilot::NativeHistoryStore;
+        let store = NativeHistoryStore::new(PathBuf::from(&args[1]))?;
+        let now = time::OffsetDateTime::now_utc();
+        if args[0] == "--history-add" {
+            let mut data = Vec::new();
+            std::io::stdin()
+                .lock()
+                .take((MAX_HISTORY_BYTES + 1) as u64)
+                .read_to_end(&mut data)?;
+            let mut entries = parse_history(&data)?;
+            if entries.len() != 1 {
+                return Err("History fixture must contain exactly one entry.".into());
+            }
+            store.add(entries.remove(0), now)?;
+        } else {
+            std::io::stdout()
+                .lock()
+                .write_all(&encode_history(&store.all(now)?)?)?;
+        }
+        return Ok(());
+    }
     if args.len() == 2
         && matches!(
             args[0].to_str(),

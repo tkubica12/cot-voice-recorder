@@ -31,6 +31,11 @@ Implemented:
   buffers/messages and event backpressure, proactive URL renewal, ping/pong,
   suspend/resume/reconnect/stop controls and auth-change cancellation.
   Reconnect backoff preserves the existing 50%-100% jitter and 60-second cap.
+- Compatible history JSON, 48-hour retention, newest-first 200-entry bounds and
+  replace-by-transcript-ID behavior. The native history store persists atomically
+  and surfaces corrupt data without discarding the file.
+- Delivery policy preserving pause, dictation-busy suppression and the
+  `windows_dictation` audit source's no-autocopy rule.
 
 Token/config/PKCE/claims/frame Debug output is redacted. Parsing errors do not
 embed input bodies. Invalid callback security fields, config endpoints, JWT
