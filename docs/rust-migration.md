@@ -465,3 +465,16 @@ Rustem znovu zapsany DPAPI manifest cte skutecny C# RecoveryStore se stejnym
 snapshotem. Synteticke v1/v2 take ctou oba a po upgrade zustava stejny snapshot.
 Corrupt input nezmeni puvodni file. Zadny test nepouzil osobni recovery/audio,
 Google nebo systemovy clipboard. Recovery codec neni plny Recovery E2E.
+
+Recovery codec a navazujici opravy jsou pushnuty jako `9b25162`.
+[Rust CI](https://github.com/tkubica12/cot-voice-recorder/actions/runs/41330838670)
+proslo na Windows i Linuxu, vcetne Windows OAuth/settings/history/DPAPI a nove
+recovery v1-v4 parity. Testove race i modalni fixture problem z predchozich dvou
+behu jsou opravene a potvrzene timto naslednym CI; neuspesne behy zustavaji
+v historii a nejsou vydavany za success.
+
+Nejblizsi aktivni prace: quota-aware native recovery journal s root ownership,
+active journal guards, atomickymi checkpointy a publication-before-delete;
+potom live/legacy dictation engines, capture/hotkey/overlay/paste a audit outbox.
+Rust cloud API/worker/cleanup, kompletni UI/installer a feature-matched C01-C04
+jsou stale nedokoncene. Zadny neprovedeny real-world check neni `PASS`.
