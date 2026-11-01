@@ -28,6 +28,12 @@ pub struct RecoveryChunk {
     pub end_byte: u64,
 }
 
+pub struct AudioCheckpoint<'a> {
+    pub wav: &'a [u8],
+    pub overlaps_previous: bool,
+    pub end_byte: u64,
+}
+
 #[derive(Clone)]
 pub struct AuditCheckpoint {
     pub text: String,
@@ -101,6 +107,102 @@ fn text_bound(text: &str, maximum: usize) -> Result<(), ProtocolError> {
 }
 
 impl RecoveryManifest {
+    pub fn create(
+        language: String,
+        context: String,
+        streaming: bool,
+        now_ticks: i64,
+    ) -> Result<Self, ProtocolError> {
+        let mut bytes = [0; 16];
+        getrandom::fill(&mut bytes).map_err(|_| ProtocolError::RandomUnavailable)?;
+        bytes[6] = (bytes[6] & 0x0f) | 0x40;
+        bytes[8] = (bytes[8] & 0x3f) | 0x80;
+        let id = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+        let manifest = Self {
+            id,
+            created_at_ticks: now_ticks,
+            updated_at_ticks: now_ticks,
+            language,
+            context,
+            streaming,
+            captured_bytes: 0,
+            tail: Vec::new(),
+            capture_complete: false,
+            chunks: Vec::new(),
+            confirmed_bytes: 0,
+            confirmed_text: String::new(),
+            used_streaming: false,
+            used_fallback: false,
+            last_segment_words: 0,
+            audit: None,
+        };
+        manifest.validate()?;
+        Ok(manifest)
+    }
+
+    pub fn checkpoint(
+        &self,
+        tail: &[u8],
+        captured_bytes: u64,
+        audio: &[AudioCheckpoint<'_>],
+        complete: bool,
+        now_ticks: i64,
+    ) -> Result<Self, ProtocolError> {
+        self.validate()?;
+        if self.capture_complete
+            || captured_bytes < self.captured_bytes
+            || captured_bytes > MAX_CAPTURED_BYTES
+            || tail.len() > MAX_TAIL_BYTES
+            || audio.len() > MAX_CHUNKS - self.chunks.len()
+            || !(0..=MAX_TICKS).contains(&now_ticks)
+        {
+            return Err(invalid());
+        }
+        let mut next = self.clone();
+        next.tail.fill(0);
+        next.tail = tail.to_vec();
+        next.captured_bytes = captured_bytes;
+        next.capture_complete = complete;
+        next.updated_at_ticks = next.updated_at_ticks.max(now_ticks);
+        for audio in audio {
+            let chunk = RecoveryChunk {
+                index: next.chunks.len() as u32,
+                overlaps_previous: audio.overlaps_previous,
+                text: None,
+                audio_bytes: u32::try_from(audio.wav.len()).map_err(|_| ProtocolError::TooLarge)?,
+                digest: Sha256::digest(audio.wav).into(),
+                end_byte: audio.end_byte,
+            };
+            chunk.verify_audio(audio.wav)?;
+            next.chunks.push(chunk);
+        }
+        next.validate()?;
+        Ok(next)
+    }
+
+    pub fn commit_legacy_result(
+        &mut self,
+        index: u32,
+        text: String,
+        now_ticks: i64,
+    ) -> Result<bool, ProtocolError> {
+        self.validate()?;
+        text_bound(&text, MAX_TEXT_BYTES)?;
+        if self.streaming || !(0..=MAX_TICKS).contains(&now_ticks) {
+            return Err(invalid());
+        }
+        let chunk = self.chunks.get_mut(index as usize).ok_or_else(invalid)?;
+        match &chunk.text {
+            Some(previous) if previous != &text => {
+                return Err(ProtocolError::InvalidField("conflicting recovery result"));
+            }
+            Some(_) => return Ok(false),
+            None => chunk.text = Some(text),
+        }
+        self.updated_at_ticks = self.updated_at_ticks.max(now_ticks);
+        Ok(true)
+    }
+
     pub fn parse(data: &[u8], id: &str) -> Result<Self, ProtocolError> {
         if data.len() > MAX_MANIFEST_BYTES {
             return Err(ProtocolError::TooLarge);

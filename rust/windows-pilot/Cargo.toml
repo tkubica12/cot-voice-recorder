@@ -20,6 +20,9 @@ time = { version = "=0.3.45", features = ["serde-well-known", "parsing", "format
 tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "sync", "time"] }
 url = "2.5.8"
 
+[dev-dependencies]
+voiceprompt-core = { path = ".." }
+
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.2", features = [
     "Win32_Foundation",

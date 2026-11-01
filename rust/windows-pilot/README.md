@@ -115,9 +115,31 @@ backend\.venv\Scripts\python.exe rust\windows-pilot\tests\test_recovery_parity.p
   --reference rust\tests\reference\bin\Release\net8.0\ReferenceAudio.dll
 ```
 
-Recovery root quota/staging accounting, active journal fencing, durable checkpoint
-publication/deletion ordering, streaming/fallback sessions, outbox upload and native
-Recovery UI remain to be ported. Codec parity must not be reported as recovery E2E.
+`NativeRecoveryStore` now implements the real durable journal separately from
+those codec hooks. A zero-byte `writer.lock` uses Windows share mode zero for
+cross-process/session exclusion; stores in the same process share one root gate.
+Only one active journal owner is allowed per ID. All mutations reread the latest
+manifest under that gate. Root quota is 256 MiB by default and includes orphan
+files, previous targets and staging space. Confirmations publish before audio
+deletion; same-text legacy retries do not need another manifest publication.
+Cleanup uses the original strict `>48 h` updated-at boundary and preserves active
+or unreadable sessions. Deletion refuses nested directories before deleting files.
+
+Eight native tests cover reopen/sample parity, quota failure before publication,
+orphan accounting, confirmation failure without audio deletion, concurrent capture
+and result updates, active ownership, corruption and retention. The external suite
+also exercises two actual writer processes and real Windows junction rejection
+before read/write/delete. Native-created journals reopen through actual C# Core;
+C# v1-v4 fixtures also open through the full native store.
+
+The extra root lock file contains no data and is ignored by legacy C# directory
+listing. C# **does not cooperate with this new writer lock**: cutover still requires
+verified application single-instance/upgrade coordination, and two real engines
+must never share the same root. Tests use sequential C#/Rust inspection of isolated
+fixtures, not overlapping capture engines.
+
+Streaming/fallback sessions, outbox upload and native Recovery UI remain to be
+ported and wired. Journal/parity checks are not complete dictation E2E.
 
 The desktop-only lifecycle runner uses temporary synthetic caches. Its self-test
 disables both OAuth configuration and the real clipboard and checks hidden startup

@@ -51,7 +51,9 @@ Implemented:
   verification, confirmed cursor transitions and fixed audit completion.
   Old v1/v2 unknown cursors are preserved; new output uses v3 or v4.
   Streaming gaps/overlap/odd cursors, malformed lengths/flags and conflicting
-  confirmations/audits are rejected. This is not a durable journal or dictation engine.
+  confirmations/audits are rejected. Checkpoint planning validates before native
+  audio publication. The native crate now supplies the durable journal; dictation
+  engines and interactive recovery wiring remain separate unfinished work.
 
 Token/config/PKCE/claims/frame Debug output is redacted. Parsing errors do not
 embed input bodies. Invalid callback security fields, config endpoints, JWT

@@ -9,6 +9,109 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    if args.len() == 3 && args[0] == "--recovery-delete-idle-fixture" {
+        use voiceprompt_windows_pilot::{DEFAULT_RECOVERY_QUOTA, NativeRecoveryStore};
+        let store = NativeRecoveryStore::new(PathBuf::from(&args[1]), DEFAULT_RECOVERY_QUOTA)?;
+        store.delete_idle(args[2].to_str().ok_or("Invalid recovery ID encoding.")?)?;
+        return Ok(());
+    }
+    if args.len() == 2 && args[0] == "--recovery-root-lock-fixture" {
+        use voiceprompt_windows_pilot::{DEFAULT_RECOVERY_QUOTA, NativeRecoveryStore};
+        let _owner = NativeRecoveryStore::new(PathBuf::from(&args[1]), DEFAULT_RECOVERY_QUOTA)?;
+        std::io::stdout().lock().write_all(b"ready\n")?;
+        std::io::stdout().lock().flush()?;
+        let (sent, released) = std::sync::mpsc::sync_channel(1);
+        std::thread::spawn(move || {
+            let mut signal = [0; 1];
+            let result = std::io::stdin().lock().read(&mut signal);
+            let _ = sent.send(result);
+        });
+        released.recv_timeout(std::time::Duration::from_secs(10))??;
+        return Ok(());
+    }
+    if args.len() == 3 && args[0] == "--recovery-open-journal-fixture" {
+        use voiceprompt_windows_pilot::{DEFAULT_RECOVERY_QUOTA, NativeRecoveryStore};
+        let store = NativeRecoveryStore::new(PathBuf::from(&args[1]), DEFAULT_RECOVERY_QUOTA)?;
+        let journal = store.open(args[2].to_str().ok_or("Invalid recovery ID encoding.")?)?;
+        let mut plain = journal.snapshot()?.encode()?;
+        let written = std::io::stdout().lock().write_all(&plain);
+        plain.fill(0);
+        written?;
+        return Ok(());
+    }
+    if args.len() == 3 && args[0] == "--recovery-journal-fixture" {
+        use voiceprompt_client_protocol::recovery::{AudioCheckpoint, MAX_AUDIO_BYTES};
+        use voiceprompt_windows_pilot::{DEFAULT_RECOVERY_QUOTA, NativeRecoveryStore};
+        let mode = args[2].to_str().ok_or("Invalid recovery fixture mode.")?;
+        if !matches!(mode, "legacy" | "streaming" | "audit") {
+            return Err("Unknown recovery fixture mode.".into());
+        }
+        let mut wav = Vec::new();
+        std::io::stdin()
+            .lock()
+            .take((MAX_AUDIO_BYTES + 1) as u64)
+            .read_to_end(&mut wav)?;
+        let pcm_bytes = wav
+            .len()
+            .checked_sub(44)
+            .ok_or("Invalid recovery fixture WAV.")? as u64;
+        let store = NativeRecoveryStore::new(PathBuf::from(&args[1]), DEFAULT_RECOVERY_QUOTA)?;
+        let now = time::OffsetDateTime::now_utc();
+        let journal = store.create(
+            "auto".into(),
+            "synthetic context".into(),
+            mode != "legacy",
+            now,
+        )?;
+        let saved = journal.checkpoint(
+            &[],
+            pcm_bytes * 2,
+            &[
+                AudioCheckpoint {
+                    wav: &wav,
+                    overlaps_previous: false,
+                    end_byte: pcm_bytes,
+                },
+                AudioCheckpoint {
+                    wav: &wav,
+                    overlaps_previous: false,
+                    end_byte: pcm_bytes * 2,
+                },
+            ],
+            true,
+            now,
+        );
+        wav.fill(0);
+        saved?;
+        if mode == "legacy" {
+            journal.save_result(0, "synthetic first".into(), now)?;
+        } else {
+            journal.confirm_streaming(
+                pcm_bytes,
+                "synthetic first".into(),
+                vec![0; 100],
+                false,
+                None,
+                now,
+            )?;
+            if mode == "audit" {
+                journal.confirm_streaming(
+                    pcm_bytes * 2,
+                    "synthetic first final".into(),
+                    vec![0; 100],
+                    false,
+                    None,
+                    now,
+                )?;
+                journal.prepare_audit("synthetic polished final".into(), now, true, now)?;
+            }
+        }
+        let mut plain = journal.snapshot()?.encode()?;
+        let written = std::io::stdout().lock().write_all(&plain);
+        plain.fill(0);
+        written?;
+        return Ok(());
+    }
     if args.len() == 2
         && matches!(
             args[0].to_str(),
@@ -215,6 +318,10 @@ fn main() {
                         | "--quit"
                         | "--recovery-save-fixture"
                         | "--recovery-load-fixture"
+                        | "--recovery-root-lock-fixture"
+                        | "--recovery-journal-fixture"
+                        | "--recovery-open-journal-fixture"
+                        | "--recovery-delete-idle-fixture"
                 )
             )
         });

@@ -18,7 +18,7 @@ zustat u klasicke ACA; na ACA Express se v teto migraci neprechazi.
 | Mereni nativniho zakladu | Dokonceno: 30 startu a 301 vzorku za pet minut; vysledky nize |
 | CI nativniho inkrementu | Windows i Linux prosly na commitu `4b040a8` |
 | OAuth/token-store/PubSub klient | Explicit-path native sign-in/out, realtime status a coordinator/history/clipboard integrace implementovany; skutecny Google/clipboard E2E zbyva |
-| Diktovani/recovery UI | Recovery v1-v4 codec/cursor/audit invariants a DPAPI/C# parity implementovany; durable journal, capture/enginy a UI zbyvaji |
+| Diktovani/recovery UI | Recovery v1-v4 codec, durable journal, quota/ownership a DPAPI/C# parity implementovany; capture/enginy, outbox upload a UI zbyvaji |
 | History cache | JSON/retence/200 entries, atomicka persistence, native list/text a manual copy latest/selected/original implementovany; C# file parity overena |
 | Settings | Vsechna aktualni C# JSON pole a obousmerna file parity; nativne zatim pouze pause, ne kompletni Settings UI ani autostart |
 | Rust cloud API, worker, cleanup | Zatim neprepsano |
@@ -478,3 +478,32 @@ active journal guards, atomickymi checkpointy a publication-before-delete;
 potom live/legacy dictation engines, capture/hotkey/overlay/paste a audit outbox.
 Rust cloud API/worker/cleanup, kompletni UI/installer a feature-matched C01-C04
 jsou stale nedokoncene. Zadny neprovedeny real-world check neni `PASS`.
+
+## Native recovery journal
+
+`NativeRecoveryStore` nyni implementuje create/open/checkpoint, verified read,
+legacy result, streaming confirmation, frozen audit, list, scoped delete a cleanup.
+Root ma OS-exclusive zero-byte `writer.lock`; stejny process sdili gate, journal
+ma jedineho aktivniho vlastnika. Snapshot neni zdroj nasledneho prepisu: kazda
+mutace pod gate znovu cte aktualni manifest. Pri soubehu capture a result update
+se neztrati nove chunks ani jiz potvrzeny text.
+
+Quota zahrnuje stary target, orphan/unpublished files i prave zapisovane staging.
+Test meri skutecne DPAPI ciphertext sizes a vyvola chybu o jediny byte pred
+manifest publication: novy audio orphan zustane, stary manifest je stejny a
+nasledny retry presne obnovi vzorky. Pri selhani confirmation publication se
+pending audio nesmaze. Po uspesne publication se mazou jen fully confirmed
+audio files; stejne legacy result retry je idempotentni i bez dalsiho zapisu.
+
+Cleanup zachovava source semantiku `>48 h` od updated-at, aktivni a unreadable
+journals vynechava. Delete ma flat-layout preflight a odmitne nested directory
+pred jakymkoliv smazanim. Realne Windows junction fixtures potvrdily odmitnuti
+read/write/delete bez zmeny cilovych dat. Vlastnictvi rootu je overeno dvema
+skutecnymi native procesy; po graceful uvolneni muze navazat novy owner.
+
+Osm novych native testu proslo, stejne jako rozsirenych sedm recovery
+compatibility/fault skupin. Rustem vytvorene legacy/streaming/audit journals cte
+skutecny C# store a plny native store cte C# v1-v4 fixtures. C# ale novy
+writer.lock nerespektuje: testy nezpracovavaji recording soubezne dvema enginy.
+Skutecny cutover vyzaduje budoucni application single-instance/installer parity.
+Native tray zatim nezachytava mikrofon a journal do dictation UI neni zapojen.

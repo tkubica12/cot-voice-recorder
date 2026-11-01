@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import hashlib
 import json
+import os
 import struct
 import subprocess
 import tempfile
@@ -56,6 +58,157 @@ def legacy(version: int, audio: bytes) -> bytes:
 
 
 class RecoveryParityTests(unittest.TestCase):
+    def test_junctions_are_rejected_before_read_write_or_delete(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="VoicePrompt-recovery-junction-"
+        ) as directory:
+            root = Path(directory).joinpath("root")
+            target = Path(directory).joinpath("target")
+            root.mkdir()
+            target.mkdir()
+            sentinel = target.joinpath("manifest.enc")
+            sentinel.write_bytes(b"synthetic sentinel must not be changed")
+            junction = root.joinpath(ID)
+            environment = dict(os.environ)
+            environment["VOICEPROMPT_FIXTURE_LINK"] = str(junction)
+            environment["VOICEPROMPT_FIXTURE_TARGET"] = str(target)
+            created = subprocess.run(
+                [
+                    "powershell.exe",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    (
+                        "$ErrorActionPreference='Stop'; "
+                        "New-Item -ItemType Junction -Path $env:VOICEPROMPT_FIXTURE_LINK "
+                        "-Target $env:VOICEPROMPT_FIXTURE_TARGET | Out-Null"
+                    ),
+                ],
+                env=environment,
+                capture_output=True,
+                timeout=15,
+                check=False,
+            )
+            self.assertEqual(created.returncode, 0, created.stderr)
+            try:
+                for command, data in [
+                    (
+                        [str(PILOT), "--recovery-open-journal-fixture", str(root), ID],
+                        b"",
+                    ),
+                    (
+                        [str(PILOT), "--recovery-delete-idle-fixture", str(root), ID],
+                        b"",
+                    ),
+                    (
+                        [
+                            str(PILOT),
+                            "--recovery-save-fixture",
+                            str(junction.joinpath("manifest.enc")),
+                        ],
+                        b"corrupt",
+                    ),
+                    (
+                        [str(PILOT), "--recovery-root-lock-fixture", str(junction)],
+                        b"\n",
+                    ),
+                ]:
+                    refused = run(command, data)
+                    self.assertNotEqual(refused.returncode, 0)
+                    self.assertIn(b"reparse", refused.stderr.lower())
+                    self.assertEqual(
+                        sentinel.read_bytes(), b"synthetic sentinel must not be changed"
+                    )
+            finally:
+                junction.rmdir()
+            self.assertTrue(target.is_dir())
+
+    def test_native_durable_journals_are_readable_by_the_actual_csharp_store(
+        self,
+    ) -> None:
+        audio = checked(["dotnet", str(REFERENCE), "wrap"], bytes([1]) * 6400)
+        for mode in ["legacy", "streaming", "audit"]:
+            with (
+                self.subTest(mode=mode),
+                tempfile.TemporaryDirectory(
+                    prefix="VoicePrompt-recovery-native-"
+                ) as directory,
+            ):
+                plain = checked(
+                    [str(PILOT), "--recovery-journal-fixture", directory, mode], audio
+                )
+                sessions = [path for path in Path(directory).iterdir() if path.is_dir()]
+                self.assertEqual(len(sessions), 1)
+                session = sessions[0]
+                current = checked(
+                    ["dotnet", str(REFERENCE), "unprotect"],
+                    session.joinpath("manifest.enc").read_bytes(),
+                )
+                self.assertEqual(plain, current)
+                state = json.loads(
+                    checked(
+                        [
+                            "dotnet",
+                            str(REFERENCE),
+                            "recovery-inspect",
+                            directory,
+                            session.name,
+                        ]
+                    )
+                )
+                self.assertEqual(state["CapturedBytes"], 12800)
+                self.assertEqual(state["Context"], "synthetic context")
+                self.assertEqual(state["Streaming"], mode != "legacy")
+                self.assertTrue(state["CaptureComplete"])
+                self.assertEqual(
+                    state["Chunks"][0]["Text"],
+                    "synthetic first" if mode == "legacy" else "",
+                )
+                if mode == "audit":
+                    self.assertEqual(state["ConfirmedBytes"], 12800)
+                    self.assertEqual(state["AuditText"], "synthetic polished final")
+                    self.assertFalse(session.joinpath("00000001.wav.enc").exists())
+                else:
+                    self.assertIsNone(state["Chunks"][1]["Text"])
+                    self.assertTrue(session.joinpath("00000001.wav.enc").exists())
+                self.assertEqual(
+                    Path(directory).joinpath("writer.lock").stat().st_size, 0
+                )
+
+    def test_writer_ownership_is_enforced_between_real_native_processes(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="VoicePrompt-recovery-lock-"
+        ) as directory:
+            owner = subprocess.Popen(
+                [str(PILOT), "--recovery-root-lock-fixture", directory],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            try:
+                assert owner.stdout is not None
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    ready = executor.submit(owner.stdout.readline).result(timeout=15)
+                self.assertEqual(ready, b"ready\n")
+                self.assertIsNone(owner.poll())
+                refused = run(
+                    [str(PILOT), "--recovery-root-lock-fixture", directory], b"\n"
+                )
+                self.assertNotEqual(refused.returncode, 0)
+                self.assertIn(b"exclusive recovery writer", refused.stderr)
+                _, error = owner.communicate(b"\n", timeout=15)
+                self.assertEqual(owner.returncode, 0, error)
+                self.assertEqual(
+                    checked(
+                        [str(PILOT), "--recovery-root-lock-fixture", directory], b"\n"
+                    ),
+                    b"ready\n",
+                )
+            finally:
+                if owner.poll() is None:
+                    owner.kill()
+                owner.communicate(timeout=15)
+
     def test_actual_csharp_v3_v4_journals_roundtrip_through_rust_byte_exactly(
         self,
     ) -> None:
@@ -90,6 +243,15 @@ class RecoveryParityTests(unittest.TestCase):
                     )
                 )
                 self.assertEqual(before, after)
+                opened = checked(
+                    [
+                        str(PILOT),
+                        "--recovery-open-journal-fixture",
+                        directory,
+                        before["Id"],
+                    ]
+                )
+                self.assertEqual(opened, original_plain)
                 self.assertFalse(any(path.parent.glob("*.tmp")))
                 self.assertNotIn(b"synthetic", path.read_bytes())
 
@@ -130,6 +292,10 @@ class RecoveryParityTests(unittest.TestCase):
                     )
                 )
                 self.assertEqual(before, after)
+                opened = checked(
+                    [str(PILOT), "--recovery-open-journal-fixture", directory, ID]
+                )
+                self.assertEqual(opened, latest)
 
     def test_corrupt_plaintext_never_replaces_the_existing_encrypted_manifest(
         self,

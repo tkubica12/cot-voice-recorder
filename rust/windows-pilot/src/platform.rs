@@ -256,6 +256,23 @@ pub struct NativeRecoveryManifestStore {
     id: String,
 }
 
+pub(crate) fn guard_recovery_path(path: &Path) -> Result<(), NativeError> {
+    use std::os::windows::fs::MetadataExt;
+    for path in path.ancestors() {
+        match std::fs::symlink_metadata(path) {
+            Ok(metadata) if metadata.file_attributes() & 0x400 != 0 => {
+                return Err(NativeError::Verification(
+                    "Recovery reparse points are not supported.",
+                ));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(NativeError::Io("inspect recovery path", error)),
+        }
+    }
+    Ok(())
+}
+
 impl NativeRecoveryManifestStore {
     pub fn new(path: PathBuf) -> Result<Self, NativeError> {
         let id = path
@@ -276,20 +293,7 @@ impl NativeRecoveryManifestStore {
     }
 
     fn guard(&self) -> Result<(), NativeError> {
-        use std::os::windows::fs::MetadataExt;
-        for path in self.path.ancestors() {
-            match std::fs::symlink_metadata(path) {
-                Ok(metadata) if metadata.file_attributes() & 0x400 != 0 => {
-                    return Err(NativeError::Verification(
-                        "Recovery reparse points are not supported.",
-                    ));
-                }
-                Ok(_) => {}
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                Err(error) => return Err(NativeError::Io("inspect recovery path", error)),
-            }
-        }
-        Ok(())
+        guard_recovery_path(&self.path)
     }
 
     pub fn load(
@@ -1145,7 +1149,11 @@ fn dispatch(
         WM_COMMAND => {
             let id = wparam.0 & 0xffff;
             let notification = (wparam.0 >> 16) & 0xffff;
-            if id == HISTORY_LIST && notification == LBN_SELCHANGE as usize {
+            if id == 2 && notification == 0 {
+                unsafe {
+                    let _ = ShowWindow(hwnd, SW_HIDE);
+                }
+            } else if id == HISTORY_LIST && notification == LBN_SELCHANGE as usize {
                 show_history_body(hwnd)?;
             } else if notification == BN_CLICKED as usize {
                 client_command(hwnd, id)?;
@@ -1251,12 +1259,12 @@ impl Drop for TemporaryFile {
     }
 }
 
-enum WriteMode {
+pub(crate) enum WriteMode {
     CreateNew,
     Replace,
 }
 
-fn atomic_write(path: &Path, data: &[u8], mode: WriteMode) -> Result<(), NativeError> {
+pub(crate) fn atomic_write(path: &Path, data: &[u8], mode: WriteMode) -> Result<(), NativeError> {
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let mut temporary_name = path.as_os_str().to_owned();
     temporary_name.push(format!(
