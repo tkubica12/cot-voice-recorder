@@ -14,7 +14,8 @@ Android, Azure sluzby a Bicep zustavaji zachovany.
 | Audio jadro a C#/Python parity | Implementovano a overeno |
 | Zdroj externich crates | crates.io vyslovne schvalene jako projektova vyjimka |
 | Nativni Windows zaklad | Tray, izolovana instance a DPAPI implementovany; lokalni self-test a C# DPAPI parity prosly |
-| Mereni nativniho zakladu | Pripraveny collector; kontrolovane mereni probiha v teto etape |
+| Mereni nativniho zakladu | Dokonceno: 30 startu a 301 vzorku za pet minut; vysledky nize |
+| CI nativniho inkrementu | Windows i Linux prosly na commitu `4b040a8` |
 | Google/PubSub/diktovani/recovery UI | Zatim neprepsano |
 | Rust cloud API, worker, cleanup | Zatim neprepsano |
 
@@ -192,7 +193,8 @@ Autoritativni podklady: `openapi\voice-recorder.yaml`,
 Preflight musi overit Rust/MSVC, Linuxove merici prostredi, schvaleny Cargo
 registry pro externi zavislosti a minimalni lokalni pruchod.
 Soucasne testy jsou katalog ocekavaneho chovani; jejich pruchod proti C#/FastAPI
-neoveruje Rust. Schvaleny zdroj externich Rust zavislosti zustava otevreny.
+neoveruje Rust. Zdroj externich Rust zavislosti je nyni schvaleny crates.io
+prostrednictvim vyslovne projektove vyjimky uvedene v aktivaci.
 
 Referencni prikazy z komponent:
 
@@ -285,3 +287,40 @@ Mereni nativniho zakladu pouziva oddelene procesy a explicitni readiness
 marker. Neslouzi jako dukaz H1: chybi Google/PubSub, mikrofon/streaming,
 recovery, audit outbox a kompletni UI. Po techto portech je potreba zopakovat
 ferove porovnani proti stejnym C# scenarum.
+
+## Vysledky omezeneho nativniho inkrementu
+
+Kod nativniho inkrementu je commit `4b040a8`, pushnuty do `refactor-rust`.
+[Rust CI](https://github.com/tkubica12/cot-voice-recorder/actions/runs/41312664282)
+uspesne dokoncilo Windows i Linux job; Windows zahrnuje C# DPAPI parity.
+
+Collector provedl 30 novych procesu a potom 301 vzorku po dobu 299.99 sekund.
+Kazdy proces mel vlastni instance key, overeny PID a atomicky publikovanou
+readiness po inicializaci tray a syntetickem DPAPI health checku.
+
+| Metrika | Nativni zaklad bez auth/ASR |
+| --- | --- |
+| Prumerny start procesu -> pozorovana tray/DPAPI readiness | 118.22 ms |
+| p95 startu, nearest-rank, 30 vzorku | 157.68 ms |
+| Prumerny working set | 10.20 MiB |
+| Prumerne private bytes | 1.59 MiB |
+| p95 private bytes | 1.70 MiB |
+| Prumerne CPU jednoho logickeho jadra | 0.0104 % |
+
+Raw podklady jsou `native-foundation-startup.json` a
+`native-foundation-memory.json` v adresari `native-foundation-measurements`
+artefaktu teto relace. Obsahuji scope, source revision, binary hash a vsechny
+vzorky. Nejsou commitovane. Smoke-test collector ma vlastni oddelene podklady.
+
+To jsou vysledky **neuplneho nativniho zakladu**, ne slib spotreby cele aplikace
+a ne ferove srovnani se soucasnym plnohodnotnym C# klientem. Collector tuto
+neporovnatelnost explicitne zaznamenava. Start neobsahuje Google, sit, audio
+nebo cloud a nejde o OS cold-cache benchmark. Plne H1/H2 a C01-C04 zustavaji
+nedokoncene; jejich prahy se nemeni.
+
+Vsechny vlastni merene procesy skoncily graceful, readiness/staging soubory
+byly uklizeny a puvodni VoicePrompt zustal spusteny. Pilot nebyl ponechan
+na pozadi jako bezici recorder nebo autonomni migration loop.
+Nasleduje port OAuth/token-store JSON a realtime klienta do izolovaneho stavu,
+potom zachycovani/streaming, durable recovery a audit. Cloudove etapy zustavaji
+navazujici praci; produkcni nasazeni neni schvalene.
