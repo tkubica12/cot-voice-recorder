@@ -21,7 +21,7 @@ zustat u klasicke ACA; na ACA Express se v teto migraci neprechazi.
 | Diktovani/recovery UI | Native microphone/hotkeys/overlay/paste controller, oba enginy, journal, polishing a outbox implementovany; real-world a rozsahlejsi fault/E2E akceptace zbyva |
 | History cache | JSON/retence/200 entries, atomicka persistence, native list/text a manual copy latest/selected/original implementovany; C# file parity overena |
 | Settings a instalator | Vsechna C# JSON pole, nativni Settings/History/Recovery, DPI fonty, per-user autostart a kompatibilni IPC; installer sestaven, nebyl instalovan |
-| Rust cloud API, worker, cleanup | OIDC/JWKS, UAMI, REST/CAS, service/router, batch AI/refinement/PubSub a live MAI relay implementovany; worker, cleanup, bootstrap a uplna akceptace zbyvaji |
+| Rust cloud API, worker, cleanup | API/AI/PubSub/live relay a leased continuous processor implementovany; legacy pipeline/finalization, queue loop, cleanup, bootstrap a uplna akceptace zbyvaji |
 | Hosting | Klasicka ACA zustava: API, KEDA queue worker a hourly cleanup Job; Express byl uzivatelem zrusen |
 
 Nativni zaklad neni kompletni klient. Jeho rychlost a pamet nelze porovnat
@@ -759,3 +759,37 @@ HTTP scenaru), locked release/fmt/Clippy a ctyri actual C#/Python audio parity
 skupiny. Predchozi live-relay commit 1ae68df ma potvrzene oba Rust CI OS a
 backend CI. Azure ani placeny model nebyly pouzity. Na produkcnich recordings
 se zadny alternate engine nespousti.
+
+## Continuous replay processor a queue receipts
+
+Rust continuous processor nyni spojuje durable upload windows do jednoho MAI
+streamu, packetuje presne640B PCM a zachovava configured 1..8x replay pacing,
+poll/idle/heartbeat/session limits. Failure zacina dalsi pokus od sample0,
+ne od ACK/hypothesis ani predchoziho streamed_samples. Po poslednim durable
+segmentu vysila jediny commit; source samples nevklada jako silence a model
+mezi segmenty neresetuje.
+
+Tri tasky obsluhuji audio, transcript a recording/queue heartbeat. Shutdown/fault
+zastavi dalsi work a pripoji rozbehnute persistence/receipt mutations pred
+release; fyzicky in-flight write se neschova za cancellation. Pouze final
+completed text po EOF muze dostat unique owner raw path a owned-CAS asr_ready.
+Late owner/queue receipt loss nesmi publikovat hotovy recording.
+
+Queue ports nyni maji real Azure receive/renew/delete a odpovidajici memory
+visibility/redelivery model. Receive vraci jediny message. QueueReceipt serializuje
+renew/delete a persistuje vzdy novy pop receipt; stale delete neodstrani
+message prevzaty nastupcem, outage zustava explicitni. Upstream sender je
+serializovany a oddeleny od receiveru, aby heartbeat/audio/text behy neblokovaly
+cteni modelu neomezene.
+
+Proslo 178 workspace testu (62 cloud), locked release/fmt/Clippy. Ctyri socket
+processor testy overuji failed-attempt full replay, exact contiguous samples,
+legacy stride456000/max480000 bez duplicate/silence/reset, stop pri chybejicim
+uploadu a lease takeover. Ctyri queue testy overuji visibility, redelivery,
+receipt rotation, concurrency a outage. Predchozi 0bdb5ab ma potvrzene
+Windows/Linux Rust CI i backend CI; dalsi inkrement ma vlastni CI check.
+
+To neni kompletni QueueWorker/CLI ani finalization/cleanup. Legacy chunked engine,
+durable finalization/notification, cleanup/orphans, bootstrap/container wiring,
+full distributed faults a feature-matched/human acceptance nadale zbyvaji.
+Nevykonano zadne produkcni nasazeni ani placene AI.

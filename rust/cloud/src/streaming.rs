@@ -1,6 +1,7 @@
 use crate::config::Config;
 use crate::identity::ManagedIdentity;
 use crate::problem::Problem;
+use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
 use std::sync::Arc;
@@ -20,7 +21,12 @@ pub struct MaiStreamingProvider {
     identity: Arc<ManagedIdentity>,
 }
 pub struct Upstream {
-    socket: Socket,
+    sender: UpstreamSender,
+    stream: SplitStream<Socket>,
+}
+#[derive(Clone)]
+pub struct UpstreamSender {
+    sink: Arc<tokio::sync::Mutex<SplitSink<Socket, Message>>>,
 }
 fn interrupted() -> Problem {
     Problem::unavailable("MAI streaming interrupted; no partial text is confirmed.")
@@ -87,7 +93,13 @@ impl MaiStreamingProvider {
         .await
         .map_err(|_| interrupted())?
         .map_err(|_| interrupted())?;
-        let mut upstream = Upstream { socket };
+        let (sink, stream) = socket.split();
+        let mut upstream = Upstream {
+            sender: UpstreamSender {
+                sink: Arc::new(tokio::sync::Mutex::new(sink)),
+            },
+            stream,
+        };
         upstream.wait_for("session.created").await?;
         let mut transcription = serde_json::json!({"model":self.deployment});
         if language != "auto" {
@@ -120,25 +132,18 @@ impl Upstream {
         .map_err(|_| interrupted())?
     }
     pub async fn send(&mut self, event: Value) -> Result<(), Problem> {
-        let data = serde_json::to_string(&event).map_err(|_| Problem::internal())?;
-        if data.len() > MAX_MESSAGE_BYTES {
-            return Err(interrupted());
-        }
-        self.write(Message::Text(data.into())).await
+        self.sender.send(event).await
     }
-    async fn write(&mut self, message: Message) -> Result<(), Problem> {
-        tokio::time::timeout(Duration::from_secs(3), self.socket.send(message))
-            .await
-            .map_err(|_| interrupted())?
-            .map_err(|_| interrupted())
+    pub fn sender(&self) -> UpstreamSender {
+        self.sender.clone()
     }
     pub async fn recv(&mut self) -> Result<Value, Problem> {
         loop {
-            let data = match self.socket.next().await {
+            let data = match self.stream.next().await {
                 Some(Ok(Message::Text(text))) => text.as_bytes().to_vec(),
                 Some(Ok(Message::Binary(bytes))) => bytes.to_vec(),
                 Some(Ok(Message::Ping(data))) => {
-                    self.write(Message::Pong(data)).await?;
+                    self.sender.write(Message::Pong(data)).await?;
                     continue;
                 }
                 Some(Ok(Message::Pong(_))) => continue,
@@ -152,10 +157,31 @@ impl Upstream {
         }
     }
     pub async fn close(&mut self) -> Result<(), Problem> {
-        tokio::time::timeout(Duration::from_secs(3), self.socket.close(None))
-            .await
-            .map_err(|_| interrupted())?
-            .map_err(|_| interrupted())
+        self.sender.close().await
+    }
+}
+impl UpstreamSender {
+    pub async fn send(&self, event: Value) -> Result<(), Problem> {
+        let data = serde_json::to_string(&event).map_err(|_| Problem::internal())?;
+        if data.len() > MAX_MESSAGE_BYTES {
+            return Err(interrupted());
+        }
+        self.write(Message::Text(data.into())).await
+    }
+    async fn write(&self, message: Message) -> Result<(), Problem> {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            self.sink
+                .lock()
+                .await
+                .send(message)
+                .await
+                .map_err(|_| interrupted())
+        })
+        .await
+        .map_err(|_| interrupted())?
+    }
+    pub async fn close(&self) -> Result<(), Problem> {
+        self.write(Message::Close(None)).await
     }
 }
 

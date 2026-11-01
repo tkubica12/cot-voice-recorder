@@ -3,6 +3,7 @@ pub mod api;
 pub mod audio;
 pub mod auth;
 pub mod config;
+pub mod continuous;
 pub mod domain;
 pub mod edits;
 pub mod gateway;

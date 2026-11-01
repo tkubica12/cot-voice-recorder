@@ -36,6 +36,12 @@ pub struct Config {
     pub webpubsub_ttl_minutes: u32,
     pub dictation_stream_enabled: bool,
     pub recording_stream_lease_seconds: u32,
+    pub recording_stream_replay_speed: f64,
+    pub recording_stream_idle_seconds: f64,
+    pub recording_stream_poll_seconds: f64,
+    pub recording_stream_heartbeat_seconds: f64,
+    pub recording_stream_session_seconds: f64,
+    pub queue_visibility_seconds: u32,
 }
 
 fn endpoint(value: &str, allow_loopback: bool) -> Result<Url, Problem> {
@@ -205,6 +211,31 @@ impl Config {
             recording_stream_lease_seconds: value("VR_RECORDING_STREAM_LEASE_SECONDS", "120")
                 .parse()
                 .map_err(|_| Problem::validation("Invalid recording stream lease duration."))?,
+            recording_stream_replay_speed: value("VR_RECORDING_STREAM_REPLAY_SPEED", "4")
+                .parse()
+                .map_err(|_| {
+                Problem::validation("Invalid recording replay speed.")
+            })?,
+            recording_stream_idle_seconds: value("VR_RECORDING_STREAM_IDLE_SECONDS", "120")
+                .parse()
+                .map_err(|_| Problem::validation("Invalid recording idle duration."))?,
+            recording_stream_poll_seconds: value("VR_RECORDING_STREAM_POLL_SECONDS", "1")
+                .parse()
+                .map_err(|_| {
+                Problem::validation("Invalid recording poll duration.")
+            })?,
+            recording_stream_heartbeat_seconds: value(
+                "VR_RECORDING_STREAM_HEARTBEAT_SECONDS",
+                "20",
+            )
+            .parse()
+            .map_err(|_| Problem::validation("Invalid recording heartbeat duration."))?,
+            recording_stream_session_seconds: value("VR_RECORDING_STREAM_SESSION_SECONDS", "3300")
+                .parse()
+                .map_err(|_| Problem::validation("Invalid recording session duration."))?,
+            queue_visibility_seconds: value("VR_QUEUE_VISIBILITY_SECONDS", "300")
+                .parse()
+                .map_err(|_| Problem::validation("Invalid queue visibility duration."))?,
         };
         for name in [
             &config.hub,
@@ -241,10 +272,38 @@ impl Config {
             || config.transcribe_provider == "azure_speech" && config.speech.is_none()
             || !(1..=1440).contains(&config.webpubsub_ttl_minutes)
             || !(90..=300).contains(&config.recording_stream_lease_seconds)
+            || !(1..=604800).contains(&config.queue_visibility_seconds)
+            || f64::from(config.queue_visibility_seconds)
+                <= config.recording_stream_heartbeat_seconds
         {
             return Err(Problem::validation(
                 "Invalid transcription provider/style/timeout.",
             ));
+        }
+        for (seconds, minimum, maximum) in [
+            (config.recording_stream_replay_speed, 1.0, 8.0),
+            (config.recording_stream_idle_seconds, 1.0, 900.0),
+            (
+                config.recording_stream_poll_seconds,
+                f64::MIN_POSITIVE,
+                10.0,
+            ),
+            (
+                config.recording_stream_heartbeat_seconds,
+                f64::MIN_POSITIVE,
+                30.0,
+            ),
+            (
+                config.recording_stream_session_seconds,
+                f64::MIN_POSITIVE,
+                3300.0,
+            ),
+        ] {
+            if !seconds.is_finite() || seconds < minimum || seconds > maximum {
+                return Err(Problem::validation(
+                    "Recording stream limits must be finite and within supported ranges.",
+                ));
+            }
         }
         Ok(config)
     }
@@ -307,6 +366,26 @@ mod tests {
         for value in ["NaN", "inf", "-1", "0", "bad"] {
             values.insert("VR_SPEECH_TIMEOUT_SECONDS".into(), value.into());
             assert!(Config::parse(&values).is_err(), "{value}");
+        }
+    }
+    #[test]
+    fn continuous_limits_and_queue_visibility_preserve_defaults_and_reject_unsafe_values() {
+        let mut values = valid();
+        let defaults = Config::parse(&values).unwrap();
+        assert_eq!(defaults.recording_stream_replay_speed, 4.0);
+        assert_eq!(defaults.recording_stream_heartbeat_seconds, 20.0);
+        assert_eq!(defaults.queue_visibility_seconds, 300);
+        for (key, value) in [
+            ("VR_RECORDING_STREAM_REPLAY_SPEED", "9"),
+            ("VR_RECORDING_STREAM_POLL_SECONDS", "0"),
+            ("VR_RECORDING_STREAM_HEARTBEAT_SECONDS", "31"),
+            ("VR_RECORDING_STREAM_SESSION_SECONDS", "3301"),
+            ("VR_RECORDING_STREAM_LEASE_SECONDS", "89"),
+            ("VR_QUEUE_VISIBILITY_SECONDS", "10"),
+        ] {
+            values.insert(key.into(), value.into());
+            assert!(Config::parse(&values).is_err(), "{key}");
+            values.remove(key);
         }
     }
 }

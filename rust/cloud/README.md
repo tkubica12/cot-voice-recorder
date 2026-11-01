@@ -31,6 +31,9 @@ Implemented:
 - Continuous recording lease primitives and strict durable PCM/sample replay
   reader. Table write results retain their own response ETag, not a racy
   subsequent GET snapshot. These are not yet the complete running worker.
+- Leased continuous model processor with full durable replay after failure, exact
+  sample/legacy-overlap handling, queue receipt heartbeat and joined shutdown.
+  A separate sequential queue loop, legacy pipeline and finalization are not wired.
 
 Stored domain/entity codecs, strict wire defaults, content-digest/sample validation
 and conditional repository primitives now exist.
@@ -44,12 +47,13 @@ cargo test --manifest-path rust\Cargo.toml --offline --locked -p voiceprompt-clo
 cargo clippy --manifest-path rust\Cargo.toml --workspace --offline --locked --all-targets -- -D warnings
 ```
 
-The 53 direct cloud tests use generated in-memory RSA keys and local HTTP/WebSocket
+The 62 direct cloud tests use generated in-memory RSA keys and local HTTP/WebSocket
 fixtures. They exercise real signature validation, cached JWKS, rejected
 HS256/unsigned/wrong claims, UAMI selection, Table CAS, Queue lease receipts,
 actual HTTP handlers, multipart/provider contracts, physical-call cancellation,
 ordered PCM relay, actual 15-second/30-second timeout boundaries, lease takeover/
-late-publication fencing and exact contiguous/legacy sample replay.
+late-publication fencing, exact contiguous/legacy continuous model replay,
+receipt rotation and graceful producer/heartbeat shutdown.
 No Azure, paid model, production data or credentials are used. These are not
 private-endpoint/UAMI acceptance against the actual cloud.
 

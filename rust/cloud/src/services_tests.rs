@@ -126,7 +126,7 @@ async fn failed_queue_reservation_is_released_and_complete_replay_repairs_work()
             .lock()
             .await
             .iter()
-            .any(|(message, delay)| message["type"] == "finalize" && *delay == 0)
+            .any(|entry| entry.message.content["type"] == "finalize" && entry.delay == 0)
     );
 }
 
