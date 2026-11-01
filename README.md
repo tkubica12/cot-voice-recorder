@@ -148,6 +148,9 @@ flowchart LR
 The API contract lives in [`openapi/voice-recorder.yaml`](openapi/voice-recorder.yaml).
 The complete state machine, retry semantics, sequence diagram, and security boundaries are
 documented in [`docs/architecture.md`](docs/architecture.md).
+The staged Windows/cloud Rust rewrite is tracked in
+[`docs/rust-migration.md`](docs/rust-migration.md) on `refactor-rust`; it does not
+replace the current clients, backend, or release installers yet.
 Older recordings and the Settings rollback retain the independent 30-second/1.5-second
 overlap pipeline. Durable capture protects persisted audio, not incomplete windows or
 queued writes lost in a hard process/device failure.
