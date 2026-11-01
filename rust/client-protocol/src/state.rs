@@ -77,6 +77,13 @@ impl AuthSession {
         self.state
     }
 
+    pub fn refresh_token(&self) -> Option<&str> {
+        self.tokens
+            .as_ref()
+            .and_then(|tokens| tokens.refresh_token.as_deref())
+            .filter(|value| !value.is_empty())
+    }
+
     pub fn token_decision(
         &self,
         now: OffsetDateTime,

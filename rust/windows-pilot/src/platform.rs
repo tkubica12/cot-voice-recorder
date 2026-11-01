@@ -229,6 +229,19 @@ pub struct EncryptedTokenStore {
     path: PathBuf,
 }
 
+impl voiceprompt_client_protocol::runtime::TokenPersistence for EncryptedTokenStore {
+    type Error = NativeError;
+    fn load(&self) -> Result<Option<CachedTokens>, Self::Error> {
+        self.load()
+    }
+    fn save(&self, tokens: &CachedTokens) -> Result<(), Self::Error> {
+        self.save(tokens)
+    }
+    fn clear(&self) -> Result<(), Self::Error> {
+        self.clear()
+    }
+}
+
 impl EncryptedTokenStore {
     pub fn new(path: PathBuf) -> Result<Self, NativeError> {
         if path.file_name() != Some(OsStr::new("tokens.bin")) {

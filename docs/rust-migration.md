@@ -17,7 +17,7 @@ zustat u klasicke ACA; na ACA Express se v teto migraci neprechazi.
 | Nativni Windows zaklad | Tray, izolovana instance a DPAPI implementovany; lokalni self-test a C# DPAPI parity prosly |
 | Mereni nativniho zakladu | Dokonceno: 30 startu a 301 vzorku za pet minut; vysledky nize |
 | CI nativniho inkrementu | Windows i Linux prosly na commitu `4b040a8` |
-| OAuth/token-store/PubSub kontrakty | PKCE, callback listener, JWT/cache/state a PubSub parsing/dedupe implementovany; zbyva HTTP transport, orchestrace a UI |
+| OAuth/token-store/PubSub kontrakty | Kontrakty, encrypted cache, HTTP token/auth a authenticated negotiate/fetch implementovany; zbyva native UI a connected WebSocket/delivery |
 | Diktovani/recovery UI | Zatim neprepsano |
 | Rust cloud API, worker, cleanup | Zatim neprepsano |
 | Hosting | Klasicka ACA zustava: API, KEDA queue worker a hourly cleanup Job; Express byl uzivatelem zrusen |
@@ -362,7 +362,20 @@ C# TokenStore, vcetne rotace/prepisu. JSON i DPAPI binding jsou zachovany.
 Zamerne je chyba korupce/desifrovani viditelna a soubor zachovany, nikoli
 maskovana jako uspesna prazdna cache.
 
-Stale chybi realny HTTP token transport, asynchronni auth/realtime orchestrace,
-system-browser sign-in propojeny s UI a clipboard/history pipeline. Tato etapa
+HTTP token transport a asynchronni auth orchestrace nyni existuji: omezene
+form POST requesty, system TLS, deadline/body bounds, bez nasledovani redirectu,
+serialized refresh/sign-in/sign-out a off-thread cache/callback prace.
+Lokalni flow overuje callback -> exchange -> persistence -> pouze ID token;
+refresh revocation a cancellation jsou explicitni. Nepouzily se Google/Azure
+ani skutecne tokeny.
+
+Stale chybi asynchronni connected realtime klient, system-browser sign-in
+propojeny s native UI a clipboard/history pipeline. Tato etapa
 neprihlasuje uzivatele a nepouziva jeho konfiguraci, tokeny ani cloud. Jeji
 unit/parity testy nejsou end-to-end test plneho Windows klienta.
+
+Authenticated API klient nyni zvlada negotiate a transcript fetch s Google
+ID tokenem, structured RFC 9457 problem details, terminal 403, bounded 5xx retry
+a presne jeden refresh po 401. Tyto vetve jsou overene proti lokalnim HTTP
+fixturem; malformed success payload neni akceptovan jako hotovy transcript.
+Neni to produkcni ani kompletni client/cloud end-to-end overeni.

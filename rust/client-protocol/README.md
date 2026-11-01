@@ -16,8 +16,17 @@ Implemented:
 - A single-owner auth state machine. Refresh caches must persist before publishing
   new live tokens. Revocation stops vending stale ID tokens. Failed durable
   sign-out remains an error even though in-memory token vending stops.
+- A bounded async Google token transport with form encoding, no redirect following,
+  native system TLS verification, explicit network/deadline/body failures and a
+  one-MiB response limit. Plain HTTP is allowed only by a test-only loopback client.
+- Async sign-in/refresh/sign-out orchestration with serialized session ownership,
+  blocking cache/callback workers, status notifications and callback cancellation.
+  Local integration exercises callback -> code exchange -> persisted ID token.
 - Web PubSub system/ack/message envelopes, raw and string JSON payloads,
   `transcript.completed` validation and bounded FIFO event deduplication.
+- An authenticated backend API client for negotiation and transcript retrieval,
+  structured RFC 9457 failures, bounded transient retries and exactly one refresh
+  after 401. HTTP response and transcript payload bounds are explicit.
 
 Token/config/PKCE/claims/frame Debug output is redacted. Parsing errors do not
 embed input bodies. Invalid callback security fields, config endpoints, JWT
@@ -58,7 +67,6 @@ The native `--cache-save`, `--cache-load` and `--cache-clear` modes are fixture
 hooks taking an explicit `tokens.bin` path. Never point tests at an installed
 app's state. These hooks do not wire authentication into the tray UI.
 
-Remaining: bounded HTTP token transport and asynchronous auth orchestration,
-user-initiated browser flow/UI, connected negotiate/reconnect/suspend behavior,
-authenticated transcript retrieval and clipboard/history delivery. Do not label
-this crate's tests as full sign-in or end-to-end production validation.
+Remaining: native user-initiated browser flow/UI, connected WebSocket/reconnect/suspend behavior,
+clipboard/history delivery and the rest of the dictation/audit API surfaces. Do not label
+the local fixture flow as end-to-end production/Google validation.
