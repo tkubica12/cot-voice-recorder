@@ -14,6 +14,9 @@ checkpoint journal, DPAPI persistence, ASR, or a claim of lossless capture.
 The audio crate has no external crates and forbids unsafe code. The isolated
 [`windows-pilot`](windows-pilot/README.md) adds native tray/lifecycle and DPAPI
 primitives using the user-approved crates.io exception for this repository.
+[`client-protocol`](client-protocol/README.md) adds OAuth/PKCE/token-cache/JWT,
+loopback callback, auth-state and PubSub contracts. These are not yet a complete
+interactive sign-in or connected client.
 Cargo.lock is committed. Fetch its locked packages once, then run checks offline.
 Python/npm/NuGet feeds remain unchanged. Never use GitHub source dependencies or
 disable security controls as a workaround.
@@ -35,6 +38,7 @@ checked with the installed Rust 1.99.1; the minimum compiler is not separately
 verified yet. A compiler version is not an SDK crate availability guarantee.
 `rust-ci` fetches locked approved crates, then runs offline workspace checks on
 Windows/Linux. Windows adds process-sampler safeguards and native DPAPI parity.
+Windows also checks client-contract and encrypted token-store compatibility.
 The audio cross-language comparison remains the separate command below; CI does
 not claim to run it. Interactive tray startup is checked locally, not in CI.
 

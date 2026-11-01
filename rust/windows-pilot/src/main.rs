@@ -7,6 +7,39 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     use voiceprompt_windows_pilot::{TrayOptions, protect, request_quit, run_tray, unprotect};
 
     let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    if args.len() == 2
+        && matches!(
+            args[0].to_str(),
+            Some("--cache-save" | "--cache-load" | "--cache-clear")
+        )
+    {
+        use voiceprompt_client_protocol::auth::CachedTokens;
+        use voiceprompt_windows_pilot::EncryptedTokenStore;
+        let store = EncryptedTokenStore::new(PathBuf::from(&args[1]))?;
+        match args[0].to_str() {
+            Some("--cache-save") => {
+                let mut data = Vec::new();
+                std::io::stdin()
+                    .lock()
+                    .take(1024 * 1024 + 1)
+                    .read_to_end(&mut data)?;
+                let parsed = CachedTokens::parse(&data)?;
+                data.fill(0);
+                store.save(&parsed)?;
+            }
+            Some("--cache-load") => {
+                let mut data = match store.load()? {
+                    Some(tokens) => tokens.encode()?,
+                    None => b"null".to_vec(),
+                };
+                std::io::stdout().lock().write_all(&data)?;
+                data.fill(0);
+            }
+            Some("--cache-clear") => store.clear()?,
+            _ => unreachable!(),
+        }
+        return Ok(());
+    }
     if args.len() == 1 && (args[0] == "--protect-stdin" || args[0] == "--unprotect-stdin") {
         let mut input = Vec::new();
         std::io::stdin()

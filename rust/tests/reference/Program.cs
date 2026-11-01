@@ -1,7 +1,12 @@
 using System.Globalization;
 using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using VoicePrompt.Core.Auth;
 using VoicePrompt.Core.Dictation;
 using VoicePrompt.Core.Infrastructure;
+using VoicePrompt.Core.Realtime;
 
 try
 {
@@ -9,7 +14,80 @@ try
     Console.OpenStandardInput().CopyTo(input);
     var pcm = input.ToArray();
     using var output = new BinaryWriter(Console.OpenStandardOutput());
-    if (args.Length == 1 && args[0] is "protect" or "unprotect")
+    if (args.Length == 2 && args[0] is "cache-save" or "cache-load" or "cache-clear")
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("Token-store reference requires Windows.");
+        var store = new TokenStore(args[1], new DpapiSecretProtector(), PhysicalFileSystem.Instance);
+        switch (args[0])
+        {
+            case "cache-save":
+                store.Save(JsonSerializer.Deserialize<CachedTokens>(pcm)
+                    ?? throw new InvalidDataException("Invalid cached-token fixture."));
+                break;
+            case "cache-load":
+                output.Write(JsonSerializer.SerializeToUtf8Bytes(store.Load(),
+                    new JsonSerializerOptions { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull }));
+                break;
+            case "cache-clear": store.Clear(); break;
+        }
+    }
+    else if (args.Length == 1 && args[0] is "cache" or "pkce" or "callback" or "auth-url" or "jwt" or "refresh" or "frame")
+    {
+        var text = Encoding.UTF8.GetString(pcm);
+        byte[] JsonBytes(object? value) => JsonSerializer.SerializeToUtf8Bytes(value);
+        switch (args[0])
+        {
+            case "cache":
+                var tokens = JsonSerializer.Deserialize<CachedTokens>(pcm)
+                    ?? throw new InvalidDataException("Invalid cached-token fixture.");
+                output.Write(JsonSerializer.SerializeToUtf8Bytes(tokens,
+                    new JsonSerializerOptions { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull }));
+                break;
+            case "pkce": output.Write(Encoding.ASCII.GetBytes(PkceGenerator.Challenge(text))); break;
+            case "callback":
+                using (var document = JsonDocument.Parse(pcm))
+                    output.Write(Encoding.UTF8.GetBytes(AuthorizationRequestBuilder.ParseAndValidateCallback(
+                        document.RootElement.GetProperty("query").GetString()!,
+                        document.RootElement.GetProperty("state").GetString()!)));
+                break;
+            case "auth-url":
+                using (var document = JsonDocument.Parse(pcm))
+                {
+                    var root = document.RootElement;
+                    var verifier = root.GetProperty("verifier").GetString()!;
+                    var pair = new PkcePair(verifier, PkceGenerator.Challenge(verifier), root.GetProperty("state").GetString()!);
+                    var url = AuthorizationRequestBuilder.BuildAuthorizationUrl(
+                        DesktopClientConfig.Parse(root.GetProperty("config").GetRawText()),
+                        root.GetProperty("redirect").GetString()!, pair,
+                        loginHint: root.TryGetProperty("login_hint", out var hint) ? hint.GetString() : null);
+                    output.Write(Encoding.UTF8.GetBytes(url));
+                }
+                break;
+            case "jwt":
+                var jwt = JwtToken.Parse(text);
+                output.Write(JsonBytes(new { exp = jwt.ExpiresAt?.ToUnixTimeSeconds(), email = jwt.Email, aud = jwt.Audience, sub = jwt.Subject }));
+                break;
+            case "refresh":
+                output.Write(Encoding.ASCII.GetBytes(AuthManager.ClassifyRefresh(
+                    JsonSerializer.Deserialize<TokenResponse>(pcm)!).ToString()));
+                break;
+            case "frame":
+                var frame = WebPubSubEnvelope.Parse(text);
+                var valid = WebPubSubEnvelope.TryReadTranscriptCompleted(frame, out var completed);
+                output.Write(JsonBytes(new {
+                    kind = frame.Kind.ToString(), system_event = frame.SystemEvent,
+                    from = frame.From, group = frame.Group, data_type = frame.DataType,
+                    user_id = frame.UserId, connection_id = frame.ConnectionId,
+                    completed = valid ? new {
+                        event_id = completed.EventId, transcript_id = completed.TranscriptId,
+                        recording_id = completed.RecordingId, preview = completed.Preview,
+                    } : null
+                }));
+                break;
+        }
+    }
+    else if (args.Length == 1 && args[0] is "protect" or "unprotect")
     {
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("DPAPI reference requires Windows.");
@@ -59,7 +137,7 @@ try
     output.Flush();
     return 0;
 }
-catch (Exception ex) when (ex is ArgumentException or InvalidDataException or IOException or CryptographicException or PlatformNotSupportedException)
+catch (Exception ex) when (ex is ArgumentException or InvalidDataException or IOException or CryptographicException or PlatformNotSupportedException or JsonException or AuthCallbackException or FormatException)
 {
     Console.Error.WriteLine($"Reference audio probe: {ex.Message}");
     return 2;

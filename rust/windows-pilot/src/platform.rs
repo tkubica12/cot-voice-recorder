@@ -3,12 +3,13 @@ use std::error::Error;
 use std::ffi::{OsStr, c_void};
 use std::fmt;
 use std::fs::OpenOptions;
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::mem::size_of;
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use voiceprompt_client_protocol::{MAX_AUTH_JSON_BYTES, ProtocolError, auth::CachedTokens};
 use windows::Win32::Foundation::{
     CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE, HINSTANCE, HLOCAL, HWND, LPARAM,
     LRESULT, LocalFree, POINT, WPARAM,
@@ -19,7 +20,9 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::Security::Cryptography::{
     CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN, CryptProtectData, CryptUnprotectData,
 };
-use windows::Win32::Storage::FileSystem::MoveFileW;
+use windows::Win32::Storage::FileSystem::{
+    MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW, MoveFileW,
+};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::HiDpi::{
@@ -54,6 +57,7 @@ pub enum NativeError {
     Api(&'static str, windows::core::Error),
     Io(&'static str, io::Error),
     Verification(&'static str),
+    Protocol(ProtocolError),
 }
 
 impl fmt::Display for NativeError {
@@ -65,6 +69,7 @@ impl fmt::Display for NativeError {
             }
             Self::Api(operation, source) => write!(f, "{operation} returned failure: {source}"),
             Self::Io(operation, source) => write!(f, "{operation} failed: {source}"),
+            Self::Protocol(error) => error.fmt(f),
         }
     }
 }
@@ -74,8 +79,15 @@ impl Error for NativeError {
         match self {
             Self::Api(_, source) => Some(source),
             Self::Io(_, source) => Some(source),
+            Self::Protocol(source) => Some(source),
             _ => None,
         }
+    }
+}
+
+impl From<ProtocolError> for NativeError {
+    fn from(value: ProtocolError) -> Self {
+        Self::Protocol(value)
     }
 }
 
@@ -211,6 +223,58 @@ pub fn protect(data: &[u8]) -> Result<Vec<u8>, NativeError> {
 
 pub fn unprotect(data: &[u8]) -> Result<Vec<u8>, NativeError> {
     transform(data, false)
+}
+
+pub struct EncryptedTokenStore {
+    path: PathBuf,
+}
+
+impl EncryptedTokenStore {
+    pub fn new(path: PathBuf) -> Result<Self, NativeError> {
+        if path.file_name() != Some(OsStr::new("tokens.bin")) {
+            return Err(NativeError::InvalidArgument(
+                "Token store must use an explicit tokens.bin path.",
+            ));
+        }
+        Ok(Self { path })
+    }
+
+    pub fn load(&self) -> Result<Option<CachedTokens>, NativeError> {
+        let file = match std::fs::File::open(&self.path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(NativeError::Io("open encrypted token cache", error)),
+        };
+        let mut cipher = Vec::new();
+        file.take((MAX_AUTH_JSON_BYTES + 64 * 1024 + 1) as u64)
+            .read_to_end(&mut cipher)
+            .map_err(|source| NativeError::Io("read encrypted token cache", source))?;
+        if cipher.len() > MAX_AUTH_JSON_BYTES + 64 * 1024 {
+            return Err(NativeError::Protocol(ProtocolError::TooLarge));
+        }
+        let mut plain = unprotect(&cipher)?;
+        let parsed = CachedTokens::parse(&plain)
+            .map(Some)
+            .map_err(NativeError::Protocol);
+        plain.fill(0);
+        parsed
+    }
+
+    pub fn save(&self, tokens: &CachedTokens) -> Result<(), NativeError> {
+        let mut plain = tokens.encode()?;
+        let encrypted = protect(&plain);
+        plain.fill(0);
+        let cipher = encrypted?;
+        atomic_write(&self.path, &cipher, WriteMode::Replace)
+    }
+
+    pub fn clear(&self) -> Result<(), NativeError> {
+        match std::fs::remove_file(&self.path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(NativeError::Io("delete encrypted token cache", error)),
+        }
+    }
 }
 
 pub struct SingleInstance {
@@ -572,7 +636,12 @@ impl Drop for TemporaryFile {
     }
 }
 
-fn publish_ready(path: &Path) -> Result<(), NativeError> {
+enum WriteMode {
+    CreateNew,
+    Replace,
+}
+
+fn atomic_write(path: &Path, data: &[u8], mode: WriteMode) -> Result<(), NativeError> {
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let mut temporary_name = path.as_os_str().to_owned();
     temporary_name.push(format!(
@@ -586,25 +655,38 @@ fn publish_ready(path: &Path) -> Result<(), NativeError> {
         .write(true)
         .create_new(true)
         .open(&temporary_path)
-        .map_err(|source| NativeError::Io("create readiness staging file", source))?;
+        .map_err(|source| NativeError::Io("create atomic staging file", source))?;
     temporary.0 = Some(temporary_path.clone());
+    file.write_all(data)
+        .map_err(|source| NativeError::Io("write atomic file", source))?;
+    file.sync_all()
+        .map_err(|source| NativeError::Io("flush atomic file", source))?;
+    drop(file);
+    let from = wide(temporary_path.as_os_str())?;
+    let to = wide(path.as_os_str())?;
+    // Both names share a directory. Never permit copy/delete fallback across volumes.
+    match mode {
+        WriteMode::CreateNew => api("MoveFileW (publish new file)", unsafe {
+            MoveFileW(PCWSTR(from.as_ptr()), PCWSTR(to.as_ptr()))
+        })?,
+        WriteMode::Replace => api("MoveFileExW (replace encrypted cache)", unsafe {
+            MoveFileExW(
+                PCWSTR(from.as_ptr()),
+                PCWSTR(to.as_ptr()),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            )
+        })?,
+    }
+    temporary.0 = None;
+    Ok(())
+}
+
+fn publish_ready(path: &Path) -> Result<(), NativeError> {
     let data = format!(
         "{{\"schema_version\":1,\"status\":\"ready\",\"pid\":{},\"program\":\"VoicePromptRustPilot\",\"scope\":\"native-tray-dpapi-only\"}}\n",
         std::process::id()
     );
-    file.write_all(data.as_bytes())
-        .map_err(|source| NativeError::Io("write readiness", source))?;
-    file.sync_all()
-        .map_err(|source| NativeError::Io("flush readiness", source))?;
-    drop(file);
-    let from = wide(temporary_path.as_os_str())?;
-    let to = wide(path.as_os_str())?;
-    // MoveFileW does not replace an existing destination. Both names share the same directory.
-    api("MoveFileW (publish readiness)", unsafe {
-        MoveFileW(PCWSTR(from.as_ptr()), PCWSTR(to.as_ptr()))
-    })?;
-    temporary.0 = None;
-    Ok(())
+    atomic_write(path, data.as_bytes(), WriteMode::CreateNew)
 }
 
 pub struct TrayOptions {

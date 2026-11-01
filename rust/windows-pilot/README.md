@@ -52,6 +52,14 @@ synthetic; these commands do not read real tokens or recordings. CI runs native
 unit/parity checks on Windows, not the tray self-test on a potentially headless
 runner. Non-Windows invocation fails explicitly; the audio crate is portable.
 
+The next increment adds an explicit-path encrypted `tokens.bin` store and fixture
+hooks for its cross-language tests. File replacement is same-directory, flushed,
+and never falls back to copy/delete across volumes. Corrupt files remain intact
+and return a redacted error; no existing token cache is loaded by tray startup.
+OAuth/client contracts are documented in
+[`client-protocol`](../client-protocol/README.md). They are not wired into the
+interactive tray yet.
+
 ## Measure this limited foundation
 
 Choose an existing, empty output directory. The collector does not overwrite old

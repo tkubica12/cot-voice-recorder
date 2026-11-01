@@ -4,7 +4,8 @@
 
 Postupna migrace do Rustu, nejdrive Windows a potom cloud. Nejde o jednorazovy
 prepis: nejprve overit prinos na funkcnim pilotu, potom prenaset chovani a data.
-Android, Azure sluzby a Bicep zustavaji zachovany.
+Android, Azure sluzby a Bicep zustavaji zachovany. Posledni rozhodnuti uzivatele:
+zustat u klasicke ACA; na ACA Express se v teto migraci neprechazi.
 
 ## Aktualni progress
 
@@ -16,8 +17,10 @@ Android, Azure sluzby a Bicep zustavaji zachovany.
 | Nativni Windows zaklad | Tray, izolovana instance a DPAPI implementovany; lokalni self-test a C# DPAPI parity prosly |
 | Mereni nativniho zakladu | Dokonceno: 30 startu a 301 vzorku za pet minut; vysledky nize |
 | CI nativniho inkrementu | Windows i Linux prosly na commitu `4b040a8` |
-| Google/PubSub/diktovani/recovery UI | Zatim neprepsano |
+| OAuth/token-store/PubSub kontrakty | PKCE, callback listener, JWT/cache/state a PubSub parsing/dedupe implementovany; zbyva HTTP transport, orchestrace a UI |
+| Diktovani/recovery UI | Zatim neprepsano |
 | Rust cloud API, worker, cleanup | Zatim neprepsano |
+| Hosting | Klasicka ACA zustava: API, KEDA queue worker a hourly cleanup Job; Express byl uzivatelem zrusen |
 
 Nativni zaklad neni kompletni klient. Jeho rychlost a pamet nelze porovnat
 s plnohodnotnym C# klientem jako dukaz hotove migrace.
@@ -71,7 +74,7 @@ GitHub source installs, vypnuti bezpecnostnich kontrol nebo produkcni nasazeni.
 | 1. Vychozi mereni | Opakovatelna mereni soucasneho Windows klienta a backendu, katalog chovani a formatu | Dostatecna baseline pro ferove porovnani |
 | 2. Windows pilot | Nativni tray, OAuth/DPAPI, PubSub -> clipboard a zakladni audio/streaming cesta | Prokazany prinos v presne vymezenem rozsahu pilotu |
 | 3. Kompletni Windows klient | Settings, History, overlay, oba rezimy diktovani, recovery, audit outbox, instalator | Funkcni a datova kompatibilita; znovu zmereny kompletni klient |
-| 4. Rust cloud API | HTTP API a WebSocket relay; puvodni Python worker docasne zustava | Stejny kontrakt a kompatibilni ulozena data |
+| 4. Rust cloud API | HTTP API a WebSocket relay na soucasne klasicke ACA; puvodni Python worker docasne zustava | Stejny kontrakt, privatni egress/UAMI, streaming kompatibilita a ulozena data |
 | 5. Worker a cleanup | Leases, replay, legacy pipeline, finalizace, notifikace a uklid | Poruchove scenare a bezpecny prechod bez dvojiteho zpracovani |
 
 Pro Windows je navrzene nativni UI bez WebView, protoze hlavnim motivem je
@@ -85,6 +88,23 @@ Adaptery pro Tables a Web PubSub potrebuji samostatne overeni. PubSub umoznuje
 [REST/WebSocket integraci bez SDK](https://learn.microsoft.com/azure/azure-web-pubsub/overview#why-use-azure-web-pubsub).
 Pouzivat stale managed identity, privatni Storage a serverem zvolene AI endpointy.
 Nerozsirovat pristup Windows klienta primo na Azure kvuli pohodli prepisu.
+
+## Hosting: klasicka ACA zustava
+
+Uzivatel zvazoval ACA Express kvuli rychlejsimu cold startu, ale po overeni
+omezeni vyslovne rozhodl: "zustaneme u klasicke ACA, nebudeme prepinat".
+Toto je platne cilove rozhodnuti; Express neni dalsi povinna migracni etapa.
+
+Zachovat soucasnou topologii: HTTP/WebSocket API v klasicke ACA, queue worker
+s `azure-queue` KEDA a scheduled hourly cleanup Job. Zachovat VNet/private
+endpoints, privatni Storage/Speech a user-assigned managed identity.
+Nemenit kvuli prepisu min replicas, scale rules, domeny nebo produkcni opravneni.
+Rust image a resource tuning budou overeny samostatne bez soubezne zmeny hostingu.
+
+Rust/Python benchmark pouzije stejny hosting a workload. Proces -> readiness
+neni HTTP scale-from-zero ani stop -> text. Nizsi pamet sama nesnizuje ucet bez
+zmeny alokace; runtime prepis nezrychluje samotne MAI/LLM. Akceptacni prahy
+a poruchove scenare zustavaji beze zmen.
 
 ## Neprekrocitelne podminky kompletni migrace
 
@@ -324,3 +344,25 @@ na pozadi jako bezici recorder nebo autonomni migration loop.
 Nasleduje port OAuth/token-store JSON a realtime klienta do izolovaneho stavu,
 potom zachycovani/streaming, durable recovery a audit. Cloudove etapy zustavaji
 navazujici praci; produkcni nasazeni neni schvalene.
+
+## Dalsi Windows inkrement: klientsky protokol a token store
+
+`client-protocol` nyni obsahuje PKCE z OS CSPRNG, konstantni porovnani state,
+minimalni Google authorization URL, C# PascalCase cached-token JSON, read-only
+JWT claims, klasifikaci refresh a single-owner auth state machine. Ta publikuje
+nove tokeny az po uspesnem durable zapisu a nevraci OAuth access token jako
+backend ID token.
+
+Loopback listener drzi OS-prirazeny port na 127.0.0.1 po celou dobu flow,
+overuje callback pred success odpovedi a ma timeout/cancellation/header bounds.
+PubSub parsing podporuje raw, JSON a textove envelopy a omezene FIFO dedupe.
+
+Nativni encrypted store obousmerne cte/pise synteticke soubory ze skutecneho
+C# TokenStore, vcetne rotace/prepisu. JSON i DPAPI binding jsou zachovany.
+Zamerne je chyba korupce/desifrovani viditelna a soubor zachovany, nikoli
+maskovana jako uspesna prazdna cache.
+
+Stale chybi realny HTTP token transport, asynchronni auth/realtime orchestrace,
+system-browser sign-in propojeny s UI a clipboard/history pipeline. Tato etapa
+neprihlasuje uzivatele a nepouziva jeho konfiguraci, tokeny ani cloud. Jeji
+unit/parity testy nejsou end-to-end test plneho Windows klienta.
