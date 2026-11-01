@@ -5,6 +5,7 @@ pub mod network;
 pub mod realtime;
 pub mod runtime;
 pub mod state;
+pub mod websocket;
 
 use std::fmt;
 

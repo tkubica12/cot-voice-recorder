@@ -124,6 +124,10 @@ pub struct ApiClient<P: TokenPersistence> {
 }
 
 impl<P: TokenPersistence> ApiClient<P> {
+    pub fn auth_state(&self) -> tokio::sync::watch::Receiver<crate::state::AuthState> {
+        self.auth.status()
+    }
+
     fn auth_failure(error: AuthRuntimeError<P::Error>) -> ApiError {
         let kind = match error {
             AuthRuntimeError::Network(_) => ApiErrorKind::Retryable,

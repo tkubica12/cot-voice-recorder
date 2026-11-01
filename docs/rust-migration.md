@@ -17,7 +17,7 @@ zustat u klasicke ACA; na ACA Express se v teto migraci neprechazi.
 | Nativni Windows zaklad | Tray, izolovana instance a DPAPI implementovany; lokalni self-test a C# DPAPI parity prosly |
 | Mereni nativniho zakladu | Dokonceno: 30 startu a 301 vzorku za pet minut; vysledky nize |
 | CI nativniho inkrementu | Windows i Linux prosly na commitu `4b040a8` |
-| OAuth/token-store/PubSub kontrakty | Kontrakty, encrypted cache, HTTP token/auth a authenticated negotiate/fetch implementovany; zbyva native UI a connected WebSocket/delivery |
+| OAuth/token-store/PubSub klient | Kontrakty, encrypted cache, HTTP/auth, negotiate/fetch a WebSocket transport implementovany; zbyva native UI a clipboard/history integrace |
 | Diktovani/recovery UI | Zatim neprepsano |
 | Rust cloud API, worker, cleanup | Zatim neprepsano |
 | Hosting | Klasicka ACA zustava: API, KEDA queue worker a hourly cleanup Job; Express byl uzivatelem zrusen |
@@ -369,8 +369,14 @@ Lokalni flow overuje callback -> exchange -> persistence -> pouze ID token;
 refresh revocation a cancellation jsou explicitni. Nepouzily se Google/Azure
 ani skutecne tokeny.
 
-Stale chybi asynchronni connected realtime klient, system-browser sign-in
-propojeny s native UI a clipboard/history pipeline. Tato etapa
+WebSocket transport nyni skutecne vyjednava `json.webpubsub.azure.v1`, prijima
+completed eventy, omezuje zpravy/buffery a podporuje backpressure, URL renewal,
+ping/pong, suspend/resume/reconnect/stop a zruseni spojeni po zmene auth.
+Lokalni WebSocket fixture overila subprotocol, doruceni a ukonceni pres stop
+i sign-out; jde o synteticky endpoint, nikoli Azure production.
+
+Stale chybi system-browser sign-in propojeny s native UI a clipboard/history
+integrace realtime klienta. Tato etapa
 neprihlasuje uzivatele a nepouziva jeho konfiguraci, tokeny ani cloud. Jeji
 unit/parity testy nejsou end-to-end test plneho Windows klienta.
 

@@ -27,6 +27,10 @@ Implemented:
 - An authenticated backend API client for negotiation and transcript retrieval,
   structured RFC 9457 failures, bounded transient retries and exactly one refresh
   after 401. HTTP response and transcript payload bounds are explicit.
+- A real WebSocket receiver negotiating `json.webpubsub.azure.v1`, bounded
+  buffers/messages and event backpressure, proactive URL renewal, ping/pong,
+  suspend/resume/reconnect/stop controls and auth-change cancellation.
+  Reconnect backoff preserves the existing 50%-100% jitter and 60-second cap.
 
 Token/config/PKCE/claims/frame Debug output is redacted. Parsing errors do not
 embed input bodies. Invalid callback security fields, config endpoints, JWT
@@ -67,6 +71,6 @@ The native `--cache-save`, `--cache-load` and `--cache-clear` modes are fixture
 hooks taking an explicit `tokens.bin` path. Never point tests at an installed
 app's state. These hooks do not wire authentication into the tray UI.
 
-Remaining: native user-initiated browser flow/UI, connected WebSocket/reconnect/suspend behavior,
+Remaining: native user-initiated browser flow/UI, integration of realtime events with
 clipboard/history delivery and the rest of the dictation/audit API surfaces. Do not label
 the local fixture flow as end-to-end production/Google validation.
