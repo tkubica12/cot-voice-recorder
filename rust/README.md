@@ -20,6 +20,8 @@ now wires these contracts into sign-in, realtime
 delivery, durable history and clipboard commands. It is still not a complete
 dictation client.
 Cargo.lock is committed. Fetch its locked packages once, then run checks offline.
+[`cloud`](cloud/README.md) now adds the staged strict OIDC/UAMI and storage REST
+foundation. It is not yet the complete API/worker/cleanup or a deployable replacement.
 Python/npm/NuGet feeds remain unchanged. Never use GitHub source dependencies or
 disable security controls as a workaround.
 

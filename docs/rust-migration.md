@@ -21,7 +21,7 @@ zustat u klasicke ACA; na ACA Express se v teto migraci neprechazi.
 | Diktovani/recovery UI | Native microphone/hotkeys/overlay/paste controller, oba enginy, journal, polishing a outbox implementovany; real-world a rozsahlejsi fault/E2E akceptace zbyva |
 | History cache | JSON/retence/200 entries, atomicka persistence, native list/text a manual copy latest/selected/original implementovany; C# file parity overena |
 | Settings a instalator | Vsechna C# JSON pole, nativni Settings/History/Recovery, DPI fonty, per-user autostart a kompatibilni IPC; installer sestaven, nebyl instalovan |
-| Rust cloud API, worker, cleanup | Zatim neprepsano |
+| Rust cloud API, worker, cleanup | Strict OIDC/JWKS, ACA UAMI a Blob/Table/Queue REST primitives implementovany; entity/service/router/relay/worker/cleanup wiring a akceptace zbyvaji |
 | Hosting | Klasicka ACA zustava: API, KEDA queue worker a hourly cleanup Job; Express byl uzivatelem zrusen |
 
 Nativni zaklad neni kompletni klient. Jeho rychlost a pamet nelze porovnat
@@ -615,3 +615,34 @@ ctyri text/audio parity a actual backend summary check prosly. Installer build
 prosel se stavajicim Inno compilerem. Windows real Google/microphone/paste,
 screen-reader/high-DPI/installer upgrade, feature-matched performance a cloudove
 Rust etapy zustavaji neprovedene. Tyto checky nejsou `PASS`.
+
+Native wiring commit `3a63cef` ma successful Windows i Linux
+[CI](https://github.com/tkubica12/cot-voice-recorder/actions/runs/41351359019).
+Per-user installer se pouze sestavil; jeho spusteni/upgrade nad osobnim stavem
+ani zadne AI/production nasazeni se neprovedlo.
+
+## Rust cloud foundation
+
+`voiceprompt-cloud` je nyni clen workspace. Implementuje bounded/cached Google
+JWKS a skutecnou RS256 verification s issuer/audience/exp/iat/nbf, verified email
+a single-email allowlist. Vychozi production konfigurace vyzaduje endpointy a auth;
+fake/Azurite/auth-disabled nastaveni do production nepusti.
+
+ACA UAMI credential pouziva injected private endpoint/header a explicitni
+user-assigned client ID, ne account key, client secret nebo desktop Google token.
+Blob/Table/Queue REST primitives zachovavaji bearer, version/date a ulozene klice.
+Table replace/delete odmita wildcard/missing ETag; Queue renew vraci novy receipt,
+stale receipt je explicitni failure a gone delete je idempotentni se zaznamem.
+Storage response/identity/token bodies nejsou v diagnostice.
+
+Dev RSA keys se generuji jen v pameti testu; zadny private fixture key se
+necommitoval. Dev crates jsou z approved crates.io a resolver overil stavajici
+lockfile/MSRV-compatible graf. Nejnovejsi XML crate potreboval Rust 1.86, proto je
+zvolena overena 0.38.3. MSRV compiler samotny stale nebyl samostatne spusten.
+
+Devet cloud testu proslo proti realnemu local HTTP/JWKS/RSA: rejected unsigned/
+HS256/wrong claims, cached keys, UAMI selection, conditional Table 412 a Queue
+receipt renewal/gone semantics. Nejde o skutecne Azure private-endpoint/UAMI
+testy ani hotove HTTP/worker API. Cloud je zatim library foundation, bez
+production bootstrapu, kompletniho entity/storage codec, routeru, MAI relay,
+leased replay/finalization/cleanup a container/deployment wiring.
