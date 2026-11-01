@@ -1,5 +1,9 @@
+pub mod audio;
 pub mod auth;
 pub mod config;
+pub mod domain;
 pub mod identity;
+pub mod models;
 pub mod problem;
+pub mod repository;
 pub mod storage;

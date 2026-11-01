@@ -60,6 +60,9 @@ jobs:
       - name: Build client contract probe
         run: cargo build --offline --locked --release -p voiceprompt-client-protocol --example client_contract
 
+      - name: Build cloud entity contract probe
+        run: cargo build --offline --locked --release -p voiceprompt-cloud --example entity_contract
+
       - name: Windows process measurement safeguards
         if: runner.os == 'Windows'
         working-directory: .

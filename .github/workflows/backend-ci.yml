@@ -14,6 +14,9 @@ on:
 permissions:
   contents: read
 
+env:
+  UV_DEFAULT_INDEX: https://packagefeedproxy.microsoft.io/pypi/simple/
+
 defaults:
   run:
     working-directory: backend
@@ -33,20 +36,25 @@ jobs:
         run: uv python install 3.13
 
       - name: Install dependencies
-        # Re-resolve against the runner's default index (PyPI) so CI does not depend
-        # on any local mirror that may be baked into the committed lock.
-        run: |
-          uv lock
-          uv sync --extra dev
+        run: uv sync --locked --extra dev
 
       - name: Ruff lint
-        run: uv run ruff check src tests
+        run: uv run --locked ruff check src tests
 
       - name: Ruff format check
-        run: uv run ruff format --check src tests
+        run: uv run --locked ruff format --check src tests
 
       - name: Mypy
-        run: uv run mypy
+        run: uv run --locked mypy
 
       - name: Unit and API tests
-        run: uv run pytest --ignore=tests/integration
+        run: uv run --locked pytest --ignore=tests/integration
+
+      - name: Build Rust entity contract oracle
+        working-directory: .
+        run: |
+          cargo fetch --manifest-path rust/Cargo.toml --locked
+          cargo build --manifest-path rust/Cargo.toml --offline --locked --release -p voiceprompt-cloud --example entity_contract
+
+      - name: Bidirectional actual SDK and Python entity parity
+        run: uv run --locked python ../rust/cloud/tests/test_entity_parity.py --oracle ../rust/target/release/examples/entity_contract

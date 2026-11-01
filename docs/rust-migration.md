@@ -21,7 +21,7 @@ zustat u klasicke ACA; na ACA Express se v teto migraci neprechazi.
 | Diktovani/recovery UI | Native microphone/hotkeys/overlay/paste controller, oba enginy, journal, polishing a outbox implementovany; real-world a rozsahlejsi fault/E2E akceptace zbyva |
 | History cache | JSON/retence/200 entries, atomicka persistence, native list/text a manual copy latest/selected/original implementovany; C# file parity overena |
 | Settings a instalator | Vsechna C# JSON pole, nativni Settings/History/Recovery, DPI fonty, per-user autostart a kompatibilni IPC; installer sestaven, nebyl instalovan |
-| Rust cloud API, worker, cleanup | Strict OIDC/JWKS, ACA UAMI a Blob/Table/Queue REST primitives implementovany; entity/service/router/relay/worker/cleanup wiring a akceptace zbyvaji |
+| Rust cloud API, worker, cleanup | OIDC/JWKS, ACA UAMI, REST/CAS a domain/wire/Table codecs implementovany; service/router/relay/worker/cleanup wiring a akceptace zbyvaji |
 | Hosting | Klasicka ACA zustava: API, KEDA queue worker a hourly cleanup Job; Express byl uzivatelem zrusen |
 
 Nativni zaklad neni kompletni klient. Jeho rychlost a pamet nelze porovnat
@@ -646,3 +646,31 @@ receipt renewal/gone semantics. Nejde o skutecne Azure private-endpoint/UAMI
 testy ani hotove HTTP/worker API. Cloud je zatim library foundation, bez
 production bootstrapu, kompletniho entity/storage codec, routeru, MAI relay,
 leased replay/finalization/cleanup a container/deployment wiring.
+
+Cloud foundation commit `4ce466a` ma successful Windows i Linux
+[CI](https://github.com/tkubica12/cot-voice-recorder/actions/runs/41353049879).
+
+## Cloud entity a wire codecs
+
+Nove Rust domain/wire models zachovavaji recording/chunk/transcript pole, nullable
+timestampy, stare chunked/legacy-overlap/refinement defaults a forward state machine.
+Table codecs zachovavaji partition/row keys, DateTime microsecond profile,
+samples, lease/finalization flags a audit digests. Digest a mobile audio checks
+overuji exact contiguous 10s layout i legacy stride456000/max480000 a odmitaji
+overlap-only tail. Conditional memory repository sdili stejny CAS konflikt jako
+skutecny Table primitive; nejde o production fallback.
+
+Actual Python Table writers -> Rust a Rust -> actual Azure SDK deserializer ->
+Python readers prosly ve trech syntetickych parity skupinach. Nejnovejsi test
+zahrnuje 2.7 miliardy samples: Azure SDK vraci pro Edm.Int64 EntityProperty a
+puvodni Python int(value) nad nim selhal. Rust proto pise ordinary Int32 pro
+bezne counters a Int64 jen pro large values; Python rollback reader ma tesne
+navazanou _integer/_optional_integer opravu. Starsi neopravena Python image ma
+stale tento Int64 problem a neni vydavana za overeny rollback.
+
+Tri nove prime SDK reader testy a souvisejici recording/transcript API regressions
+prosly (22 pytest scenaru), targeted Mypy nema chyby, Rust cloud ma 14 passing testu.
+Backend CI zachovava existing Microsoft-feed uv.lock, prestava re-resolvovat na
+public PyPI a zapojuje bidirectional SDK parity s realnym Rust oracle.
+Full Rust HTTP/relay/worker/cleanup, container wiring a performance/real-world
+checks jsou stale zbyle aktivni casti celeho cile.

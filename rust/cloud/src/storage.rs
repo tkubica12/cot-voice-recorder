@@ -288,6 +288,7 @@ impl AzureStorage {
             &format!("PartitionKey eq '{}'", odata_key(partition)?),
         );
         let mut all = Vec::new();
+        let mut cursors = std::collections::HashSet::new();
         loop {
             let response = self
                 .request(
@@ -326,6 +327,10 @@ impl AzureStorage {
             }
             if next_pk.is_none() && next_rk.is_none() {
                 break;
+            }
+            if !cursors.insert((next_pk.clone(), next_rk.clone())) || cursors.len() > 10_000 {
+                eprintln!("Azure Table continuation did not advance within bounded pagination.");
+                return Err(error());
             }
             let mut next = Self::uri(&self.table, &[table])?;
             next.query_pairs_mut().append_pair(

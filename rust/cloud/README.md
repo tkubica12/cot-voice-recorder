@@ -19,9 +19,10 @@ Implemented:
   updates. Queue renewal replaces its pop receipt; stale receipts are explicit.
 - Stable RFC 9457 problem response fields and authentication challenge.
 
-Stored domain/entity codecs, API handlers, live MAI relay, ordered worker replay,
-finalization, cleanup, container/ACA wiring and full external contracts remain
-unfinished. Blob enumeration and production bootstrap are also not wired yet.
+Stored domain/entity codecs, strict wire defaults, content-digest/sample validation
+and conditional repository primitives now exist. API handlers, live MAI relay,
+ordered worker replay, finalization, cleanup, container/ACA wiring and full external
+contracts remain unfinished. Blob enumeration and production bootstrap are not wired.
 Do not deploy the current library or run an alternate worker over existing data.
 
 ```powershell
@@ -30,7 +31,7 @@ cargo test --manifest-path rust\Cargo.toml --offline --locked -p voiceprompt-clo
 cargo clippy --manifest-path rust\Cargo.toml --workspace --offline --locked --all-targets -- -D warnings
 ```
 
-The nine direct cloud tests use generated in-memory RSA keys and local HTTP
+The fourteen direct cloud tests use generated in-memory RSA keys and local HTTP
 fixtures. They exercise real signature validation, cached JWKS, rejected
 HS256/unsigned/wrong claims, UAMI selection, Table CAS and Queue lease receipts.
 No Azure, paid model, production data or credentials are used. These are not
@@ -42,6 +43,32 @@ retain the declared Rust 1.85 profile; the newest XML version required a newer
 compiler. The installed compiler and CI verify the locked graph, not the MSRV
 itself. RSA key generation is a test-only dependency; no private key fixture is
 committed.
+
+## Stored data compatibility
+
+Recording/chunk/transcript codecs retain the existing partition/row keys,
+legacy pipeline defaults, nullable fields, dates, samples, lease/finalization
+flags and audit digests. Ordinary integers use `Edm.Int32`; large counters use
+`Edm.Int64`. Dates retain the Python/SDK microsecond profile.
+
+The direct Python runner links the current repository's actual Table writers and
+readers and the installed Azure SDK deserializer, not a duplicate reference.
+It reads Python output in Rust and reopens Rust-generated entities in Python,
+including a 2.7-billion-sample counter and nullable source metadata.
+
+```powershell
+cargo build --manifest-path rust\Cargo.toml --offline --locked --release -p voiceprompt-cloud --example entity_contract
+backend\.venv\Scripts\python.exe rust\cloud\tests\test_entity_parity.py `
+  --oracle rust\target\release\examples\entity_contract.exe
+```
+
+This uncovered the Python reader's inability to unwrap SDK `EntityProperty`
+Int64 values. The coupled reader repair and regression tests preserve ordinary
+int behavior and make the rollback reference able to read large counters.
+An older unrepaired Python image still has that Int64 limitation; do not claim
+acceptance for such an image or mix its worker with Rust. Backend CI now preserves
+the existing Microsoft-feed lock rather than re-resolving against public PyPI,
+and runs the exact bidirectional SDK/entity check.
 
 REST references: [ACA identity endpoint](https://learn.microsoft.com/azure/container-apps/managed-identity),
 [Table conditional replacement](https://learn.microsoft.com/rest/api/storageservices/update-entity2).

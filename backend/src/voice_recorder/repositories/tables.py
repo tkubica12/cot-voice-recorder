@@ -12,7 +12,7 @@ from azure.core.exceptions import (
     ResourceModifiedError,
     ResourceNotFoundError,
 )
-from azure.data.tables import TableClient, UpdateMode
+from azure.data.tables import EntityProperty, TableClient, UpdateMode
 
 from ..domain import (
     Chunk,
@@ -31,6 +31,14 @@ _TRANSCRIPT_PK = "transcript"
 
 def _clean(entity: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in entity.items() if v is not None}
+
+
+def _integer(value: Any) -> int:
+    return int(value.value if isinstance(value, EntityProperty) else value)
+
+
+def _optional_integer(value: Any) -> int | None:
+    return None if value is None else _integer(value)
 
 
 class AzureTableRecordingRepository:
@@ -267,7 +275,7 @@ def _from_recording_entity(entity: Any) -> Recording:
         language=str(entity["language"]),
         created_at=entity["created_at"],
         updated_at=entity["updated_at"],
-        expected_chunk_count=entity.get("expected_chunk_count"),
+        expected_chunk_count=_optional_integer(entity.get("expected_chunk_count")),
         transcript_id=entity.get("transcript_id"),
         failure_reason=FailureReason(failure) if failure else None,
         complete_requested_at=entity.get("complete_requested_at"),
@@ -280,8 +288,8 @@ def _from_recording_entity(entity: Any) -> Recording:
         stream_lease_expires_at=entity.get("stream_lease_expires_at"),
         stream_raw_path=entity.get("stream_raw_path"),
         stream_asr_ready=bool(entity.get("stream_asr_ready", False)),
-        stream_attempt=int(entity.get("stream_attempt", 0)),
-        streamed_samples=int(entity.get("streamed_samples", 0)),
+        stream_attempt=_integer(entity.get("stream_attempt", 0)),
+        streamed_samples=_integer(entity.get("streamed_samples", 0)),
         stream_preview=str(entity.get("stream_preview", "")),
         stream_error=entity.get("stream_error"),
         stream_delivery_completed=bool(entity.get("stream_delivery_completed", False)),
@@ -312,19 +320,19 @@ def _to_chunk_entity(chunk: Chunk) -> dict[str, Any]:
 def _from_chunk_entity(entity: Any) -> Chunk:
     return Chunk(
         recording_id=str(entity["PartitionKey"]),
-        index=int(entity["index"]),
+        index=_integer(entity["index"]),
         checksum=str(entity["checksum"]),
         state=ChunkState(str(entity["state"])),
         received_at=entity["received_at"],
-        size_bytes=int(entity["size_bytes"]),
+        size_bytes=_integer(entity["size_bytes"]),
         blob_path=entity.get("blob_path"),
         text=entity.get("text"),
-        duration_ms=entity.get("duration_ms"),
-        overlap_ms=entity.get("overlap_ms"),
+        duration_ms=_optional_integer(entity.get("duration_ms")),
+        overlap_ms=_optional_integer(entity.get("overlap_ms")),
         started_at=entity.get("started_at"),
         etag=entity.metadata.get("etag") if hasattr(entity, "metadata") else None,
-        start_sample=entity.get("start_sample"),
-        sample_count=entity.get("sample_count"),
+        start_sample=_optional_integer(entity.get("start_sample")),
+        sample_count=_optional_integer(entity.get("sample_count")),
     )
 
 
@@ -357,7 +365,7 @@ def _from_transcript_entity(entity: Any) -> Transcript:
         refine_model=str(entity["refine_model"]),
         completed_at=entity["completed_at"],
         expires_at=entity["expires_at"],
-        character_count=int(entity["character_count"]),
+        character_count=_integer(entity["character_count"]),
         body_path=str(entity["body_path"]),
         etag=entity.metadata.get("etag") if hasattr(entity, "metadata") else None,
         source=str(entity.get("source", "recording")),
