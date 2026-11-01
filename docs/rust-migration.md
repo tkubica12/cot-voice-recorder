@@ -6,6 +6,21 @@ Postupna migrace do Rustu, nejdrive Windows a potom cloud. Nejde o jednorazovy
 prepis: nejprve overit prinos na funkcnim pilotu, potom prenaset chovani a data.
 Android, Azure sluzby a Bicep zustavaji zachovany.
 
+## Aktualni progress
+
+| Cast | Stav |
+| --- | --- |
+| Plan, vetev a prvni commity | Ulozeno a pushnuto |
+| Audio jadro a C#/Python parity | Implementovano a overeno |
+| Zdroj externich crates | crates.io vyslovne schvalene jako projektova vyjimka |
+| Nativni Windows zaklad | Tray, izolovana instance a DPAPI implementovany; lokalni self-test a C# DPAPI parity prosly |
+| Mereni nativniho zakladu | Pripraveny collector; kontrolovane mereni probiha v teto etape |
+| Google/PubSub/diktovani/recovery UI | Zatim neprepsano |
+| Rust cloud API, worker, cleanup | Zatim neprepsano |
+
+Nativni zaklad neni kompletni klient. Jeho rychlost a pamet nelze porovnat
+s plnohodnotnym C# klientem jako dukaz hotove migrace.
+
 Windows je silnejsi kandidat. Jednorazovy snimek beziciho procesu z 1. listopadu
 2026 ukazal priblizne 163 MiB working setu a 201 MiB private bytes. Neni to
 reprezentativni idle baseline ani mereni startu. Private bytes nejsou totez co
@@ -41,6 +56,12 @@ postupne commity a pushe do samostatne vetve `refactor-rust`.
 
 Schvaleni prace neni schvaleni placenych AI volani, instalace novych cloudovych
 sluzeb, zmen opravneni, produkcniho nasazeni nebo oslabeni akceptacnich cilu.
+
+Uzivatel nasledne vyslovne potvrdil: "crates.io je pro tento projekt schvalene
+jako vyjimka". Externi Cargo zavislosti teto migrace proto mohou pouzivat
+crates.io; projektove `.cargo\config.toml` pouziva sparse protocol. Tato vyjimka
+nemeni predepsane Microsoft feeds pro Python, npm nebo NuGet a nepovoluje
+GitHub source installs, vypnuti bezpecnostnich kontrol nebo produkcni nasazeni.
 
 ## Poradi migrace
 
@@ -251,6 +272,16 @@ relace; neobsahuje texty, audio, tokeny nebo nastaveni aplikace a neni commitova
 C01 proto nadale neni `PASS`: chybi kontrolovane scenare, opakovane serie,
 startovaci mereni a Linuxova baseline. C02-C04 kompletniho pilotu jsou `NOT_RUN`.
 
-Dalsi krok: kontrolovana merici instalace s oddelenym stavem a nativni Windows
-pilot. Pred pridanim Windows/TLS/OAuth/HTTP/serde crates je potreba overit
-schvaleny Cargo registry; jeho absence nebrani soucasnemu dependency-free zakladu.
+Dalsi etapa byla spustena po explicitnim schvaleni crates.io. `windows` 0.62.2
+byl overen v registry, Cargo resolver vybral Rust 1.85 kompatibilni graf a
+aktualizoval lockfile. Nativni kod je oddelen od audio jadra zakazujiciho unsafe.
+Lokalni tray self-test overil skutecne vytvoreni ikony/skryteho okna, nezmeneny
+focus pri startu, izolovane instance, DPAPI a graceful uklid.
+C# protector a Rust obousmerne desifruji synteticke envelopy se stejnou
+`VoicePrompt.DPAPI.v1` entropy; poskozena data a neplatne startup options
+jsou odmitnute. Skutecne tokeny, clipboard, audio ani produkce se nepouzily.
+
+Mereni nativniho zakladu pouziva oddelene procesy a explicitni readiness
+marker. Neslouzi jako dukaz H1: chybi Google/PubSub, mikrofon/streaming,
+recovery, audit outbox a kompletni UI. Po techto portech je potreba zopakovat
+ferove porovnani proti stejnym C# scenarum.

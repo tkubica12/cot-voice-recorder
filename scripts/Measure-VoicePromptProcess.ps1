@@ -25,11 +25,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-function Get-NearestRankP95 {
-  param([double[]]$Values)
-  $sorted = @($Values | Sort-Object)
-  return $sorted[[int][Math]::Ceiling(0.95 * $sorted.Count) - 1]
-}
+Import-Module (Join-Path $PSScriptRoot 'MeasurementReport.psm1')
 
 $output = [System.IO.Path]::GetFullPath($OutputPath)
 if (Test-Path -LiteralPath $output) {
@@ -134,27 +130,7 @@ try {
     }
     samples = @($samples.ToArray())
   }
-  $json = $report | ConvertTo-Json -Depth 8
-  $temporary = $output + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
-  $temporaryOwned = $false
-  try {
-    $stream = [System.IO.File]::Open($temporary, [System.IO.FileMode]::CreateNew,
-      [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
-    $temporaryOwned = $true
-    try {
-      $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes($json + "`n")
-      $stream.Write($bytes, 0, $bytes.Length)
-      $stream.Flush($true)
-    } finally {
-      $stream.Dispose()
-    }
-    [System.IO.File]::Move($temporary, $output)
-  } finally {
-    if ($temporaryOwned -and (Test-Path -LiteralPath $temporary)) {
-      Remove-Item -LiteralPath $temporary
-    }
-  }
-  Write-Output $output
+  Write-MeasurementReport -Report $report -OutputPath $output
 } finally {
   $process.Dispose()
 }

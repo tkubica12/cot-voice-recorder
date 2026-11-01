@@ -1,7 +1,7 @@
 # Rust migration foundation
 
-This is the first dependency-free increment on `refactor-rust`, not a replacement
-Windows app or backend. The existing clients, release builds and cloud remain
+This is the staged foundation on `refactor-rust`, not a replacement
+Windows client or backend. The existing clients, release builds and cloud remain
 unchanged. Scope, targets, safeguards and progress are in
 [the migration plan](../docs/rust-migration.md).
 
@@ -11,33 +11,38 @@ It retains the existing 20 ms frames, silence gate, 180 ms pre-roll, six-second
 chunks, 600 ms overlap and checkpoint state. This is not the live streaming
 checkpoint journal, DPAPI persistence, ASR, or a claim of lossless capture.
 
-There are no external crates. Unsafe code is forbidden. Cargo.lock is committed;
-all current commands can run offline. Before adding Windows, HTTP, TLS, Azure or
-serialization crates, verify the approved Cargo registry and available versions.
-Do not substitute a public registry or GitHub source dependency to bypass policy.
+The audio crate has no external crates and forbids unsafe code. The isolated
+[`windows-pilot`](windows-pilot/README.md) adds native tray/lifecycle and DPAPI
+primitives using the user-approved crates.io exception for this repository.
+Cargo.lock is committed. Fetch its locked packages once, then run checks offline.
+Python/npm/NuGet feeds remain unchanged. Never use GitHub source dependencies or
+disable security controls as a workaround.
 
 ## Build and test
 
 From the repository root, with the existing Rust tools in PATH:
 
 ```powershell
-cargo test --manifest-path rust\Cargo.toml --offline --locked
+cargo fetch --manifest-path rust\Cargo.toml --locked
+cargo test --manifest-path rust\Cargo.toml --workspace --offline --locked
 cargo fmt --manifest-path rust\Cargo.toml --check
-cargo clippy --manifest-path rust\Cargo.toml --offline --locked --all-targets -- -D warnings
+cargo clippy --manifest-path rust\Cargo.toml --workspace --offline --locked --all-targets -- -D warnings
 cargo build --manifest-path rust\Cargo.toml --offline --locked --release --example audio_contract
 ```
 
 The manifest declares Rust 1.85 or newer (edition 2024). The initial increment is
 checked with the installed Rust 1.99.1; the minimum compiler is not separately
 verified yet. A compiler version is not an SDK crate availability guarantee.
-`rust-ci` runs offline Rust checks on Windows and Linux and the process sampler
-safeguards on Windows. Cross-language parity currently uses the separate local
-command below; the CI job does not claim to execute that comparison.
+`rust-ci` fetches locked approved crates, then runs offline workspace checks on
+Windows/Linux. Windows adds process-sampler safeguards and native DPAPI parity.
+The audio cross-language comparison remains the separate command below; CI does
+not claim to run it. Interactive tray startup is checked locally, not in CI.
 
 ## Cross-language parity
 
-The reference .NET executable compiles the actual existing `PcmChunker.cs` source,
-not a second copy. The Python runner imports the actual backend WAV validator.
+The reference .NET executable now links the actual Core project (including
+`PcmChunker.cs` and the DPAPI protector), not a second implementation.
+The Python runner imports the actual backend WAV validator.
 All inputs are deterministic synthetic samples; there is no microphone, account,
 network, clipboard operation or personal recording.
 

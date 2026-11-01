@@ -6,6 +6,6 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="..\..\..\windows\src\VoicePrompt.Core\Dictation\PcmChunker.cs" Link="PcmChunker.cs" />
+    <ProjectReference Include="..\..\..\windows\src\VoicePrompt.Core\VoicePrompt.Core.csproj" />
   </ItemGroup>
 </Project>

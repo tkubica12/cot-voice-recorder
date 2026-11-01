@@ -4,13 +4,19 @@ on:
   push:
     paths:
       - "rust/**"
+      - ".cargo/config.toml"
       - "scripts/Measure-VoicePromptProcess.ps1"
+      - "scripts/Measure-RustNativePilot.ps1"
+      - "scripts/MeasurementReport.psm1"
       - "scripts/tests/Test-ProcessMeasurement.ps1"
       - ".github/workflows/rust-ci.yml"
   pull_request:
     paths:
       - "rust/**"
+      - ".cargo/config.toml"
       - "scripts/Measure-VoicePromptProcess.ps1"
+      - "scripts/Measure-RustNativePilot.ps1"
+      - "scripts/MeasurementReport.psm1"
       - "scripts/tests/Test-ProcessMeasurement.ps1"
       - ".github/workflows/rust-ci.yml"
   workflow_dispatch: {}
@@ -36,14 +42,17 @@ jobs:
           rustc --version
           cargo --version
 
+      - name: Fetch locked approved dependencies
+        run: cargo fetch --locked
+
       - name: Format
         run: cargo fmt --check
 
       - name: Test without registry access
-        run: cargo test --offline --locked
+        run: cargo test --workspace --offline --locked
 
       - name: Clippy
-        run: cargo clippy --offline --locked --all-targets -- -D warnings
+        run: cargo clippy --workspace --offline --locked --all-targets -- -D warnings
 
       - name: Build audio contract probe
         run: cargo build --offline --locked --release --example audio_contract
@@ -53,3 +62,27 @@ jobs:
         working-directory: .
         shell: pwsh
         run: .\scripts\tests\Test-ProcessMeasurement.ps1
+
+      - name: Build native Windows pilot
+        if: runner.os == 'Windows'
+        run: cargo build --offline --locked --release -p voiceprompt-windows-pilot
+
+      - name: Build existing C# DPAPI reference
+        if: runner.os == 'Windows'
+        working-directory: .
+        shell: pwsh
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+        run: |
+          dotnet restore rust\tests\reference\ReferenceAudio.csproj --source https://packagefeedproxy.microsoft.io/nuget/v3/index.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet build rust\tests\reference\ReferenceAudio.csproj -c Release --no-restore
+
+      - name: Windows DPAPI parity and startup guards
+        if: runner.os == 'Windows'
+        working-directory: .
+        shell: pwsh
+        run: >
+          python rust\windows-pilot\tests\test_platform_parity.py
+          --pilot rust\target\release\VoicePromptRustPilot.exe
+          --reference rust\tests\reference\bin\Release\net8.0\ReferenceAudio.dll

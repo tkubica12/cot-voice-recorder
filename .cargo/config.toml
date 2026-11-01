@@ -1,0 +1,3 @@
+# User-approved crates.io exception for this repository's Rust migration.
+[registries.crates-io]
+protocol = "sparse"
