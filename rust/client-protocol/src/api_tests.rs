@@ -26,7 +26,7 @@ impl TokenPersistence for Store {
 
 fn jwt() -> String {
     let data = format!(
-        "{{\"exp\":{}}}",
+        "{{\"exp\":{},\"email\":\"fixture@example.invalid\"}}",
         OffsetDateTime::now_utc().unix_timestamp() + 3600
     );
     format!(

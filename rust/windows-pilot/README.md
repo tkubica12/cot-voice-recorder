@@ -138,8 +138,23 @@ verified application single-instance/upgrade coordination, and two real engines
 must never share the same root. Tests use sequential C#/Rust inspection of isolated
 fixtures, not overlapping capture engines.
 
-Streaming/fallback sessions, outbox upload and native Recovery UI remain to be
-ported and wired. Journal/parity checks are not complete dictation E2E.
+`LegacySession` now provides single-producer chunking, C# JSON checkpoints, at most
+two ASR requests, capture-order output, terminal auth/backoff progress and durable
+stop-timeout recovery. `StreamingSession` provides independent two-second durable
+capture, live provisional preview versus confirmed output, quiet-pause commits,
+50-minute rollover, auth-aware replay from the persisted completed cursor and batch
+Recovery with retained context. A received ACK/provisional event never releases
+audio. Confirmation beyond a sent commit is rejected.
+
+Synthetic session tests cover out-of-order legacy completion, bounded concurrency,
+stop timeout/shutdown, restart audio, live fragmentation, provisional failure,
+full replay with exact samples, partial-confirmed replay and batch overlap recovery.
+They use real encrypted journals but fake ASR/model peers, not a microphone or paid AI.
+Backend binding preserves the original URL/newline/email format and is checked again
+under the token session lock; sign-out cancels a bound request before its text is used.
+
+Device capture/hotkeys/overlay/paste, polishing/outbox scheduling and native Recovery
+UI still need wiring. Library/session checks are not complete interactive dictation E2E.
 
 The desktop-only lifecycle runner uses temporary synthetic caches. Its self-test
 disables both OAuth configuration and the real clipboard and checks hidden startup

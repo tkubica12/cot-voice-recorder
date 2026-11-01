@@ -165,7 +165,32 @@ pub struct ApiClient<P: TokenPersistence> {
     retry_delay: Duration,
 }
 
+struct RequestPolicy<'a> {
+    retries: Option<usize>,
+    timeout: Duration,
+    email: Option<&'a str>,
+}
+
 impl<P: TokenPersistence> ApiClient<P> {
+    async fn binding_changed(&self, expected: &str) -> ApiError {
+        if self.auth.current_email().await.as_deref() == Some(expected) {
+            Self::failure(ApiErrorKind::Retryable, None, false)
+        } else {
+            Self::failure(ApiErrorKind::Unauthorized, Some(401), false)
+        }
+    }
+
+    pub fn matches_backend_label(&self, label: &str) -> bool {
+        url::Url::parse(label.trim_end_matches('/')).is_ok_and(|base| base == self.base)
+    }
+
+    pub async fn recovery_context(&self, backend_label: &str) -> Option<String> {
+        self.auth
+            .current_email()
+            .await
+            .map(|email| format!("{backend_label}\n{email}"))
+    }
+
     #[cfg(test)]
     pub(crate) fn auth_for_tests(&self) -> Arc<AuthRuntime<P>> {
         self.auth.clone()
@@ -175,6 +200,24 @@ impl<P: TokenPersistence> ApiClient<P> {
         &self,
         wav: &[u8],
         language: &str,
+    ) -> Result<String, ApiError> {
+        self.transcribe_with_email(wav, language, None).await
+    }
+
+    pub async fn transcribe_bound_dictation(
+        &self,
+        wav: &[u8],
+        language: &str,
+        email: &str,
+    ) -> Result<String, ApiError> {
+        self.transcribe_with_email(wav, language, Some(email)).await
+    }
+
+    async fn transcribe_with_email(
+        &self,
+        wav: &[u8],
+        language: &str,
+        email: Option<&str>,
     ) -> Result<String, ApiError> {
         if !matches!(language, "auto" | "cs" | "en") || wav.len() > 44 + 32_000 * 30 {
             return Err(Self::failure(ApiErrorKind::BadRequest, None, false));
@@ -191,8 +234,11 @@ impl<P: TokenPersistence> ApiClient<P> {
                 &format!("/v1/dictation/transcribe?language={language}"),
                 Some(wav.to_vec()),
                 "audio/wav",
-                Some(1),
-                Duration::from_secs(25),
+                RequestPolicy {
+                    retries: Some(1),
+                    timeout: Duration::from_secs(25),
+                    email,
+                },
             )
             .await?;
         if result.text.len() > crate::recovery::MAX_TEXT_BYTES {
@@ -224,8 +270,11 @@ impl<P: TokenPersistence> ApiClient<P> {
                 "/v1/dictation/refine",
                 Some(body),
                 "application/json",
-                Some(0),
-                Duration::from_secs(25),
+                RequestPolicy {
+                    retries: Some(0),
+                    timeout: Duration::from_secs(25),
+                    email: None,
+                },
             )
             .await?;
         if result.text.trim().is_empty()
@@ -309,8 +358,14 @@ impl<P: TokenPersistence> ApiClient<P> {
         language: &str,
         start_byte: u64,
     ) -> Result<crate::dictation_stream::DictationConnection, ApiError> {
-        crate::dictation_stream::connect(self.base.clone(), self.auth.clone(), language, start_byte)
-            .await
+        crate::dictation_stream::connect(
+            self.base.clone(),
+            self.auth.clone(),
+            language,
+            start_byte,
+            None,
+        )
+        .await
     }
 
     pub fn auth_state(&self) -> tokio::sync::watch::Receiver<crate::state::AuthState> {
@@ -378,6 +433,22 @@ impl<P: TokenPersistence> ApiClient<P> {
         .await
     }
 
+    pub async fn connect_bound_dictation(
+        &self,
+        language: &str,
+        start_byte: u64,
+        email: &str,
+    ) -> Result<crate::dictation_stream::DictationConnection, ApiError> {
+        crate::dictation_stream::connect(
+            self.base.clone(),
+            self.auth.clone(),
+            language,
+            start_byte,
+            Some(email),
+        )
+        .await
+    }
+
     pub async fn transcript(&self, id: &str) -> Result<Transcript, ApiError> {
         if id.is_empty() || id.len() > 128 {
             return Err(Self::failure(ApiErrorKind::BadRequest, None, false));
@@ -418,8 +489,11 @@ impl<P: TokenPersistence> ApiClient<P> {
             path,
             body,
             "application/json",
-            retry_limit,
-            Duration::from_secs(60),
+            RequestPolicy {
+                retries: retry_limit,
+                timeout: Duration::from_secs(60),
+                email: None,
+            },
         )
         .await
     }
@@ -430,8 +504,7 @@ impl<P: TokenPersistence> ApiClient<P> {
         path: &str,
         body: Option<Vec<u8>>,
         content_type: &str,
-        retry_limit: Option<usize>,
-        timeout: Duration,
+        policy: RequestPolicy<'_>,
     ) -> Result<T, ApiError> {
         let uri = self
             .base
@@ -442,26 +515,50 @@ impl<P: TokenPersistence> ApiClient<P> {
         }
         let mut refreshed = false;
         let mut attempt = 0;
-        let limit = retry_limit.unwrap_or(self.max_retries);
+        let limit = policy.retries.unwrap_or(self.max_retries);
         loop {
-            let token = self
+            if let Some(expected) = policy.email {
+                if self.auth.current_email().await.as_deref() != Some(expected) {
+                    return Err(Self::failure(ApiErrorKind::Unauthorized, Some(401), false));
+                }
+            }
+            let credential = self
                 .auth
-                .backend_id_token()
+                .authorized_session()
                 .await
                 .map_err(Self::auth_failure)?
-                .filter(|value| !value.is_empty())
                 .ok_or_else(|| Self::failure(ApiErrorKind::Unauthorized, Some(401), false))?;
+            if policy
+                .email
+                .is_some_and(|expected| credential.email.as_deref() != Some(expected))
+            {
+                return Err(Self::failure(ApiErrorKind::Unauthorized, Some(401), false));
+            }
             let mut request = self
                 .client
                 .request(method.clone(), uri.clone())
-                .timeout(timeout)
-                .bearer_auth(token);
+                .timeout(policy.timeout)
+                .bearer_auth(credential.token);
             if let Some(body) = &body {
                 request = request
                     .header("Content-Type", content_type)
                     .body(body.clone());
             }
-            let response = request.send().await;
+            let mut auth_state = credential.state;
+            let response = if let Some(expected) = policy.email {
+                if auth_state
+                    .has_changed()
+                    .map_err(|_| Self::failure(ApiErrorKind::Unauthorized, Some(401), false))?
+                {
+                    return Err(self.binding_changed(expected).await);
+                }
+                tokio::select! {
+                    result = request.send() => result,
+                    _ = auth_state.changed() => return Err(self.binding_changed(expected).await),
+                }
+            } else {
+                request.send().await
+            };
             let mut response = match response {
                 Ok(response) => response,
                 Err(_) if attempt < limit => {
@@ -498,7 +595,7 @@ impl<P: TokenPersistence> ApiClient<P> {
             {
                 return Err(Self::failure(ApiErrorKind::Unexpected, Some(status), true));
             }
-            let read = async {
+            let read_body = async {
                 let mut data = Vec::new();
                 while let Some(chunk) = response
                     .chunk()
@@ -511,8 +608,15 @@ impl<P: TokenPersistence> ApiClient<P> {
                     data.extend_from_slice(&chunk);
                 }
                 Ok(data)
-            }
-            .await;
+            };
+            let read = if let Some(expected) = policy.email {
+                tokio::select! {
+                    result = read_body => result,
+                    _ = auth_state.changed() => return Err(self.binding_changed(expected).await),
+                }
+            } else {
+                read_body.await
+            };
             let data = match read {
                 Ok(data) => data,
                 Err(error) if error.kind == ApiErrorKind::Retryable && attempt < limit => {
@@ -522,6 +626,14 @@ impl<P: TokenPersistence> ApiClient<P> {
                 }
                 Err(error) => return Err(error),
             };
+            if let Some(expected) = policy.email {
+                if auth_state
+                    .has_changed()
+                    .map_err(|_| Self::failure(ApiErrorKind::Unauthorized, Some(401), false))?
+                {
+                    return Err(self.binding_changed(expected).await);
+                }
+            }
             if (200..300).contains(&status) {
                 return serde_json::from_slice(&data)
                     .map_err(|_| Self::failure(ApiErrorKind::Unexpected, Some(status), true));

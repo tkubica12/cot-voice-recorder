@@ -68,6 +68,7 @@ pub struct AuthRuntime<P: TokenPersistence> {
 pub(crate) struct AuthorizedSession {
     pub token: String,
     pub state: watch::Receiver<AuthState>,
+    pub email: Option<String>,
 }
 
 impl<P: TokenPersistence> AuthRuntime<P> {
@@ -85,6 +86,7 @@ impl<P: TokenPersistence> AuthRuntime<P> {
             TokenDecision::Fresh(token) => Ok(Some(AuthorizedSession {
                 token: token.to_owned(),
                 state: self.status.subscribe(),
+                email: session.email(),
             })),
             _ => Ok(None),
         }
@@ -115,6 +117,10 @@ impl<P: TokenPersistence> AuthRuntime<P> {
 
     pub fn status(&self) -> watch::Receiver<AuthState> {
         self.status.subscribe()
+    }
+
+    pub async fn current_email(&self) -> Option<String> {
+        self.session.lock().await.email()
     }
 
     pub async fn backend_id_token(&self) -> Result<Option<String>, AuthRuntimeError<P::Error>> {

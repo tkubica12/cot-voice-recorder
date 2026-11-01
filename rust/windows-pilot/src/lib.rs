@@ -22,3 +22,17 @@ mod recovery_store;
 pub use recovery_store::{
     DEFAULT_RECOVERY_QUOTA, NativeRecoveryInfo, NativeRecoveryJournal, NativeRecoveryStore,
 };
+
+#[cfg(windows)]
+mod legacy_session;
+
+#[cfg(windows)]
+pub use legacy_session::{
+    BatchBackend, BoundBatchBackend, DictationProgress, LegacySession, SessionError,
+};
+
+#[cfg(windows)]
+mod streaming_session;
+
+#[cfg(windows)]
+pub use streaming_session::{AudioSender, EventReceiver, StreamingBackend, StreamingSession};

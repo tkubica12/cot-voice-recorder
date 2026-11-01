@@ -77,6 +77,24 @@ impl AuthSession {
         self.state
     }
 
+    pub(crate) fn email(&self) -> Option<String> {
+        if self.state != AuthState::SignedIn {
+            return None;
+        }
+        let tokens = self.tokens.as_ref()?;
+        tokens
+            .email
+            .clone()
+            .or_else(|| {
+                tokens
+                    .id_token
+                    .as_ref()
+                    .and_then(|token| JwtClaims::parse(token).ok())
+                    .and_then(|claims| claims.email)
+            })
+            .filter(|email| !email.trim().is_empty())
+    }
+
     pub fn refresh_token(&self) -> Option<&str> {
         self.tokens
             .as_ref()

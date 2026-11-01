@@ -544,3 +544,31 @@ Protocol commit `68b35c0` ma successful Windows i Linux
 vcetne nove kompletni BMP/stitch/legacy snapshot parity. Lokalni workspace ma
 93 passing testu, release/fmt/Clippy a dosavadni client/lifecycle parity prosly.
 Navazuje native legacy/streaming session engine a auth/backend-bound outbox.
+
+## Native dictation session engines
+
+`LegacySession` nyni pouziva skutecny encrypted journal, single-producer chunker,
+JSON snapshot a nejvyse dva ASR requesty. Vysledky jsou viditelne pouze v contiguous
+capture-order prefixu. Terminal auth podrzi backlog, transient errors maji bounded
+backoff. Stop timeout vraci `None`, ne partial text; shutdown zrusi requesty a
+encrypted pending audio zustava pro restart. Fragmentace capture a ordering jsou
+overeny fake ASR proti realnemu store.
+
+`StreamingSession` oddeluje durable capture od live PCM transportu, checkpointuje
+po dvou sekundach a provisional deltas pouziva jen v preview. Commit confirmation
+publikuje completed cursor/text pred audio deletion. Known sent-commit hranice
+odmita impossible future cursor. Reconnect zacina persisted confirmed byte, ne
+network ACK. Real store/fake model fixtures overily presne vzorky pri full replay,
+partial confirmed prefix po failure a batch Recovery s puvodnim context/seam.
+Recovery nikdy automaticky nepaste. Conn rollover, quiet commits, finish/drain
+a cancellation zustavaji oddelene od capture a Stop budgetu.
+
+Binding neni novy format: puvodni `backend_base_url + newline + email` je zachovan.
+Bound API overuje email atomicky se ziskanym ID tokenem a sleduje auth-change pri
+request/body read; jiny uzivatel/backend nemuze dostat puvodni audit/audio.
+Test overil wrong-email reject pred network I/O a sign-out za pending requestu.
+
+Jde o knihovni engine povrchy, ne kompletni Windows aplikaci. Native microphone,
+hotkey/overlay/focus/clipboard/paste controller, polishing/outbox scheduling,
+full Settings/Recovery a installer se jeste musi napojit. Zadny test nespustil
+mikrofon, neprecetl osobni clipboard/tokeny ani nezavolal placene AI.

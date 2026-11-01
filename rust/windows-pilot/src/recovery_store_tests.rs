@@ -1,10 +1,10 @@
 use super::*;
 use voiceprompt_core::wav::to_wav;
 
-struct TemporaryRoot(PathBuf);
+pub(crate) struct TemporaryRoot(pub(crate) PathBuf);
 
 impl TemporaryRoot {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let seed = RecoveryManifest::create(
             "auto".into(),
             String::new(),

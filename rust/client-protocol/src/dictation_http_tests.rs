@@ -3,6 +3,78 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use voiceprompt_core::wav::to_wav;
 
+#[tokio::test]
+async fn bound_context_uses_original_email_and_rejects_another_account_before_io() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let base = url::Url::parse(&format!(
+        "http://127.0.0.1:{}/",
+        listener.local_addr().unwrap().port()
+    ))
+    .unwrap();
+    let label = base.as_str().trim_end_matches('/').to_owned();
+    let (client, _) = crate::api::tests::make_client(base).await;
+    let expected = format!("{label}\nfixture@example.invalid");
+    assert_eq!(
+        client.recovery_context(&label).await.as_deref(),
+        Some(expected.as_str())
+    );
+    let error = client
+        .transcribe_bound_dictation(&to_wav(&[1; 640]).unwrap(), "auto", "other@example.invalid")
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind, ApiErrorKind::Unauthorized);
+    assert_eq!(
+        listener.accept().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+}
+
+#[tokio::test]
+async fn a_bound_request_is_cancelled_when_signout_changes_the_binding() {
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let base = url::Url::parse(&format!(
+        "http://127.0.0.1:{}/",
+        listener.local_addr().unwrap().port()
+    ))
+    .unwrap();
+    let (client, _) = crate::api::tests::make_client(base).await;
+    let auth = client.auth_for_tests();
+    let (started, request_started) = tokio::sync::oneshot::channel();
+    let (release, finished) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(async move {
+        use tokio::io::AsyncReadExt;
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut buffer = [0; 8192];
+        assert!(stream.read(&mut buffer).await.unwrap() > 0);
+        started.send(()).unwrap();
+        let _ = finished.await;
+    });
+    let wav = to_wav(&[1; 640]).unwrap();
+    let mut request =
+        Box::pin(client.transcribe_bound_dictation(&wav, "auto", "fixture@example.invalid"));
+    tokio::select! {
+        _ = request_started => {},
+        result = &mut request => panic!("request unexpectedly completed: {result:?}"),
+    }
+    auth.sign_out().await.unwrap();
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(1), request)
+            .await
+            .unwrap()
+            .unwrap_err()
+            .kind,
+        ApiErrorKind::Unauthorized
+    );
+    release.send(()).unwrap();
+    tokio::time::timeout(Duration::from_secs(5), server)
+        .await
+        .unwrap()
+        .unwrap();
+}
+
 struct Request {
     headers: String,
     body: Vec<u8>,

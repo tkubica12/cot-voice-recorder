@@ -586,4 +586,4 @@ impl Drop for NativeRecoveryJournal {
 
 #[cfg(test)]
 #[path = "recovery_store_tests.rs"]
-mod tests;
+pub(crate) mod tests;

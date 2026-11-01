@@ -174,6 +174,7 @@ pub(crate) async fn connect<P: TokenPersistence>(
     auth: Arc<AuthRuntime<P>>,
     language: &str,
     start_byte: u64,
+    expected_email: Option<&str>,
 ) -> Result<DictationConnection, ApiError> {
     if !matches!(language, "auto" | "cs" | "en")
         || start_byte % 2 != 0
@@ -199,11 +200,19 @@ pub(crate) async fn connect<P: TokenPersistence>(
         .append_pair("language", language)
         .append_pair("start_byte", &start_byte.to_string());
     for attempt in 0..2 {
+        if let Some(expected) = expected_email {
+            if auth.current_email().await.as_deref() != Some(expected) {
+                return Err(failure(ApiErrorKind::Unauthorized, Some(401), false));
+            }
+        }
         let credential = auth
             .authorized_session()
             .await
             .map_err(ApiClient::<P>::auth_failure)?
             .ok_or_else(|| failure(ApiErrorKind::Unauthorized, Some(401), false))?;
+        if expected_email.is_some_and(|expected| credential.email.as_deref() != Some(expected)) {
+            return Err(failure(ApiErrorKind::Unauthorized, Some(401), false));
+        }
         let outcome = open(&base, credential, start_byte).await;
         match outcome {
             Err(error) if error.kind == ApiErrorKind::Unauthorized && attempt == 0 => {
