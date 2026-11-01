@@ -12,6 +12,10 @@ use crate::loopback::{LoopbackError, LoopbackListener};
 use crate::network::{GoogleTokenClient, TokenNetworkError};
 use crate::state::{AuthSession, AuthState, TokenDecision, TransitionError};
 
+#[cfg(test)]
+#[path = "auth_race_tests.rs"]
+mod race_tests;
+
 pub trait TokenPersistence: Send + Sync + 'static {
     type Error: Error + Send + Sync + 'static;
     fn load(&self) -> Result<Option<CachedTokens>, Self::Error>;
@@ -61,7 +65,31 @@ pub struct AuthRuntime<P: TokenPersistence> {
     active_sign_in: Mutex<Option<Arc<AtomicBool>>>,
 }
 
+pub(crate) struct AuthorizedSession {
+    pub token: String,
+    pub state: watch::Receiver<AuthState>,
+}
+
 impl<P: TokenPersistence> AuthRuntime<P> {
+    pub(crate) async fn authorized_session(
+        &self,
+    ) -> Result<Option<AuthorizedSession>, AuthRuntimeError<P::Error>> {
+        if self.backend_id_token().await?.is_none() {
+            return Ok(None);
+        }
+        let session = self.session.lock().await;
+        match session
+            .token_decision(time::OffsetDateTime::now_utc(), 0)
+            .map_err(AuthRuntimeError::Protocol)?
+        {
+            TokenDecision::Fresh(token) => Ok(Some(AuthorizedSession {
+                token: token.to_owned(),
+                state: self.status.subscribe(),
+            })),
+            _ => Ok(None),
+        }
+    }
+
     pub async fn initialize(
         config: Option<DesktopClientConfig>,
         client: GoogleTokenClient,
@@ -125,20 +153,26 @@ impl<P: TokenPersistence> AuthRuntime<P> {
             .await
             .map_err(AuthRuntimeError::Network)?;
         let store = self.store.clone();
-        let (result, state, token) = tokio::task::spawn_blocking(move || {
+        let status = self.status.clone();
+        let result = tokio::task::spawn_blocking(move || {
             let mut session = session;
             let result = session.apply_refresh(response, |tokens| store.save(tokens));
-            let token = match session.token_decision(time::OffsetDateTime::now_utc(), 0) {
-                Ok(TokenDecision::Fresh(token)) => Some(token.to_owned()),
-                _ => None,
-            };
-            (result, session.state(), token)
+            status.send_replace(session.state());
+            result
         })
         .await
         .map_err(AuthRuntimeError::Worker)?;
-        self.status.send_replace(state);
         match map_transition(result)? {
-            RefreshOutcome::Success => Ok(token),
+            RefreshOutcome::Success => {
+                let session = self.session.lock().await;
+                match session
+                    .token_decision(time::OffsetDateTime::now_utc(), 0)
+                    .map_err(AuthRuntimeError::Protocol)?
+                {
+                    TokenDecision::Fresh(token) => Ok(Some(token.to_owned())),
+                    _ => Ok(None),
+                }
+            }
             RefreshOutcome::RefreshRevoked
             | RefreshOutcome::NoIdToken
             | RefreshOutcome::Transient => Ok(None),
@@ -176,14 +210,15 @@ impl<P: TokenPersistence> AuthRuntime<P> {
             .await
             .map_err(AuthRuntimeError::Network)?;
         let store = self.store.clone();
-        let (result, state) = tokio::task::spawn_blocking(move || {
+        let status = self.status.clone();
+        let result = tokio::task::spawn_blocking(move || {
             let mut session = session;
             let result = session.accept_sign_in(response, |tokens| store.save(tokens));
-            (result, session.state())
+            status.send_replace(session.state());
+            result
         })
         .await
         .map_err(AuthRuntimeError::Worker)?;
-        self.status.send_replace(state);
         map_transition(result)
     }
 
@@ -191,14 +226,15 @@ impl<P: TokenPersistence> AuthRuntime<P> {
         self.cancel_sign_in().await;
         let session = self.session.clone().lock_owned().await;
         let store = self.store.clone();
-        let (result, state) = tokio::task::spawn_blocking(move || {
+        let status = self.status.clone();
+        let result = tokio::task::spawn_blocking(move || {
             let mut session = session;
             let result = session.sign_out(|| store.clear());
-            (result, session.state())
+            status.send_replace(session.state());
+            result
         })
         .await
         .map_err(AuthRuntimeError::Worker)?;
-        self.status.send_replace(state);
         map_transition(result)
     }
 

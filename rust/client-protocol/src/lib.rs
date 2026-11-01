@@ -1,7 +1,10 @@
 pub mod api;
 pub mod auth;
 pub mod delivery;
+pub mod dictation_stream;
+pub mod dictation_text;
 pub mod history;
+pub mod legacy_checkpoint;
 pub mod loopback;
 pub mod network;
 pub mod realtime;

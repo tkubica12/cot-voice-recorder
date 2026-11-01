@@ -15,6 +15,10 @@ const MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 #[path = "api_tests.rs"]
 pub(crate) mod tests;
 
+#[cfg(test)]
+#[path = "dictation_http_tests.rs"]
+mod dictation_tests;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ApiErrorKind {
     BadRequest,
@@ -109,6 +113,44 @@ pub struct NegotiateResponse {
     pub expires_at: OffsetDateTime,
 }
 
+#[derive(Clone, Deserialize)]
+pub struct TranscriptSummary {
+    pub transcript_id: String,
+    pub recording_id: String,
+    pub preview: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub completed_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    pub expires_at: OffsetDateTime,
+    pub character_count: usize,
+    #[serde(default = "recording_source")]
+    pub source: String,
+}
+
+impl fmt::Debug for TranscriptSummary {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("TranscriptSummary(<redacted>)")
+    }
+}
+
+#[derive(Clone, Deserialize)]
+pub struct DictationEdit {
+    pub original: String,
+    pub replacement: String,
+}
+
+#[derive(Clone, Deserialize)]
+pub struct DictationRefinement {
+    pub text: String,
+    pub edits: Vec<DictationEdit>,
+}
+
+impl fmt::Debug for DictationRefinement {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("DictationRefinement(<redacted>)")
+    }
+}
+
 impl fmt::Debug for NegotiateResponse {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("NegotiateResponse(<redacted>)")
@@ -124,11 +166,158 @@ pub struct ApiClient<P: TokenPersistence> {
 }
 
 impl<P: TokenPersistence> ApiClient<P> {
+    #[cfg(test)]
+    pub(crate) fn auth_for_tests(&self) -> Arc<AuthRuntime<P>> {
+        self.auth.clone()
+    }
+
+    pub async fn transcribe_dictation(
+        &self,
+        wav: &[u8],
+        language: &str,
+    ) -> Result<String, ApiError> {
+        if !matches!(language, "auto" | "cs" | "en") || wav.len() > 44 + 32_000 * 30 {
+            return Err(Self::failure(ApiErrorKind::BadRequest, None, false));
+        }
+        voiceprompt_core::wav::validate_capture_wav(wav, voiceprompt_core::wav::ParseMode::Strict)
+            .map_err(|_| Self::failure(ApiErrorKind::BadRequest, None, false))?;
+        #[derive(Deserialize)]
+        struct TextResponse {
+            text: String,
+        }
+        let result: TextResponse = self
+            .send_payload(
+                Method::POST,
+                &format!("/v1/dictation/transcribe?language={language}"),
+                Some(wav.to_vec()),
+                "audio/wav",
+                Some(1),
+                Duration::from_secs(25),
+            )
+            .await?;
+        if result.text.len() > crate::recovery::MAX_TEXT_BYTES {
+            return Err(Self::failure(ApiErrorKind::Unexpected, Some(200), true));
+        }
+        Ok(result.text)
+    }
+
+    pub async fn refine_dictation(
+        &self,
+        text: &str,
+        previous_text: &str,
+    ) -> Result<DictationRefinement, ApiError> {
+        if text.trim().is_empty()
+            || text.encode_utf16().count() > 4000
+            || previous_text.encode_utf16().count() > 8000
+        {
+            return Err(Self::failure(ApiErrorKind::BadRequest, None, false));
+        }
+        let body =
+            serde_json::to_vec(&serde_json::json!({"text":text,"previous_text":previous_text}))
+                .map_err(|_| Self::failure(ApiErrorKind::BadRequest, None, false))?;
+        if body.len() > 32 * 1024 {
+            return Err(Self::failure(ApiErrorKind::BadRequest, None, false));
+        }
+        let result: DictationRefinement = self
+            .send_payload(
+                Method::POST,
+                "/v1/dictation/refine",
+                Some(body),
+                "application/json",
+                Some(0),
+                Duration::from_secs(25),
+            )
+            .await?;
+        if result.text.trim().is_empty()
+            || result.text.encode_utf16().count() > 4000
+            || result.edits.len() > 64
+            || result.edits.iter().any(|edit| {
+                edit.original.is_empty()
+                    || edit.original.encode_utf16().count() > 512
+                    || edit.replacement.encode_utf16().count() > 512
+            })
+        {
+            return Err(Self::failure(ApiErrorKind::Unexpected, Some(200), true));
+        }
+        Ok(result)
+    }
+
+    pub async fn archive_dictation(
+        &self,
+        state: &crate::recovery::RecoveryManifest,
+    ) -> Result<TranscriptSummary, ApiError> {
+        state
+            .validate()
+            .map_err(|_| Self::failure(ApiErrorKind::BadRequest, None, false))?;
+        let audit = state
+            .audit
+            .as_ref()
+            .ok_or_else(|| Self::failure(ApiErrorKind::BadRequest, None, false))?;
+        let completed_at = OffsetDateTime::from_unix_timestamp_nanos(
+            (i128::from(audit.completed_at_ticks)
+                - i128::from(crate::recovery::DOTNET_UNIX_EPOCH_TICKS))
+                * 100,
+        )
+        .map_err(|_| Self::failure(ApiErrorKind::BadRequest, None, false))?;
+        let model = if state.used_fallback {
+            if state.used_streaming {
+                "MAI-Transcribe-2-Streaming+MAI-Transcribe-2"
+            } else {
+                "MAI-Transcribe-2"
+            }
+        } else {
+            "MAI-Transcribe-2-Streaming"
+        };
+        let body = serde_json::to_vec(&serde_json::json!({
+            "text":audit.text, "raw_text":state.confirmed_text, "language":state.language,
+            "completed_at":completed_at.format(&time::format_description::well_known::Rfc3339)
+                .map_err(|_| Self::failure(ApiErrorKind::BadRequest, None, false))?,
+            "polished":audit.polished, "transcribe_model":model,
+        }))
+        .map_err(|_| Self::failure(ApiErrorKind::BadRequest, None, false))?;
+        let receipt: TranscriptSummary = self
+            .send_json(
+                Method::PUT,
+                &format!("/v1/dictation/transcripts/{}", state.id),
+                Some(body),
+                None,
+            )
+            .await?;
+        let id = format!(
+            "{}-{}-{}-{}-{}",
+            &state.id[..8],
+            &state.id[8..12],
+            &state.id[12..16],
+            &state.id[16..20],
+            &state.id[20..]
+        );
+        if receipt.transcript_id != id
+            || receipt.recording_id != id
+            || receipt.source != "windows_dictation"
+            || receipt.expires_at <= receipt.completed_at
+            || receipt.expires_at - receipt.completed_at != time::Duration::hours(48)
+            || receipt.completed_at.unix_timestamp_nanos().div_euclid(1000)
+                != completed_at.unix_timestamp_nanos().div_euclid(1000)
+        {
+            return Err(Self::failure(ApiErrorKind::Unexpected, Some(200), true));
+        }
+        Ok(receipt)
+    }
+
+    pub async fn connect_dictation(
+        &self,
+        language: &str,
+        start_byte: u64,
+    ) -> Result<crate::dictation_stream::DictationConnection, ApiError> {
+        crate::dictation_stream::connect(self.base.clone(), self.auth.clone(), language, start_byte)
+            .await
+    }
+
     pub fn auth_state(&self) -> tokio::sync::watch::Receiver<crate::state::AuthState> {
         self.auth.status()
     }
 
-    fn auth_failure(error: AuthRuntimeError<P::Error>) -> ApiError {
+    pub(crate) fn auth_failure(error: AuthRuntimeError<P::Error>) -> ApiError {
         let kind = match error {
             AuthRuntimeError::Network(_) => ApiErrorKind::Retryable,
             AuthRuntimeError::Storage(_) | AuthRuntimeError::Worker(_) => ApiErrorKind::Unexpected,
@@ -165,7 +354,11 @@ impl<P: TokenPersistence> ApiClient<P> {
         })
     }
 
-    fn failure(kind: ApiErrorKind, status: Option<u16>, response_invalid: bool) -> ApiError {
+    pub(crate) fn failure(
+        kind: ApiErrorKind,
+        status: Option<u16>,
+        response_invalid: bool,
+    ) -> ApiError {
         ApiError {
             kind,
             status,
@@ -220,6 +413,26 @@ impl<P: TokenPersistence> ApiClient<P> {
         body: Option<Vec<u8>>,
         retry_limit: Option<usize>,
     ) -> Result<T, ApiError> {
+        self.send_payload(
+            method,
+            path,
+            body,
+            "application/json",
+            retry_limit,
+            Duration::from_secs(60),
+        )
+        .await
+    }
+
+    async fn send_payload<T: DeserializeOwned>(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<Vec<u8>>,
+        content_type: &str,
+        retry_limit: Option<usize>,
+        timeout: Duration,
+    ) -> Result<T, ApiError> {
         let uri = self
             .base
             .join(path)
@@ -241,10 +454,11 @@ impl<P: TokenPersistence> ApiClient<P> {
             let mut request = self
                 .client
                 .request(method.clone(), uri.clone())
+                .timeout(timeout)
                 .bearer_auth(token);
             if let Some(body) = &body {
                 request = request
-                    .header("Content-Type", "application/json")
+                    .header("Content-Type", content_type)
                     .body(body.clone());
             }
             let response = request.send().await;
@@ -284,17 +498,30 @@ impl<P: TokenPersistence> ApiClient<P> {
             {
                 return Err(Self::failure(ApiErrorKind::Unexpected, Some(status), true));
             }
-            let mut data = Vec::new();
-            while let Some(chunk) = response
-                .chunk()
-                .await
-                .map_err(|_| Self::failure(ApiErrorKind::Retryable, Some(status), false))?
-            {
-                if chunk.len() > MAX_RESPONSE_BYTES - data.len() {
-                    return Err(Self::failure(ApiErrorKind::Unexpected, Some(status), true));
+            let read = async {
+                let mut data = Vec::new();
+                while let Some(chunk) = response
+                    .chunk()
+                    .await
+                    .map_err(|_| Self::failure(ApiErrorKind::Retryable, Some(status), false))?
+                {
+                    if chunk.len() > MAX_RESPONSE_BYTES - data.len() {
+                        return Err(Self::failure(ApiErrorKind::Unexpected, Some(status), true));
+                    }
+                    data.extend_from_slice(&chunk);
                 }
-                data.extend_from_slice(&chunk);
+                Ok(data)
             }
+            .await;
+            let data = match read {
+                Ok(data) => data,
+                Err(error) if error.kind == ApiErrorKind::Retryable && attempt < limit => {
+                    attempt += 1;
+                    self.delay(attempt).await;
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
             if (200..300).contains(&status) {
                 return serde_json::from_slice(&data)
                     .map_err(|_| Self::failure(ApiErrorKind::Unexpected, Some(status), true));

@@ -86,12 +86,64 @@ try
             case "cache-clear": store.Clear(); break;
         }
     }
-    else if (args.Length == 1 && args[0] is "cache" or "pkce" or "callback" or "auth-url" or "jwt" or "refresh" or "frame")
+    else if (args.Length == 1 && args[0] is "cache" or "pkce" or "callback" or "auth-url" or "jwt" or "refresh" or "frame"
+        or "normalize-dictation" or "normalize-batch" or "stitch" or "append-prefix" or "legacy-state")
     {
         var text = Encoding.UTF8.GetString(pcm);
         byte[] JsonBytes(object? value) => JsonSerializer.SerializeToUtf8Bytes(value);
         switch (args[0])
         {
+            case "normalize-dictation":
+                var normalizer = typeof(DictationSession).GetMethod("Normalize",
+                    System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)
+                    ?? throw new InvalidDataException("Missing reference normalizer.");
+                var normalized = normalizer.Invoke(null, [text]) as string
+                    ?? throw new InvalidDataException("Invalid reference normalizer output.");
+                output.Write(Encoding.UTF8.GetBytes(normalized));
+                break;
+            case "normalize-batch":
+                using (var document = JsonDocument.Parse(pcm))
+                {
+                    var method = typeof(DictationSession).GetMethod("Normalize",
+                        System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)
+                        ?? throw new InvalidDataException("Missing reference normalizer.");
+                    var results = document.RootElement.EnumerateArray().Select(item =>
+                        method.Invoke(null, [item.GetString()]) as string
+                            ?? throw new InvalidDataException("Invalid reference normalizer output.")).ToArray();
+                    output.Write(JsonSerializer.SerializeToUtf8Bytes(results));
+                }
+                break;
+            case "stitch":
+                using (var document = JsonDocument.Parse(pcm))
+                    output.Write(Encoding.UTF8.GetBytes(DictationSession.Stitch(
+                        document.RootElement.EnumerateArray().Select(item => (
+                            item.GetProperty("text").GetString()
+                                ?? throw new InvalidDataException("Missing fixture text."),
+                            item.GetProperty("overlap").GetBoolean())))));
+                break;
+            case "append-prefix":
+                using (var document = JsonDocument.Parse(pcm))
+                {
+                    var root = document.RootElement;
+                    var append = typeof(DictationSession).GetMethod("AppendPreservingPrefix",
+                        System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)
+                        ?? throw new InvalidDataException("Missing reference append method.");
+                    int? previousWords = root.TryGetProperty("previous_words", out var value)
+                        && value.ValueKind != JsonValueKind.Null ? value.GetInt32() : null;
+                    var appended = append.Invoke(null, [
+                        root.GetProperty("previous").GetString(), root.GetProperty("incoming").GetString(),
+                        root.GetProperty("overlap").GetBoolean(), previousWords
+                    ]) as string ?? throw new InvalidDataException("Invalid reference append output.");
+                    output.Write(Encoding.UTF8.GetBytes(appended));
+                }
+                break;
+            case "legacy-state":
+                using (var chunker = new PcmChunker())
+                {
+                    chunker.Append(pcm);
+                    output.Write(JsonSerializer.SerializeToUtf8Bytes(chunker.Snapshot()));
+                }
+                break;
             case "cache":
                 var tokens = JsonSerializer.Deserialize<CachedTokens>(pcm)
                     ?? throw new InvalidDataException("Invalid cached-token fixture.");

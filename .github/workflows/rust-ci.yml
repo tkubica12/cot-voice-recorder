@@ -108,3 +108,12 @@ jobs:
           python rust\windows-pilot\tests\test_recovery_parity.py
           --pilot rust\target\release\VoicePromptRustPilot.exe
           --reference rust\tests\reference\bin\Release\net8.0\ReferenceAudio.dll
+
+      - name: Windows dictation text and legacy audio checkpoint parity
+        if: runner.os == 'Windows'
+        working-directory: .
+        shell: pwsh
+        run: >
+          python rust\client-protocol\tests\test_dictation_parity.py
+          --client rust\target\release\examples\client_contract.exe
+          --reference rust\tests\reference\bin\Release\net8.0\ReferenceAudio.dll

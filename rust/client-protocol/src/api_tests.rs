@@ -69,6 +69,13 @@ pub(crate) fn server(
 }
 
 pub(crate) async fn make_client(base: url::Url) -> (ApiClient<Store>, String) {
+    make_client_with_token_endpoint(base, None).await
+}
+
+pub(crate) async fn make_client_with_token_endpoint(
+    base: url::Url,
+    endpoint: Option<url::Url>,
+) -> (ApiClient<Store>, String) {
     let store = Store::default();
     let token = jwt();
     store
@@ -78,12 +85,18 @@ pub(crate) async fn make_client(base: url::Url) -> (ApiClient<Store>, String) {
             ..Default::default()
         })
         .unwrap();
-    let config = DesktopClientConfig::parse(
+    let mut config = DesktopClientConfig::parse(
         br#"{"installed":{"client_id":"fixture","client_secret":"fixture"}}"#,
     )
     .unwrap();
+    let token_client = if let Some(endpoint) = endpoint {
+        config.token_uri = endpoint;
+        GoogleTokenClient::for_loopback_tests()
+    } else {
+        GoogleTokenClient::new().unwrap()
+    };
     let auth = Arc::new(
-        AuthRuntime::initialize(Some(config), GoogleTokenClient::new().unwrap(), store)
+        AuthRuntime::initialize(Some(config), token_client, store)
             .await
             .unwrap(),
     );

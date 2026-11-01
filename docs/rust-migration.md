@@ -507,3 +507,34 @@ skutecny C# store a plny native store cte C# v1-v4 fixtures. C# ale novy
 writer.lock nerespektuje: testy nezpracovavaji recording soubezne dvema enginy.
 Skutecny cutover vyzaduje budoucni application single-instance/installer parity.
 Native tray zatim nezachytava mikrofon a journal do dictation UI neni zapojen.
+
+Journal commit `f653195` ma successful Windows i Linux CI:
+[run](https://github.com/tkubica12/cot-voice-recorder/actions/runs/41334590864).
+
+## Dictation client protocols
+
+Nyni existuje authenticated WAV transcribe, literal-edit refine a immutable audit
+PUT client. WAV retry je nejvyse jeden transient pokus navic, refinement zadny;
+401 ma jediny refresh. Read-body truncation se take omezenou cestou retryuje,
+malformed success se nikdy nepovazuje za text. Audit zachovava original completion
+a overuje receipt ID/source/48h expiry; Python microsecond precision je porovnana
+bez ztraty lokalnich C# ticks.
+
+Proxy WebSocket overuje `ready` protocol/cursor, ma bounded PCM/JSON, 25s deadlines
+a auth-change cancellation pro send i receive. Raw PCM, commit a finish, delta/
+intermediate versus confirmed/done jsou overeny realnym local WebSocket fixturem,
+vcetne refresh-once pri handshake 401, invalid ready a sign-out. ACK neni confirmed.
+Streaming session engine a capture/paste tim jeste nejsou implementovany.
+
+Legacy audio snapshot JSON zachovava C# PascalCase/base64 a processed cursor.
+Text stitching zachovava exact prefix, empty adjacency a short-word seam dedupe.
+Aktualni Unicode tables nebyly automaticky kompatibilni: tabulky normalizace/
+kategorii jsou pinute na .NET 8 profile. Skutecny C# matcher overuje vsechny validni
+BMP scalars a representative supplementary compatibility znaky; dalsi fixtures
+overuji stitching, append a fragmented PCM snapshots. Nejde o odhad parity.
+
+Opravena je take auth publication race. Cache/state publication probiha pod
+session lockem; po delayed blocking refresh se live token znovu kontroluje.
+Kontrolovana concurrency fixture nejprve dokonci sign-out a az potom obnovi
+refresh future: stary bearer ani SignedIn se nesmi vratit. Osobni tokens a placene
+AI nebyly pouzity. Native engines/UI/outbox a Rust cloud zustavaji otevrene.

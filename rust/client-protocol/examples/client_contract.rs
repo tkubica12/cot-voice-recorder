@@ -23,6 +23,57 @@ fn run() -> Result<(), Box<dyn Error>> {
         .read_to_end(&mut input)?;
     let mut output = std::io::stdout().lock();
     match args[0].as_str() {
+        "normalize-batch" => {
+            let words: Vec<String> = serde_json::from_slice(&input)?;
+            let normalized: Vec<_> = words
+                .iter()
+                .map(|word| voiceprompt_client_protocol::dictation_text::normalize_word(word))
+                .collect();
+            output.write_all(&serde_json::to_vec(&normalized)?)?;
+        }
+        "normalize-dictation" => output.write_all(
+            voiceprompt_client_protocol::dictation_text::normalize_word(std::str::from_utf8(
+                &input,
+            )?)
+            .as_bytes(),
+        )?,
+        "stitch" => {
+            let root: Vec<Value> = serde_json::from_slice(&input)?;
+            let chunks: Vec<_> = root
+                .iter()
+                .map(|item| {
+                    Ok((
+                        field(item, "text")?,
+                        item["overlap"].as_bool().ok_or("Missing overlap flag.")?,
+                    ))
+                })
+                .collect::<Result<_, Box<dyn Error>>>()?;
+            output.write_all(
+                voiceprompt_client_protocol::dictation_text::stitch(chunks).as_bytes(),
+            )?;
+        }
+        "append-prefix" => {
+            let root: Value = serde_json::from_slice(&input)?;
+            let previous_words = root
+                .get("previous_words")
+                .and_then(Value::as_u64)
+                .map(usize::try_from)
+                .transpose()?;
+            let appended = voiceprompt_client_protocol::dictation_text::append_preserving_prefix(
+                field(&root, "previous")?,
+                field(&root, "incoming")?,
+                root["overlap"].as_bool().ok_or("Missing overlap flag.")?,
+                previous_words,
+            );
+            output.write_all(appended.as_bytes())?;
+        }
+        "legacy-state" => {
+            let mut chunker = voiceprompt_core::chunker::PcmChunker::new(120.0)?;
+            chunker.append(&input)?;
+            output.write_all(&voiceprompt_client_protocol::legacy_checkpoint::encode(
+                &chunker.snapshot(),
+            )?)?;
+        }
         "cache" => output.write_all(&CachedTokens::parse(&input)?.encode()?)?,
         "pkce" => {
             let verifier = std::str::from_utf8(&input)?;

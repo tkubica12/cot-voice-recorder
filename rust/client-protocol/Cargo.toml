@@ -24,3 +24,5 @@ time = { version = "=0.3.45", features = ["serde-well-known", "parsing", "format
 tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "sync", "time"] }
 tokio-tungstenite = { version = "0.30.0", features = ["native-tls"] }
 url = "2.5.8"
+unicode-normalization = "=0.1.23"
+unicode-general-category = "=0.6.0"

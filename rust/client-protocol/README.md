@@ -54,6 +54,15 @@ Implemented:
   confirmations/audits are rejected. Checkpoint planning validates before native
   audio publication. The native crate now supplies the durable journal; dictation
   engines and interactive recovery wiring remain separate unfinished work.
+- Authenticated dictation WAV, bounded literal-edit polishing and immutable audit
+  APIs. A real proxy WebSocket client validates readiness/cursors, sends bounded
+  PCM/commit/finish, separates provisional/confirmed messages and invalidates both
+  halves after auth changes. 401 refreshes exactly once.
+- Legacy chunker PascalCase/base64 JSON, prefix-preserving stitching and preview
+  semantics. Unicode normalization/category tables are deliberately pinned to the
+  .NET 8-compatible profile rather than the newest tables. Direct reference parity
+  covers valid BMP scalars, representative supplementary compatibility characters,
+  invariant casing, short-word overlap and empty adjacency.
 
 Token/config/PKCE/claims/frame Debug output is redacted. Parsing errors do not
 embed input bodies. Invalid callback security fields, config endpoints, JWT
@@ -95,6 +104,17 @@ hooks taking an explicit `tokens.bin` path. Never point tests at an installed
 app's state. They are not interactive sign-in commands.
 
 The native explicit-state tray now wires the browser flow and delivery coordinator.
-Remaining: the dictation/recovery/audit API surfaces, full native Settings/Recovery,
+Remaining: dictation session/capture/outbox integration, full native Settings/Recovery,
 installer/upgrade and real Google/clipboard/device acceptance. Do not label the local
 fixture flow as end-to-end production/Google validation.
+
+The API/transport primitives above now exist; the remaining dictation work is the
+session engines, capture/hotkeys/overlay/paste, polishing/outbox scheduling and full
+native UI wiring. Auth status publication occurs under the session lock; a delayed
+refresh cannot restore SignedIn or vend a stale bearer after sign-out.
+
+```powershell
+backend\.venv\Scripts\python.exe rust\client-protocol\tests\test_dictation_parity.py `
+  --client rust\target\release\examples\client_contract.exe `
+  --reference rust\tests\reference\bin\Release\net8.0\ReferenceAudio.dll
+```
