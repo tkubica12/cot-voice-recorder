@@ -72,7 +72,7 @@ class PlatformParityTests(unittest.TestCase):
             for extra in [
                 ["--run-for-seconds", "0"],
                 ["--run-for-seconds", "3601"],
-                ["--instance-key", r"Local\VoicePrompt.SingleInstance"],
+                ["--self-test", "--instance-key", r"Local\VoicePrompt.SingleInstance"],
                 ["--quit", "--ready-file", str(output)],
             ]:
                 with self.subTest(arguments=extra):

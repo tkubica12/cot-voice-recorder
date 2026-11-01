@@ -1241,6 +1241,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "url",
+ "voiceprompt-core",
 ]
 
 [[package]]

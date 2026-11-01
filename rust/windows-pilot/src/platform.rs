@@ -251,6 +251,82 @@ pub struct NativeHistoryStore {
     gate: std::sync::Mutex<()>,
 }
 
+pub struct NativeRecoveryManifestStore {
+    path: PathBuf,
+    id: String,
+}
+
+impl NativeRecoveryManifestStore {
+    pub fn new(path: PathBuf) -> Result<Self, NativeError> {
+        let id = path
+            .parent()
+            .and_then(Path::file_name)
+            .and_then(OsStr::to_str)
+            .filter(|id| voiceprompt_client_protocol::recovery::valid_id(id))
+            .ok_or(NativeError::InvalidArgument(
+                "Recovery requires an explicit lowercase session ID directory.",
+            ))?;
+        if !path.is_absolute() || path.file_name() != Some(OsStr::new("manifest.enc")) {
+            return Err(NativeError::InvalidArgument(
+                "Recovery requires an explicit absolute manifest.enc path.",
+            ));
+        }
+        let id = id.to_owned();
+        Ok(Self { path, id })
+    }
+
+    fn guard(&self) -> Result<(), NativeError> {
+        use std::os::windows::fs::MetadataExt;
+        for path in self.path.ancestors() {
+            match std::fs::symlink_metadata(path) {
+                Ok(metadata) if metadata.file_attributes() & 0x400 != 0 => {
+                    return Err(NativeError::Verification(
+                        "Recovery reparse points are not supported.",
+                    ));
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(NativeError::Io("inspect recovery path", error)),
+            }
+        }
+        Ok(())
+    }
+
+    pub fn load(
+        &self,
+    ) -> Result<voiceprompt_client_protocol::recovery::RecoveryManifest, NativeError> {
+        self.guard()?;
+        let file = std::fs::File::open(&self.path)
+            .map_err(|error| NativeError::Io("open recovery manifest", error))?;
+        let limit = voiceprompt_client_protocol::recovery::MAX_MANIFEST_BYTES;
+        let mut cipher = Vec::new();
+        file.take((limit + 64 * 1024 + 1) as u64)
+            .read_to_end(&mut cipher)
+            .map_err(|error| NativeError::Io("read recovery manifest", error))?;
+        if cipher.is_empty() || cipher.len() > limit + 64 * 1024 {
+            return Err(ProtocolError::TooLarge.into());
+        }
+        let mut plain = unprotect(&cipher)?;
+        let parsed =
+            voiceprompt_client_protocol::recovery::RecoveryManifest::parse(&plain, &self.id);
+        plain.fill(0);
+        parsed.map_err(NativeError::Protocol)
+    }
+
+    /// Codec/parity fixture hook, not a quota-aware concurrent recovery journal.
+    pub fn save_fixture(&self, plain: &[u8]) -> Result<(), NativeError> {
+        self.guard()?;
+        let manifest =
+            voiceprompt_client_protocol::recovery::RecoveryManifest::parse(plain, &self.id)?;
+        let mut latest = manifest.encode()?;
+        let cipher = protect(&latest);
+        latest.fill(0);
+        let cipher = cipher?;
+        self.guard()?;
+        atomic_write(&self.path, &cipher, WriteMode::Replace)
+    }
+}
+
 #[derive(Clone)]
 pub struct NativeSettingsStore {
     path: PathBuf,

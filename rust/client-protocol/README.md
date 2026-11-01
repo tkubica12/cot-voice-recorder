@@ -47,6 +47,11 @@ Implemented:
   and exposes manual-copy fallback. Manual latest/selected/original works paused.
 - Current C# settings fields/defaults, bounded JSON and unknown-field preservation
   for rollback. Malformed settings and unsafe backend URLs are explicit errors.
+- Recovery binary v1-v4 codec, C# UTC tick precision, audio SHA-256/canonical WAV
+  verification, confirmed cursor transitions and fixed audit completion.
+  Old v1/v2 unknown cursors are preserved; new output uses v3 or v4.
+  Streaming gaps/overlap/odd cursors, malformed lengths/flags and conflicting
+  confirmations/audits are rejected. This is not a durable journal or dictation engine.
 
 Token/config/PKCE/claims/frame Debug output is redacted. Parsing errors do not
 embed input bodies. Invalid callback security fields, config endpoints, JWT

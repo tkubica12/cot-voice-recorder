@@ -5,6 +5,7 @@ pub mod history;
 pub mod loopback;
 pub mod network;
 pub mod realtime;
+pub mod recovery;
 pub mod runtime;
 pub mod settings;
 pub mod state;

@@ -11,6 +11,7 @@ description = "Authentication and realtime contracts for the VoicePrompt Rust cl
 workspace = true
 
 [dependencies]
+voiceprompt-core = { path = ".." }
 base64 = "0.23.1"
 getrandom = "0.4.3"
 futures-util = { version = "0.3.34", features = ["sink"] }

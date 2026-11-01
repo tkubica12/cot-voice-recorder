@@ -18,7 +18,7 @@ zustat u klasicke ACA; na ACA Express se v teto migraci neprechazi.
 | Mereni nativniho zakladu | Dokonceno: 30 startu a 301 vzorku za pet minut; vysledky nize |
 | CI nativniho inkrementu | Windows i Linux prosly na commitu `4b040a8` |
 | OAuth/token-store/PubSub klient | Explicit-path native sign-in/out, realtime status a coordinator/history/clipboard integrace implementovany; skutecny Google/clipboard E2E zbyva |
-| Diktovani/recovery UI | Zatim neprepsano |
+| Diktovani/recovery UI | Recovery v1-v4 codec/cursor/audit invariants a DPAPI/C# parity implementovany; durable journal, capture/enginy a UI zbyvaji |
 | History cache | JSON/retence/200 entries, atomicka persistence, native list/text a manual copy latest/selected/original implementovany; C# file parity overena |
 | Settings | Vsechna aktualni C# JSON pole a obousmerna file parity; nativne zatim pouze pause, ne kompletni Settings UI ani autostart |
 | Rust cloud API, worker, cleanup | Zatim neprepsano |
@@ -437,3 +437,31 @@ Overena plna event fronta pri stop/sign-out, pomaly handshake az po expiraci,
 malformed i oversized frame, ukonceny consumer a skutecne zablokovany duplex
 transport. Cely workspace ma lokalne 66 passing Rust testu; pred oznacenim
 CI za uspesne je nutne overit novy Windows i Linux beh.
+
+CI pro `0efe6f6` overilo Rust test/build na obou OS, ale Windows DPAPI runner
+narazil na modalni startup chybu pri invalid-instance testu. Tato fixture
+nyni vyslovne pouziva `--self-test`; realny GUI startup error zustava viditelny.
+Nejde o selhani DPAPI parity nebo odmitnuti neplatneho instance key.
+
+## Recovery codec inkrement
+
+Rust nyni cte binarni manifest v1-v4 vcetne C# UTC ticks a aktualniho v4
+confirmed cursoru/textu, context audia a frozen audit completion. V1/v2 neznamy
+cursor zustava nula, v1 nema vymysleny context. Nova serializace je v3/v4.
+SHA-256 a canonical PCM WAV checks pouzivaji existujici audio jadro.
+Provisional/ACK nejsou confirmation: audio-release seznam vznikne jen po
+platne confirmed cursor transition. Audit konflikt nemuze zmenit puvodni
+completion time; timestampy se neztraci presunem do sekund.
+
+Nativni encrypted fixture hook ma explicitni absolute manifest.enc layout,
+DPAPI CurrentUser, path/reparse guards a atomicky zapis. Neni to concurrency/
+quota-aware journal a v native tray se Recovery zatim necte. Zbyva port root
+kvoty 256 MiB vcetne staging/orphans, active journals, publication-before-delete,
+streaming/fallback enginu, outbox uploadu a UI.
+
+Lokalne: 72 Rust testu, release/Clippy, C# reference bez warnings a ctyri nove
+recovery parity skupiny prosly. Aktualni C# v3/v4 journal -> Rust je byte-exact,
+Rustem znovu zapsany DPAPI manifest cte skutecny C# RecoveryStore se stejnym
+snapshotem. Synteticke v1/v2 take ctou oba a po upgrade zustava stejny snapshot.
+Corrupt input nezmeni puvodni file. Zadny test nepouzil osobni recovery/audio,
+Google nebo systemovy clipboard. Recovery codec neni plny Recovery E2E.

@@ -96,6 +96,29 @@ Native controls provide keyboard dialog navigation and DPI-scaled geometry, but
 full accessibility/font/DPI acceptance and the complete Settings UI remain pending.
 This is not installer/upgrade single-instance compatibility with C#.
 
+## Recovery codec parity, not the recovery runtime
+
+`--recovery-load-fixture` and `--recovery-save-fixture` take an explicit absolute
+`<lowercase-session-id>\manifest.enc` path. They use the existing DPAPI entropy,
+bounded decrypt/parse and atomic publication; corrupt input leaves the old file
+intact. Reparse points in any ancestor are refused. These are codec/parity hooks,
+not a quota-aware, leased recovery journal; the tray does not discover Recovery.
+
+The fixture suite reads real C# v3/v4 journals (including pending and frozen audit
+state), compares plaintext byte-for-byte and reopens Rust output through the actual
+C# `RecoveryStore`. Synthetic v1/v2 fixtures verify both readers and upgrades without
+inventing absolute cursors or target context.
+
+```powershell
+backend\.venv\Scripts\python.exe rust\windows-pilot\tests\test_recovery_parity.py `
+  --pilot rust\target\release\VoicePromptRustPilot.exe `
+  --reference rust\tests\reference\bin\Release\net8.0\ReferenceAudio.dll
+```
+
+Recovery root quota/staging accounting, active journal fencing, durable checkpoint
+publication/deletion ordering, streaming/fallback sessions, outbox upload and native
+Recovery UI remain to be ported. Codec parity must not be reported as recovery E2E.
+
 The desktop-only lifecycle runner uses temporary synthetic caches. Its self-test
 disables both OAuth configuration and the real clipboard and checks hidden startup
 focus plus the actual native History list. It is not a production E2E or a real

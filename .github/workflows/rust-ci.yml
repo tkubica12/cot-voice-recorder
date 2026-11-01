@@ -99,3 +99,12 @@ jobs:
           --client rust\target\release\examples\client_contract.exe
           --pilot rust\target\release\VoicePromptRustPilot.exe
           --reference rust\tests\reference\bin\Release\net8.0\ReferenceAudio.dll
+
+      - name: Windows recovery manifest v1-v4 compatibility
+        if: runner.os == 'Windows'
+        working-directory: .
+        shell: pwsh
+        run: >
+          python rust\windows-pilot\tests\test_recovery_parity.py
+          --pilot rust\target\release\VoicePromptRustPilot.exe
+          --reference rust\tests\reference\bin\Release\net8.0\ReferenceAudio.dll

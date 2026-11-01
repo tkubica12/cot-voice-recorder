@@ -16,7 +16,34 @@ try
     Console.OpenStandardInput().CopyTo(input);
     var pcm = input.ToArray();
     using var output = new BinaryWriter(Console.OpenStandardOutput());
-    if (args.Length == 2 && args[0] is "settings-save" or "settings-load")
+    if (args.Length == 3 && args[0] is "recovery-create" or "recovery-inspect")
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("Recovery parity requires Windows.");
+        var store = new RecoveryStore(args[1], new DpapiSecretProtector());
+        using var journal = args[0] == "recovery-inspect"
+            ? store.Open(args[2])
+            : store.Create("auto", "synthetic context", streaming: args[2] != "legacy");
+        if (args[0] == "recovery-create")
+        {
+            var audio = PcmChunker.ToWav(Enumerable.Repeat((byte)1, 6400).ToArray());
+            journal.Checkpoint([], 12800, [
+                new AudioChunk(audio, false, 6400), new AudioChunk(audio, false, 12800)
+            ], complete: true);
+            if (args[2] == "legacy") journal.SaveResult(0, "synthetic first");
+            else
+            {
+                journal.SaveStreamingResult(6400, "synthetic first", new byte[100]);
+                if (args[2] == "audit")
+                {
+                    journal.SaveStreamingResult(12800, "synthetic first final", new byte[100]);
+                    journal.PrepareAudit("synthetic polished final", SystemClock.Instance.UtcNow, true);
+                }
+            }
+        }
+        output.Write(JsonSerializer.SerializeToUtf8Bytes(journal.Snapshot));
+    }
+    else if (args.Length == 2 && args[0] is "settings-save" or "settings-load")
     {
         var store = new SettingsStore(args[1], PhysicalFileSystem.Instance);
         if (args[0] == "settings-save")

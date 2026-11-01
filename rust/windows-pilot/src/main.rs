@@ -12,6 +12,32 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if args.len() == 2
         && matches!(
             args[0].to_str(),
+            Some("--recovery-save-fixture" | "--recovery-load-fixture")
+        )
+    {
+        use voiceprompt_client_protocol::recovery::MAX_MANIFEST_BYTES;
+        use voiceprompt_windows_pilot::NativeRecoveryManifestStore;
+        let store = NativeRecoveryManifestStore::new(PathBuf::from(&args[1]))?;
+        if args[0] == "--recovery-save-fixture" {
+            let mut data = Vec::new();
+            std::io::stdin()
+                .lock()
+                .take((MAX_MANIFEST_BYTES + 1) as u64)
+                .read_to_end(&mut data)?;
+            let saved = store.save_fixture(&data);
+            data.fill(0);
+            saved?;
+        } else {
+            let mut data = store.load()?.encode()?;
+            let written = std::io::stdout().lock().write_all(&data);
+            data.fill(0);
+            written?;
+        }
+        return Ok(());
+    }
+    if args.len() == 2
+        && matches!(
+            args[0].to_str(),
             Some("--settings-save" | "--settings-load")
         )
     {
@@ -187,6 +213,8 @@ fn main() {
                         | "--protect-stdin"
                         | "--unprotect-stdin"
                         | "--quit"
+                        | "--recovery-save-fixture"
+                        | "--recovery-load-fixture"
                 )
             )
         });
