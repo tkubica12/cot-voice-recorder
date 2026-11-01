@@ -233,3 +233,24 @@ nejsou zatim overeny. Pilotni checky C01-C04 jsou `NOT_RUN`.
 
 Prvni inkrement: dependency-free audio zaklad Rustu a read-only procesove
 mereni. Neni to jeste nativni tray aplikace ani nahrada backendu.
+
+Prvni audio zaklad je implementovany v `rust\`: WAV encoder, legacy/strict
+validator a PCM chunker vcetne snapshot/restore. Offline build, rustfmt,
+clippy a 15 Rust audio testu prosly. Externi parity runner porovnal primo
+aktualni C# zdroj a Python validator s Rustem na syntetickych vstupech,
+vcetne fragmentace, obnovy, overlap flags, byte cursoru a malformovanych WAV.
+Odpovidajicich 15 C# a 7 Python referencnich testu take proslo.
+To neoveruje DPAPI manifesty, HTTP/WebSocket protokol nebo celeho klienta.
+
+Prvni procesove mereni trvalo 300 sekund a obsahuje 301 vzorku existujiciho
+Windows klienta 1.5.1. Prumerne private bytes byly 202.58 MiB, p95 202.59 MiB;
+prumerny working set 168.87 MiB a CPU 0.1042 % jednoho logickeho jadra.
+Scenar byl pouze pozorovana existujici relace, nikoli kontrolovany idle se
+syntetickou historii. Raw vystup je `windows-process-initial.json` v artefaktech
+relace; neobsahuje texty, audio, tokeny nebo nastaveni aplikace a neni commitovany.
+C01 proto nadale neni `PASS`: chybi kontrolovane scenare, opakovane serie,
+startovaci mereni a Linuxova baseline. C02-C04 kompletniho pilotu jsou `NOT_RUN`.
+
+Dalsi krok: kontrolovana merici instalace s oddelenym stavem a nativni Windows
+pilot. Pred pridanim Windows/TLS/OAuth/HTTP/serde crates je potreba overit
+schvaleny Cargo registry; jeho absence nebrani soucasnemu dependency-free zakladu.

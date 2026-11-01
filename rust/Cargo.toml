@@ -1,0 +1,18 @@
+[workspace]
+members = ["."]
+resolver = "3"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[package]
+name = "voiceprompt-core"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+description = "Dependency-free audio foundation for the staged VoicePrompt Rust migration."
+publish = false
+
+[lints]
+workspace = true

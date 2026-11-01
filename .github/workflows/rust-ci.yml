@@ -1,0 +1,55 @@
+name: rust-ci
+
+on:
+  push:
+    paths:
+      - "rust/**"
+      - "scripts/Measure-VoicePromptProcess.ps1"
+      - "scripts/tests/Test-ProcessMeasurement.ps1"
+      - ".github/workflows/rust-ci.yml"
+  pull_request:
+    paths:
+      - "rust/**"
+      - "scripts/Measure-VoicePromptProcess.ps1"
+      - "scripts/tests/Test-ProcessMeasurement.ps1"
+      - ".github/workflows/rust-ci.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: rust
+
+jobs:
+  offline-checks:
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installed Rust toolchain
+        run: |
+          rustc --version
+          cargo --version
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Test without registry access
+        run: cargo test --offline --locked
+
+      - name: Clippy
+        run: cargo clippy --offline --locked --all-targets -- -D warnings
+
+      - name: Build audio contract probe
+        run: cargo build --offline --locked --release --example audio_contract
+
+      - name: Windows process measurement safeguards
+        if: runner.os == 'Windows'
+        working-directory: .
+        shell: pwsh
+        run: .\scripts\tests\Test-ProcessMeasurement.ps1

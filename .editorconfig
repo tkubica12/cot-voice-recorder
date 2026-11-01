@@ -27,6 +27,9 @@ indent_size = 4
 [*.{cs,csx}]
 indent_size = 4
 
+[*.rs]
+indent_size = 4
+
 [*.{csproj,props,targets,xaml}]
 indent_size = 2
 
