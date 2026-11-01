@@ -12,6 +12,28 @@ using VoicePrompt.Core.Settings;
 
 try
 {
+    if (args.Length == 2 && args[0] == "instance-quit-fixture")
+    {
+        using var instance = SingleInstanceGuard.Acquire("VoicePrompt.RustFixture." + args[1]);
+        if (!instance.IsPrimary)
+        {
+            instance.SignalQuit();
+            if (!instance.WaitForPrimaryExit(TimeSpan.FromSeconds(5)))
+                throw new IOException("Fixture primary failed to stop.");
+        }
+        return 0;
+    }
+    if (args.Length == 2 && args[0] == "instance-hold-fixture")
+    {
+        using var instance = SingleInstanceGuard.Acquire("VoicePrompt.RustFixture." + args[1]);
+        if (!instance.IsPrimary) throw new IOException("Fixture primary already exists.");
+        using var quit = new ManualResetEventSlim();
+        instance.ListenForActivation(() => { }, () => quit.Set());
+        Console.WriteLine("ready");
+        Console.Out.Flush();
+        if (!quit.Wait(TimeSpan.FromSeconds(10))) throw new IOException("Fixture primary quit timed out.");
+        return 0;
+    }
     using var input = new MemoryStream();
     Console.OpenStandardInput().CopyTo(input);
     var pcm = input.ToArray();

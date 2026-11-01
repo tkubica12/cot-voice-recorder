@@ -69,6 +69,16 @@ impl AppSettings {
 
     pub fn validate(&self) -> Result<(), ProtocolError> {
         self.backend_url()?;
+        if !matches!(self.dictation_language.as_str(), "auto" | "cs" | "en") {
+            return Err(ProtocolError::InvalidField("dictation_language"));
+        }
+        if self.dictation_enabled {
+            let hold = crate::hotkeys::Gesture::parse(&self.dictation_shortcut)?;
+            let toggle = crate::hotkeys::Gesture::parse(&self.dictation_toggle_shortcut)?;
+            if hold == toggle {
+                return Err(ProtocolError::InvalidField("distinct dictation shortcuts"));
+            }
+        }
         if !(500..=5000).contains(&self.dictation_final_wait_milliseconds)
             || self.dictation_final_wait_milliseconds % 500 != 0
         {

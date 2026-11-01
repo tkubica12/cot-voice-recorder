@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import os
 import random
@@ -34,7 +35,46 @@ def reference(mode: str, data: bytes) -> subprocess.CompletedProcess[bytes]:
 
 
 class PlatformParityTests(unittest.TestCase):
-    def test_dpapi_is_bidirectionally_compatible_with_current_csharp_entropy(self) -> None:
+    def test_single_instance_quit_is_bidirectionally_compatible_in_isolated_namespaces(
+        self,
+    ) -> None:
+        for primary, helper in [
+            (
+                [str(PILOT), "--instance-hold-fixture"],
+                ["dotnet", str(REFERENCE), "instance-quit-fixture"],
+            ),
+            (
+                ["dotnet", str(REFERENCE), "instance-hold-fixture"],
+                [str(PILOT), "--instance-quit-fixture"],
+            ),
+        ]:
+            key = uuid.uuid4().hex
+            process = subprocess.Popen(
+                [*primary, key], stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            )
+            try:
+                assert process.stdout is not None
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as reader:
+                    self.assertEqual(
+                        reader.submit(process.stdout.readline)
+                        .result(timeout=15)
+                        .strip(),
+                        b"ready",
+                    )
+                stopped = subprocess.run(
+                    [*helper, key], capture_output=True, timeout=15, check=False
+                )
+                self.assertEqual(stopped.returncode, 0, stopped.stderr)
+                _, error = process.communicate(timeout=15)
+                self.assertEqual(process.returncode, 0, error)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                process.communicate(timeout=15)
+
+    def test_dpapi_is_bidirectionally_compatible_with_current_csharp_entropy(
+        self,
+    ) -> None:
         synthetic_tokens = json.dumps(
             {
                 "RefreshToken": "synthetic-not-a-real-refresh-token",
@@ -43,7 +83,12 @@ class PlatformParityTests(unittest.TestCase):
                 "Email": "fixture@example.invalid",
             }
         ).encode("utf-8")
-        for data in [b"", b"\0\xff\x01", synthetic_tokens, random.Random(2026).randbytes(65536)]:
+        for data in [
+            b"",
+            b"\0\xff\x01",
+            synthetic_tokens,
+            random.Random(2026).randbytes(65536),
+        ]:
             with self.subTest(size=len(data)):
                 from_csharp = reference("protect", data)
                 from_rust = native("--protect-stdin", data)
@@ -67,7 +112,9 @@ class PlatformParityTests(unittest.TestCase):
                 self.assertEqual(reference("unprotect", data).returncode, 2)
 
     def test_invalid_startup_options_do_not_publish_readiness(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="VoicePrompt-native-options-") as directory:
+        with tempfile.TemporaryDirectory(
+            prefix="VoicePrompt-native-options-"
+        ) as directory:
             output = Path(directory).joinpath("ready.json")
             for extra in [
                 ["--run-for-seconds", "0"],
@@ -77,13 +124,18 @@ class PlatformParityTests(unittest.TestCase):
             ]:
                 with self.subTest(arguments=extra):
                     result = subprocess.run(
-                        [str(PILOT), *extra], capture_output=True, timeout=10, check=False
+                        [str(PILOT), *extra],
+                        capture_output=True,
+                        timeout=10,
+                        check=False,
                     )
                     self.assertEqual(result.returncode, 2)
                     self.assertFalse(output.exists())
 
     def test_existing_readiness_is_not_overwritten(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="VoicePrompt-native-readiness-") as directory:
+        with tempfile.TemporaryDirectory(
+            prefix="VoicePrompt-native-readiness-"
+        ) as directory:
             output = Path(directory).joinpath("ready.json")
             output.write_text("sentinel", encoding="utf-8")
             result = subprocess.run(
@@ -106,7 +158,9 @@ class PlatformParityTests(unittest.TestCase):
 
 if __name__ == "__main__":
     if os.name != "nt":
-        raise SystemExit("Native DPAPI parity requires Windows; not reported as a passing skip.")
+        raise SystemExit(
+            "Native DPAPI parity requires Windows; not reported as a passing skip."
+        )
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pilot", type=Path, required=True)
     parser.add_argument("--reference", type=Path, required=True)

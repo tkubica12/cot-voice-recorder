@@ -122,9 +122,17 @@ pub struct TranscriptSummary {
     pub completed_at: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
     pub expires_at: OffsetDateTime,
-    pub character_count: usize,
+    pub language: String,
+    pub refine_model: String,
+    pub transcribe_model: Option<String>,
     #[serde(default = "recording_source")]
     pub source: String,
+}
+
+#[derive(Clone, Deserialize)]
+pub struct TranscriptListPage {
+    pub items: Vec<TranscriptSummary>,
+    pub next_cursor: Option<String>,
 }
 
 impl fmt::Debug for TranscriptSummary {
@@ -172,6 +180,40 @@ struct RequestPolicy<'a> {
 }
 
 impl<P: TokenPersistence> ApiClient<P> {
+    pub async fn list_transcripts(
+        &self,
+        cursor: Option<&str>,
+        limit: usize,
+    ) -> Result<TranscriptListPage, ApiError> {
+        if !(1..=100).contains(&limit) || cursor.is_some_and(|cursor| cursor.len() > 4096) {
+            return Err(Self::failure(ApiErrorKind::BadRequest, None, false));
+        }
+        let mut uri = self.base.clone();
+        uri.set_path("/v1/transcripts");
+        uri.set_query(None);
+        uri.query_pairs_mut()
+            .append_pair("limit", &limit.to_string());
+        if let Some(cursor) = cursor {
+            uri.query_pairs_mut().append_pair("cursor", cursor);
+        }
+        let path = format!(
+            "{}?{}",
+            uri.path(),
+            uri.query()
+                .ok_or_else(|| Self::failure(ApiErrorKind::BadRequest, None, false))?
+        );
+        let page: TranscriptListPage = self.send_json(Method::GET, &path, None, None).await?;
+        if page.items.len() > limit
+            || page
+                .next_cursor
+                .as_ref()
+                .is_some_and(|cursor| cursor.len() > 4096)
+        {
+            return Err(Self::failure(ApiErrorKind::Unexpected, Some(200), true));
+        }
+        Ok(page)
+    }
+
     async fn binding_changed(&self, expected: &str) -> ApiError {
         if self.auth.current_email().await.as_deref() == Some(expected) {
             Self::failure(ApiErrorKind::Retryable, None, false)
@@ -219,7 +261,7 @@ impl<P: TokenPersistence> ApiClient<P> {
         language: &str,
         email: Option<&str>,
     ) -> Result<String, ApiError> {
-        if !matches!(language, "auto" | "cs" | "en") || wav.len() > 44 + 32_000 * 30 {
+        if !matches!(language, "auto" | "cs" | "en") || wav.len() > 44 + 32_000 * 10 {
             return Err(Self::failure(ApiErrorKind::BadRequest, None, false));
         }
         voiceprompt_core::wav::validate_capture_wav(wav, voiceprompt_core::wav::ParseMode::Strict)
@@ -252,6 +294,25 @@ impl<P: TokenPersistence> ApiClient<P> {
         text: &str,
         previous_text: &str,
     ) -> Result<DictationRefinement, ApiError> {
+        self.refine_with_email(text, previous_text, None).await
+    }
+
+    pub async fn refine_bound_dictation(
+        &self,
+        text: &str,
+        previous_text: &str,
+        email: &str,
+    ) -> Result<DictationRefinement, ApiError> {
+        self.refine_with_email(text, previous_text, Some(email))
+            .await
+    }
+
+    async fn refine_with_email(
+        &self,
+        text: &str,
+        previous_text: &str,
+        email: Option<&str>,
+    ) -> Result<DictationRefinement, ApiError> {
         if text.trim().is_empty()
             || text.encode_utf16().count() > 4000
             || previous_text.encode_utf16().count() > 8000
@@ -273,7 +334,7 @@ impl<P: TokenPersistence> ApiClient<P> {
                 RequestPolicy {
                     retries: Some(0),
                     timeout: Duration::from_secs(25),
-                    email: None,
+                    email,
                 },
             )
             .await?;
@@ -294,6 +355,22 @@ impl<P: TokenPersistence> ApiClient<P> {
     pub async fn archive_dictation(
         &self,
         state: &crate::recovery::RecoveryManifest,
+    ) -> Result<TranscriptSummary, ApiError> {
+        self.archive_with_email(state, None).await
+    }
+
+    pub async fn archive_bound_dictation(
+        &self,
+        state: &crate::recovery::RecoveryManifest,
+        email: &str,
+    ) -> Result<TranscriptSummary, ApiError> {
+        self.archive_with_email(state, Some(email)).await
+    }
+
+    async fn archive_with_email(
+        &self,
+        state: &crate::recovery::RecoveryManifest,
+        email: Option<&str>,
     ) -> Result<TranscriptSummary, ApiError> {
         state
             .validate()
@@ -325,11 +402,16 @@ impl<P: TokenPersistence> ApiClient<P> {
         }))
         .map_err(|_| Self::failure(ApiErrorKind::BadRequest, None, false))?;
         let receipt: TranscriptSummary = self
-            .send_json(
+            .send_payload(
                 Method::PUT,
                 &format!("/v1/dictation/transcripts/{}", state.id),
                 Some(body),
-                None,
+                "application/json",
+                RequestPolicy {
+                    retries: None,
+                    timeout: Duration::from_secs(60),
+                    email,
+                },
             )
             .await?;
         let id = format!(

@@ -23,6 +23,11 @@ fn run() -> Result<(), Box<dyn Error>> {
         .read_to_end(&mut input)?;
     let mut output = std::io::stdout().lock();
     match args[0].as_str() {
+        "summary-check" => {
+            let summary: voiceprompt_client_protocol::api::TranscriptSummary =
+                serde_json::from_slice(&input)?;
+            output.write_all(summary.transcript_id.as_bytes())?;
+        }
         "normalize-batch" => {
             let words: Vec<String> = serde_json::from_slice(&input)?;
             let normalized: Vec<_> = words

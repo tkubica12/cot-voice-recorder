@@ -298,7 +298,7 @@ async fn archive_uses_fixed_original_completion_and_accepts_python_microsecond_p
     );
     let rounded = OffsetDateTime::from_unix_timestamp(2_000_000_000).unwrap();
     let summary = serde_json::json!({
-        "transcript_id":id,"recording_id":id,"preview":"synthetic","character_count":15,
+        "transcript_id":id,"recording_id":id,"preview":"synthetic","language":"auto","refine_model":"none","transcribe_model":"MAI-Transcribe-2-Streaming",
         "completed_at":rounded.format(&time::format_description::well_known::Rfc3339).unwrap(),
         "expires_at":(rounded + time::Duration::hours(48)).format(&time::format_description::well_known::Rfc3339).unwrap(),
         "source":"windows_dictation",

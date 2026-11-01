@@ -14,7 +14,7 @@ use voiceprompt_client_protocol::delivery::{ClipboardError, CopyResult, Notice};
 use voiceprompt_client_protocol::{MAX_AUTH_JSON_BYTES, ProtocolError, auth::CachedTokens};
 use windows::Win32::Foundation::{
     CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE, HINSTANCE, HLOCAL, HWND, LPARAM,
-    LRESULT, LocalFree, POINT, WPARAM,
+    LRESULT, LocalFree, POINT, RECT, WPARAM,
 };
 use windows::Win32::Graphics::Gdi::{
     COLOR_WINDOW, DEFAULT_GUI_FONT, GetStockObject, GetSysColorBrush,
@@ -59,11 +59,25 @@ const HISTORY_LIST: usize = 1015;
 const HISTORY_BODY: usize = 1016;
 const COPY_SELECTED: usize = 1017;
 const COPY_ORIGINAL: usize = 1018;
+const RECOVERY_LIST: usize = 1040;
+const RECOVER_SELECTED: usize = 1041;
+const DELETE_RECOVERY: usize = 1042;
+const OPEN_SETTINGS: usize = 1044;
+const REFRESH_HISTORY: usize = 1045;
+const CLEAR_HISTORY: usize = 1046;
+const INSTANCE_TIMER: usize = 3;
 
 thread_local! {
     static CALLBACK_ERROR: RefCell<Option<NativeError>> = const { RefCell::new(None) };
     static CLIENT: RefCell<Option<ClientHost>> = const { RefCell::new(None) };
+    static DICTATION_UI: RefCell<Option<crate::dictation_ui::DictationUi>> = const { RefCell::new(None) };
+    static RELOAD_CLIENT: RefCell<Option<ClientOptions>> = const { RefCell::new(None) };
+    static CLIENT_TICK: RefCell<u32> = const { RefCell::new(100) };
+    static COMPATIBLE_INSTANCE: RefCell<Option<crate::CompatibleInstance>> = const { RefCell::new(None) };
+    static MAIN_FONT: RefCell<Option<crate::dpi::DpiFont>> = const { RefCell::new(None) };
     static UI_HISTORY: RefCell<Option<std::sync::Arc<Vec<voiceprompt_client_protocol::history::HistoryEntry>>>> =
+        const { RefCell::new(None) };
+    static UI_RECOVERY: RefCell<Option<std::sync::Arc<Vec<crate::NativeRecoveryInfo>>>> =
         const { RefCell::new(None) };
 }
 
@@ -371,6 +385,32 @@ impl NativeSettingsStore {
 }
 
 impl NativeHistoryStore {
+    pub fn remove(&self, id: &str) -> Result<(), NativeError> {
+        let _guard = self
+            .gate
+            .lock()
+            .map_err(|_| NativeError::Verification("History cache lock is poisoned."))?;
+        let mut entries = self.read()?;
+        let before = entries.len();
+        entries.retain(|entry| entry.transcript_id != id);
+        if before != entries.len() {
+            atomic_write(
+                &self.path,
+                &voiceprompt_client_protocol::history::encode_history(&entries)?,
+                WriteMode::Replace,
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn clear(&self) -> Result<(), NativeError> {
+        let _guard = self
+            .gate
+            .lock()
+            .map_err(|_| NativeError::Verification("History cache lock is poisoned."))?;
+        atomic_write(&self.path, b"[]", WriteMode::Replace)
+    }
+
     pub fn new(path: PathBuf) -> Result<Self, NativeError> {
         if path.file_name() != Some(OsStr::new("history.json")) {
             return Err(NativeError::InvalidArgument(
@@ -606,6 +646,23 @@ impl Drop for RegisteredClass {
 
 struct OwnedWindow(HWND);
 
+struct OwnedIcon(HICON);
+impl Drop for OwnedIcon {
+    fn drop(&mut self) {
+        if let Err(error) = unsafe { DestroyIcon(self.0) } {
+            eprintln!("Native icon cleanup failed: {error}");
+        }
+    }
+}
+
+struct MainFontLifetime;
+impl Drop for MainFontLifetime {
+    fn drop(&mut self) {
+        let font = MAIN_FONT.with(|slot| slot.borrow_mut().take());
+        drop(font);
+    }
+}
+
 impl Drop for OwnedWindow {
     fn drop(&mut self) {
         if unsafe { IsWindow(Some(self.0)) }.as_bool() {
@@ -642,7 +699,7 @@ impl Tray {
             hIcon: icon,
             ..Default::default()
         };
-        let tip: Vec<u16> = "VoicePrompt Rust pilot - no cloud or dictation yet"
+        let tip: Vec<u16> = "VoicePrompt - Rust migration client"
             .encode_utf16()
             .collect();
         data.szTip[..tip.len()].copy_from_slice(&tip);
@@ -696,7 +753,7 @@ fn context_menu(hwnd: HWND) -> Result<(), NativeError> {
     unsafe {
         api(
             "AppendMenuW",
-            AppendMenuW(menu.0, MF_STRING, MENU_OPEN, w!("Open pilot status")),
+            AppendMenuW(menu.0, MF_STRING, MENU_OPEN, w!("Open VoicePrompt")),
         )?;
         let connected = CLIENT.with(|client| client.borrow().is_some());
         if connected {
@@ -730,7 +787,7 @@ fn context_menu(hwnd: HWND) -> Result<(), NativeError> {
         )?;
         api(
             "AppendMenuW",
-            AppendMenuW(menu.0, MF_STRING, MENU_EXIT, w!("Exit Rust pilot")),
+            AppendMenuW(menu.0, MF_STRING, MENU_EXIT, w!("Exit VoicePrompt")),
         )?;
         api("GetCursorPos", GetCursorPos(&mut position))?;
         if !SetForegroundWindow(hwnd).as_bool() {
@@ -794,6 +851,18 @@ fn selected_id(hwnd: HWND) -> Result<Option<String>, NativeError> {
 }
 
 fn client_command(hwnd: HWND, command: usize) -> Result<(), NativeError> {
+    if command == OPEN_SETTINGS {
+        return CLIENT.with(|slot| {
+            if let Some(host) = slot.borrow().as_ref() {
+                crate::settings_ui::open(
+                    hwnd,
+                    host.commands.clone(),
+                    host.status.borrow().settings.clone(),
+                )?;
+            }
+            Ok(())
+        });
+    }
     let command = match command {
         SIGN_IN => ClientCommand::SignIn,
         SIGN_OUT => ClientCommand::SignOut,
@@ -812,6 +881,71 @@ fn client_command(hwnd: HWND, command: usize) -> Result<(), NativeError> {
         }
         PAUSE => ClientCommand::TogglePause,
         RECONNECT => ClientCommand::Reconnect,
+        REFRESH_HISTORY => ClientCommand::RefreshHistory,
+        CLEAR_HISTORY => {
+            if unsafe {
+                MessageBoxW(
+                    Some(hwnd),
+                    w!(
+                        "Delete all locally cached transcripts? Cloud transcripts still within retention can be fetched again with Refresh."
+                    ),
+                    w!("Clear History"),
+                    MB_OKCANCEL | MB_ICONWARNING,
+                )
+            } != IDOK
+            {
+                return Ok(());
+            }
+            ClientCommand::ClearHistory
+        }
+        RECOVER_SELECTED | DELETE_RECOVERY => {
+            let Some(id) = selected_recovery(hwnd)? else {
+                return Ok(());
+            };
+            if command == RECOVER_SELECTED {
+                DICTATION_UI.with(|slot| {
+                    if let Some(ui) = slot.borrow_mut().as_mut() {
+                        if let Err(error) = ui.recover(id.clone()) {
+                            eprintln!("Recovery command refused: {error}");
+                            notify(hwnd, "Recovery unavailable", "Finish dictation and select a readable saved entry before recovery.", true)?;
+                        }
+                    }
+                    Ok::<_, NativeError>(())
+                })?;
+                let tick = DICTATION_UI.with(|slot| {
+                    if slot.borrow().as_ref().is_some_and(|ui| ui.fast_poll()) {
+                        20
+                    } else {
+                        100
+                    }
+                });
+                CLIENT_TICK.with(|previous| {
+                    if *previous.borrow() != tick {
+                        if unsafe { SetTimer(Some(hwnd), CLIENT_TIMER, tick, None) } == 0 {
+                            return Err(NativeError::Api(
+                                "Adjust native client timer",
+                                windows::core::Error::from_thread(),
+                            ));
+                        }
+                        *previous.borrow_mut() = tick;
+                    }
+                    Ok::<_, NativeError>(())
+                })?;
+                return Ok(());
+            }
+            if unsafe {
+                MessageBoxW(
+                    Some(hwnd),
+                    w!("Delete this saved dictation and its audio? This cannot be undone."),
+                    w!("Delete Recovery entry"),
+                    MB_YESNO | MB_ICONWARNING,
+                )
+            } != IDYES
+            {
+                return Ok(());
+            }
+            ClientCommand::DeleteRecovery(id)
+        }
         _ => return Ok(()),
     };
     CLIENT.with(|client| {
@@ -828,6 +962,21 @@ fn client_command(hwnd: HWND, command: usize) -> Result<(), NativeError> {
         }
         Ok(())
     })
+}
+
+fn selected_recovery(hwnd: HWND) -> Result<Option<String>, NativeError> {
+    let list = api("GetDlgItem (recovery)", unsafe {
+        GetDlgItem(Some(hwnd), RECOVERY_LIST as i32)
+    })?;
+    let selected = unsafe { SendMessageW(list, LB_GETCURSEL, None, None) }.0;
+    Ok(UI_RECOVERY.with(|slot| {
+        slot.borrow().as_ref().and_then(|entries| {
+            usize::try_from(selected)
+                .ok()
+                .and_then(|index| entries.get(index))
+                .map(|entry| entry.id.clone())
+        })
+    }))
 }
 
 fn set_text(hwnd: HWND, id: usize, text: &str) -> Result<(), NativeError> {
@@ -928,26 +1077,93 @@ fn refresh_client_ui(hwnd: HWND) -> Result<(), NativeError> {
                         eprintln!("Manual copy notification: {error}");
                     }
                 }
+                UiRequest::Deliver { generation, text, cancelled, reply } => {
+                    DICTATION_UI.with(|slot| {
+                        if let Some(ui) = slot.borrow_mut().as_mut() { ui.deliver(generation, text, cancelled, reply); }
+                        else { let _ = reply.send(crate::dictation::DeliveryResult::CopiedOnly); }
+                    });
+                }
+                UiRequest::AuditWarning => {
+                    if let Err(error) = notify(hwnd, "Dictation audit pending", "History is available. Cloud audit could not be uploaded or expired. Open Recovery for details.", true) {
+                        eprintln!("Audit warning notification failed: {error}");
+                    }
+                }
+                UiRequest::ReloadSettings => {
+                    RELOAD_CLIENT.with(|slot| *slot.borrow_mut() = Some(host.options.clone()));
+                }
+                UiRequest::ValidateShortcuts { settings, reply, retain } => {
+                    let eligible = !retain || !reply.is_closed();
+                    let outcome = eligible && DICTATION_UI.with(|slot| {
+                        slot.borrow_mut().as_mut().is_some_and(|ui| match ui.validate_settings(&settings, host.status.borrow().auth, retain) {
+                            Ok(()) => true,
+                            Err(error) => { eprintln!("Settings shortcut preflight failed: {error}"); false }
+                        })
+                    });
+                    if reply.send(outcome).is_err() && retain && outcome {
+                        DICTATION_UI.with(|slot| {
+                            if let Some(ui) = slot.borrow_mut().as_mut() {
+                                let previous = host.status.borrow();
+                                if let Err(error) = ui.validate_settings(&previous.settings, previous.auth, false) {
+                                    eprintln!("Cancelled shortcut preflight rollback failed: {error}");
+                                }
+                            }
+                        });
+                    }
+                }
             }
         }
+        let current = host.status.borrow().clone();
+        DICTATION_UI.with(|slot| {
+            if let Some(ui) = slot.borrow_mut().as_mut() {
+                if let Err(error) = ui.configure(&current.settings, current.auth) {
+                    eprintln!("Dictation shortcut configuration: {error}");
+                    set_text(hwnd, STATUS_CONTROL, "Dictation shortcut is unavailable. Choose another shortcut in Settings.")?;
+                }
+                ui.poll(&current)?;
+            }
+            Ok::<_, NativeError>(())
+        })?;
         if !host.status.has_changed().map_err(|_| {
             NativeError::Verification("The client status channel stopped.")
         })? && UI_HISTORY.with(|history| history.borrow().is_some()) {
             return Ok(());
         }
         let status = host.status.borrow_and_update().clone();
+        let shortcut_error = DICTATION_UI.with(|slot| slot.borrow().as_ref().is_some_and(|ui| ui.shortcut_error()));
+        let recovery_changed = UI_RECOVERY.with(|slot| slot.borrow().as_ref().is_none_or(|old| !std::sync::Arc::ptr_eq(old, &status.recovery)));
+        if recovery_changed {
+            let selected = selected_recovery(hwnd)?;
+            let list = api("GetDlgItem (recovery)", unsafe { GetDlgItem(Some(hwnd), RECOVERY_LIST as i32) })?;
+            unsafe { let _ = SendMessageW(list, LB_RESETCONTENT, None, None); }
+            for entry in status.recovery.iter() {
+                let label = format!("{} | {} | {} bytes | {} pending{}{}",
+                    entry.id, entry.language, entry.captured_bytes, entry.pending_chunks,
+                    if entry.audit_pending { " | audit pending" } else { "" }, entry.error.unwrap_or(""));
+                let text = wide(OsStr::new(&label))?;
+                if unsafe { SendMessageW(list, LB_ADDSTRING, None, Some(LPARAM(text.as_ptr() as isize))) }.0 < 0 {
+                    return Err(NativeError::Verification("Recovery list could not accept an entry."));
+                }
+            }
+            let index = selected.and_then(|id| status.recovery.iter().position(|entry| entry.id == id)).unwrap_or(0);
+            UI_RECOVERY.with(|slot| *slot.borrow_mut() = Some(status.recovery.clone()));
+            unsafe { let _ = SendMessageW(list, LB_SETCURSEL, Some(WPARAM(index)), None); }
+        }
         set_text(hwnd, STATUS_CONTROL, &format!(
-            "Isolated Rust client - dictation and Recovery are not implemented yet.\r\nSign-in: {:?}{} | Realtime: {:?}\r\n{}\r\nNo installed VoicePrompt data is discovered automatically.",
+            "Isolated Rust client - explicit local state.\r\nSign-in: {:?}{} | Realtime: {:?}\r\n{}\r\nNo installed VoicePrompt data is discovered automatically.",
             status.auth, if status.signing_in { " (browser flow pending)" } else { "" },
-            status.realtime, status.issue.unwrap_or(""),
+            status.realtime, if shortcut_error { "Dictation shortcut unavailable. Choose an unused shortcut in Settings." } else { status.issue.unwrap_or("") },
         ))?;
         set_text(hwnd, PAUSE, if host.policy.paused() { "Resume auto-copy" } else { "Pause auto-copy" })?;
-        for id in [SIGN_IN, SIGN_OUT, COPY_LATEST, PAUSE, RECONNECT, COPY_SELECTED, COPY_ORIGINAL] {
+        for id in [SIGN_IN, SIGN_OUT, COPY_LATEST, PAUSE, RECONNECT, COPY_SELECTED, COPY_ORIGINAL, RECOVER_SELECTED, DELETE_RECOVERY, OPEN_SETTINGS, REFRESH_HISTORY, CLEAR_HISTORY] {
             let control = api("GetDlgItem", unsafe { GetDlgItem(Some(hwnd), id as i32) })?;
             let enabled = match id {
                 SIGN_IN => status.auth != voiceprompt_client_protocol::state::AuthState::NotConfigured && !status.signing_in,
                 SIGN_OUT => status.auth == voiceprompt_client_protocol::state::AuthState::SignedIn || status.signing_in,
                 COPY_LATEST | COPY_SELECTED | COPY_ORIGINAL => !status.history.is_empty(),
+                REFRESH_HISTORY => !status.history_refreshing && status.auth == voiceprompt_client_protocol::state::AuthState::SignedIn,
+                CLEAR_HISTORY => !status.history_refreshing && !status.history.is_empty(),
+                RECOVER_SELECTED | DELETE_RECOVERY => !status.recovery.is_empty() && !matches!(status.dictation.stage,
+                    crate::dictation::DictationStage::Starting | crate::dictation::DictationStage::Recording | crate::dictation::DictationStage::Finishing),
                 _ => true,
             };
             unsafe { let _ = EnableWindow(control, enabled); }
@@ -994,19 +1210,61 @@ fn layout(hwnd: HWND, width: i32, height: i32) -> Result<(), NativeError> {
             left,
             scale(292),
             content,
-            (height - scale(346)).max(1),
+            (height - scale(510)).max(1),
         ),
         (
             COPY_SELECTED,
             left,
-            (height - scale(42)).max(scale(310)),
+            (height - scale(208)).max(scale(310)),
+            scale(130),
+            scale(28),
+        ),
+        (
+            REFRESH_HISTORY,
+            scale(154),
+            height - scale(42),
+            scale(130),
+            scale(28),
+        ),
+        (
+            CLEAR_HISTORY,
+            scale(292),
+            height - scale(42),
             scale(130),
             scale(28),
         ),
         (
             COPY_ORIGINAL,
             scale(154),
-            (height - scale(42)).max(scale(310)),
+            (height - scale(208)).max(scale(310)),
+            scale(130),
+            scale(28),
+        ),
+        (
+            RECOVERY_LIST,
+            left,
+            (height - scale(166)).max(scale(310)),
+            content,
+            scale(82),
+        ),
+        (
+            RECOVER_SELECTED,
+            left,
+            (height - scale(76)).max(scale(400)),
+            scale(130),
+            scale(28),
+        ),
+        (
+            DELETE_RECOVERY,
+            scale(154),
+            (height - scale(76)).max(scale(400)),
+            scale(130),
+            scale(28),
+        ),
+        (
+            OPEN_SETTINGS,
+            left,
+            height - scale(42),
             scale(130),
             scale(28),
         ),
@@ -1015,6 +1273,18 @@ fn layout(hwnd: HWND, width: i32, height: i32) -> Result<(), NativeError> {
         api("MoveWindow", unsafe { MoveWindow(child, x, y, w, h, true) })?;
     }
     Ok(())
+}
+
+fn update_main_font(hwnd: HWND) -> Result<(), NativeError> {
+    let dpi = crate::dpi::window_dpi(hwnd);
+    MAIN_FONT.with(|slot| {
+        if slot.borrow().as_ref().is_none_or(|font| font.dpi != dpi) {
+            let font = crate::dpi::DpiFont::create(dpi)?;
+            font.apply_children(hwnd)?;
+            *slot.borrow_mut() = Some(font);
+        }
+        Ok(())
+    })
 }
 
 fn dispatch(
@@ -1066,6 +1336,11 @@ fn dispatch(
                 (RECONNECT, w!("Reconnect")),
                 (COPY_SELECTED, w!("Copy selected")),
                 (COPY_ORIGINAL, w!("Copy original")),
+                (RECOVER_SELECTED, w!("Recover selected")),
+                (DELETE_RECOVERY, w!("Delete recovery")),
+                (OPEN_SETTINGS, w!("Settings")),
+                (REFRESH_HISTORY, w!("Refresh History")),
+                (CLEAR_HISTORY, w!("Clear History")),
             ] {
                 let control = api("CreateWindowExW (button)", unsafe {
                     CreateWindowExW(
@@ -1111,6 +1386,15 @@ fn dispatch(
                         | WS_TABSTOP
                         | WS_VSCROLL
                         | WINDOW_STYLE((ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL) as u32),
+                ),
+                (
+                    RECOVERY_LIST,
+                    w!("LISTBOX"),
+                    WS_CHILD
+                        | WS_VISIBLE
+                        | WS_TABSTOP
+                        | WS_VSCROLL
+                        | WINDOW_STYLE(LBS_NOTIFY as u32),
                 ),
             ] {
                 let control = api("CreateWindowExW (history)", unsafe {
@@ -1160,8 +1444,55 @@ fn dispatch(
             }
             Ok(LRESULT(0))
         }
+        WM_HOTKEY => {
+            DICTATION_UI.with(|slot| {
+                if let Some(ui) = slot.borrow_mut().as_mut() {
+                    if let Err(error) = ui.hotkey(wparam.0 as i32, lparam.0 as usize) {
+                        eprintln!("Dictation shortcut action failed: {error}");
+                        notify(hwnd, "Dictation could not start", "The shortcut or Escape binding is unavailable, or the client is busy. No text was pasted.", true)?;
+                    }
+                }
+                Ok::<_, NativeError>(())
+            })?;
+            Ok(LRESULT(0))
+        }
+        WM_DPICHANGED => {
+            if lparam.0 == 0 {
+                return Err(NativeError::Verification(
+                    "DPI change did not include suggested bounds.",
+                ));
+            }
+            let bounds = unsafe { std::ptr::read_unaligned(lparam.0 as *const RECT) };
+            crate::dpi::suggested_bounds(hwnd, bounds)?;
+            update_main_font(hwnd)?;
+            Ok(LRESULT(0))
+        }
         WM_TIMER if wparam.0 == CLIENT_TIMER => {
             refresh_client_ui(hwnd)?;
+            let reload = RELOAD_CLIENT.with(|slot| slot.borrow_mut().take());
+            if let Some(options) = reload {
+                let host = CLIENT.with(|slot| slot.borrow_mut().take());
+                drop(host);
+                UI_HISTORY.with(|slot| *slot.borrow_mut() = None);
+                UI_RECOVERY.with(|slot| *slot.borrow_mut() = None);
+                attach_client(hwnd, options)?;
+                refresh_client_ui(hwnd)?;
+            }
+            Ok(LRESULT(0))
+        }
+        WM_TIMER if wparam.0 == INSTANCE_TIMER => {
+            COMPATIBLE_INSTANCE.with(|slot| {
+                if let Some(instance) = slot.borrow().as_ref() {
+                    match instance.poll()? {
+                        Some(crate::InstanceEvent::Quit) => unsafe {
+                            PostQuitMessage(0);
+                        },
+                        Some(crate::InstanceEvent::Activate) => show_status(hwnd),
+                        None => {}
+                    }
+                }
+                Ok::<_, NativeError>(())
+            })?;
             Ok(LRESULT(0))
         }
         WM_POWERBROADCAST => {
@@ -1324,10 +1655,40 @@ struct ClientAttachment;
 
 impl Drop for ClientAttachment {
     fn drop(&mut self) {
+        crate::settings_ui::close();
+        let ui = DICTATION_UI.with(|slot| slot.borrow_mut().take());
+        drop(ui);
         let host = CLIENT.with(|slot| slot.borrow_mut().take());
         drop(host);
         UI_HISTORY.with(|slot| *slot.borrow_mut() = None);
+        UI_RECOVERY.with(|slot| *slot.borrow_mut() = None);
+        let instance = COMPATIBLE_INSTANCE.with(|slot| slot.borrow_mut().take());
+        drop(instance);
     }
+}
+
+fn attach_client(hwnd: HWND, options: ClientOptions) -> Result<(), NativeError> {
+    let host = ClientHost::start(options)?;
+    DICTATION_UI.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if let Some(ui) = slot.as_mut() {
+            ui.replace_host(
+                host.commands.clone(),
+                host.policy.clone(),
+                host.clipboard_enabled,
+            );
+        } else {
+            *slot = Some(crate::dictation_ui::DictationUi::new(
+                hwnd,
+                host.commands.clone(),
+                host.policy.clone(),
+                host.clipboard_enabled,
+            )?);
+        }
+        Ok::<_, NativeError>(())
+    })?;
+    CLIENT.with(|slot| *slot.borrow_mut() = Some(host));
+    Ok(())
 }
 
 pub fn run_tray(options: TrayOptions) -> Result<(), NativeError> {
@@ -1348,15 +1709,32 @@ pub fn run_tray(options: TrayOptions) -> Result<(), NativeError> {
             ));
         }
     }
-    let _instance = match SingleInstance::acquire(&options.instance_key) {
-        Ok(guard) => guard,
-        Err(NativeError::AlreadyRunning) if options.ready_file.is_none() && !options.self_test => {
-            return request_activation(&options.instance_key);
+    let _client_attachment = ClientAttachment;
+    let installed = options
+        .client
+        .as_ref()
+        .is_some_and(|client| client.installed);
+    if installed {
+        let instance = crate::CompatibleInstance::acquire("VoicePrompt.SingleInstance")?;
+        if !instance.primary {
+            return instance.activate();
         }
-        Err(error) => return Err(error),
+        COMPATIBLE_INSTANCE.with(|slot| *slot.borrow_mut() = Some(instance));
+    }
+    let _instance = if installed {
+        None
+    } else {
+        Some(match SingleInstance::acquire(&options.instance_key) {
+            Ok(guard) => guard,
+            Err(NativeError::AlreadyRunning)
+                if options.ready_file.is_none() && !options.self_test =>
+            {
+                return request_activation(&options.instance_key);
+            }
+            Err(error) => return Err(error),
+        })
     };
     CALLBACK_ERROR.with(|slot| *slot.borrow_mut() = None);
-    let _client_attachment = ClientAttachment;
     api("SetProcessDpiAwarenessContext", unsafe {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)
     })?;
@@ -1367,7 +1745,34 @@ pub fn run_tray(options: TrayOptions) -> Result<(), NativeError> {
         .0,
     );
     let name = class_name(&options.instance_key)?;
-    let icon = api("LoadIconW", unsafe { LoadIconW(None, IDI_APPLICATION) })?;
+    let owned_icon = if installed {
+        let executable = std::env::current_exe()
+            .map_err(|error| NativeError::Io("Get installed icon directory", error))?;
+        let path = executable
+            .parent()
+            .ok_or(NativeError::Verification(
+                "Missing installed executable parent.",
+            ))?
+            .join("app.ico");
+        let path = wide(path.as_os_str())?;
+        let handle = api("Load installed VoicePrompt icon", unsafe {
+            LoadImageW(
+                None,
+                PCWSTR(path.as_ptr()),
+                IMAGE_ICON,
+                0,
+                0,
+                LR_LOADFROMFILE | LR_DEFAULTSIZE,
+            )
+        })?;
+        Some(OwnedIcon(HICON(handle.0)))
+    } else {
+        None
+    };
+    let icon = match owned_icon.as_ref() {
+        Some(icon) => icon.0,
+        None => api("LoadIconW", unsafe { LoadIconW(None, IDI_APPLICATION) })?,
+    };
     let cursor = api("LoadCursorW", unsafe { LoadCursorW(None, IDC_ARROW) })?;
     let class = WNDCLASSW {
         lpfnWndProc: Some(window_proc),
@@ -1385,17 +1790,22 @@ pub fn run_tray(options: TrayOptions) -> Result<(), NativeError> {
         ));
     }
     let registered = RegisteredClass { name, instance };
+    let _font_lifetime = MainFontLifetime;
     let previous_focus = unsafe { GetForegroundWindow() };
     let hwnd = api("CreateWindowExW (pilot)", unsafe {
         CreateWindowExW(
             WINDOW_EX_STYLE::default(),
             PCWSTR(registered.name.as_ptr()),
-            w!("VoicePrompt Rust pilot - native foundation"),
+            if installed {
+                w!("VoicePrompt")
+            } else {
+                w!("VoicePrompt - Rust migration")
+            },
             WS_OVERLAPPEDWINDOW,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
             570,
-            560,
+            730,
             None,
             None,
             Some(instance),
@@ -1403,6 +1813,25 @@ pub fn run_tray(options: TrayOptions) -> Result<(), NativeError> {
         )
     })?;
     let _window = OwnedWindow(hwnd);
+    update_main_font(hwnd)?;
+    let dpi = crate::dpi::window_dpi(hwnd) as i32;
+    api("Size native client for initial DPI", unsafe {
+        SetWindowPos(
+            hwnd,
+            None,
+            0,
+            0,
+            570 * dpi / 96,
+            730 * dpi / 96,
+            SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+        )
+    })?;
+    if installed && unsafe { SetTimer(Some(hwnd), INSTANCE_TIMER, 100, None) } == 0 {
+        return Err(NativeError::Api(
+            "Set compatible instance timer",
+            windows::core::Error::from_thread(),
+        ));
+    }
     if let Some(error) = CALLBACK_ERROR.with(|slot| slot.borrow_mut().take()) {
         return Err(error);
     }
@@ -1436,8 +1865,8 @@ pub fn run_tray(options: TrayOptions) -> Result<(), NativeError> {
                 "Self-test cannot use OAuth configuration or the system clipboard.",
             ));
         }
-        let host = ClientHost::start(client)?;
-        CLIENT.with(|slot| *slot.borrow_mut() = Some(host));
+        attach_client(hwnd, client)?;
+        CLIENT_TICK.with(|tick| *tick.borrow_mut() = 100);
         if unsafe { SetTimer(Some(hwnd), CLIENT_TIMER, 100, None) } == 0 {
             return Err(NativeError::Api(
                 "SetTimer (client UI)",
@@ -1459,6 +1888,7 @@ pub fn run_tray(options: TrayOptions) -> Result<(), NativeError> {
                         "Isolated self-test must not sign in or access the clipboard.",
                     ));
                 }
+                crate::settings_ui::self_test(hwnd, &host.status.borrow().settings)?;
                 let list = api("GetDlgItem (history self-test)", unsafe {
                     GetDlgItem(Some(hwnd), HISTORY_LIST as i32)
                 })?;
@@ -1496,7 +1926,9 @@ pub fn run_tray(options: TrayOptions) -> Result<(), NativeError> {
         if result.0 == 0 {
             break;
         }
-        if unsafe { IsDialogMessageW(hwnd, &message) }.as_bool() {
+        if crate::settings_ui::route(&message)
+            || unsafe { IsDialogMessageW(hwnd, &message) }.as_bool()
+        {
             continue;
         }
         unsafe {

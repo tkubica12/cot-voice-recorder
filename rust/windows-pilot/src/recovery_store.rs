@@ -34,7 +34,7 @@ pub struct NativeRecoveryJournal {
     deleted: bool,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct NativeRecoveryInfo {
     pub id: String,
     pub created_at_ticks: i64,

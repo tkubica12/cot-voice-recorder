@@ -104,13 +104,19 @@ hooks taking an explicit `tokens.bin` path. Never point tests at an installed
 app's state. They are not interactive sign-in commands.
 
 The native explicit-state tray now wires the browser flow and delivery coordinator.
-Remaining: dictation session/capture/outbox integration, full native Settings/Recovery,
-installer/upgrade and real Google/clipboard/device acceptance. Do not label the local
+Remaining: deeper direct fault/E2E/performance acceptance, actual installer upgrade,
+and real Google/clipboard/device/accessibility acceptance. Do not label the local
 fixture flow as end-to-end production/Google validation.
 
-The API/transport primitives above now exist; the remaining dictation work is the
-session engines, capture/hotkeys/overlay/paste, polishing/outbox scheduling and full
-native UI wiring. Auth status publication occurs under the session lock; a delayed
+Native capture/session/controller, Settings/History/Recovery and outbox scheduling
+are now wired. The current native installer is build-only and has not been installed.
+The backend summary model is also checked locally with `--backend-model` on the
+dictation parity runner (requires the existing backend Python environment);
+Rust-only CI does not run that optional Python-model check. This exposed and fixed
+the summary receipt's absence of `character_count`.
+
+The API/transport primitives and native wiring above now exist. Auth status
+publication occurs under the session lock; a delayed
 refresh cannot restore SignedIn or vend a stale bearer after sign-out.
 
 ```powershell

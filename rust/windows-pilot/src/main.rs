@@ -9,6 +9,35 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    if args.len() == 2
+        && matches!(
+            args[0].to_str(),
+            Some("--instance-hold-fixture" | "--instance-quit-fixture")
+        )
+    {
+        use voiceprompt_windows_pilot::{CompatibleInstance, InstanceEvent};
+        let key = args[1].to_str().ok_or("Invalid fixture instance key.")?;
+        voiceprompt_windows_pilot::validate_instance_key(key)?;
+        let instance = CompatibleInstance::acquire(&format!("VoicePrompt.RustFixture.{key}"))?;
+        if args[0] == "--instance-quit-fixture" {
+            instance.request_quit()?;
+            instance.wait_for_exit(std::time::Duration::from_secs(5))?;
+            return Ok(());
+        }
+        if !instance.primary {
+            return Err("Fixture instance already exists.".into());
+        }
+        std::io::stdout().lock().write_all(b"ready\n")?;
+        std::io::stdout().lock().flush()?;
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while std::time::Instant::now() < until {
+            if matches!(instance.poll()?, Some(InstanceEvent::Quit)) {
+                return Ok(());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        return Err("Fixture primary did not receive a bounded quit.".into());
+    }
     if args.len() == 3 && args[0] == "--recovery-delete-idle-fixture" {
         use voiceprompt_windows_pilot::{DEFAULT_RECOVERY_QUOTA, NativeRecoveryStore};
         let store = NativeRecoveryStore::new(PathBuf::from(&args[1]), DEFAULT_RECOVERY_QUOTA)?;
@@ -242,12 +271,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     };
     let mut state_directory = None;
     let mut oauth_config = None;
+    let mut installed = std::env::current_exe()?
+        .file_name()
+        .is_some_and(|name| name == "VoicePrompt.exe");
     let mut quit = false;
     let mut position = 0;
     while position < args.len() {
         match args[position].to_str() {
             Some("--self-test") => options.self_test = true,
             Some("--quit") => quit = true,
+            Some("--installed") => installed = true,
             Some("--instance-key" | "--ready-file" | "--run-for-seconds" | "--state-directory" | "--oauth-config") => {
                 let option = args[position].to_str().ok_or("Invalid option encoding.")?;
                 position += 1;
@@ -259,6 +292,31 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     "--state-directory" => state_directory = Some(PathBuf::from(value)),
                     "--oauth-config" => oauth_config = Some(PathBuf::from(value)),
                     _ => unreachable!(),
+                }
+                if installed {
+                    if options.self_test || options.ready_file.is_some() || state_directory.is_some() || oauth_config.is_some() {
+                        return Err("Installed mode cannot be combined with fixture/benchmark/explicit-state startup.".into());
+                    }
+                    if quit {
+                        let instance = voiceprompt_windows_pilot::CompatibleInstance::acquire("VoicePrompt.SingleInstance")?;
+                        if !instance.primary {
+                            instance.request_quit()?;
+                            instance.wait_for_exit(std::time::Duration::from_secs(20))?;
+                        }
+                        return Ok(());
+                    }
+                    let local = std::env::var_os("LOCALAPPDATA").ok_or("LOCALAPPDATA is unavailable.")?;
+                    let path = PathBuf::from(local).join("VoicePrompt");
+                    std::fs::create_dir_all(&path)?;
+                    let configured = std::env::var_os("VOICEPROMPT_GOOGLE_DESKTOP_CLIENT").map(PathBuf::from);
+                    let beside = std::env::current_exe()?.parent().ok_or("Missing executable directory.")?.join("google-desktop-client.json");
+                    if let Some(configured) = configured { oauth_config = Some(configured); }
+                    else {
+                        for candidate in [path.join("google-desktop-client.json"), beside] {
+                            if candidate.try_exists()? { oauth_config = Some(candidate); break; }
+                        }
+                    }
+                    state_directory = Some(path);
                 }
             }
             _ => return Err("Usage: VoicePromptRustPilot [--self-test] [--instance-key key] [--ready-file path] [--run-for-seconds 1-3600] [--state-directory absolute-path [--oauth-config path]] | --quit --instance-key key | explicit-path cache/history/settings fixture commands".into()),
@@ -278,6 +336,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             state_directory,
             oauth_config,
             clipboard_enabled: !options.self_test,
+            installed,
         });
     }
     if quit {
@@ -322,6 +381,8 @@ fn main() {
                         | "--recovery-journal-fixture"
                         | "--recovery-open-journal-fixture"
                         | "--recovery-delete-idle-fixture"
+                        | "--instance-hold-fixture"
+                        | "--instance-quit-fixture"
                 )
             )
         });

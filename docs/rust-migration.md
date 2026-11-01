@@ -17,10 +17,10 @@ zustat u klasicke ACA; na ACA Express se v teto migraci neprechazi.
 | Nativni Windows zaklad | Tray, izolovana instance a DPAPI implementovany; lokalni self-test a C# DPAPI parity prosly |
 | Mereni nativniho zakladu | Dokonceno: 30 startu a 301 vzorku za pet minut; vysledky nize |
 | CI nativniho inkrementu | Windows i Linux prosly na commitu `4b040a8` |
-| OAuth/token-store/PubSub klient | Explicit-path native sign-in/out, realtime status a coordinator/history/clipboard integrace implementovany; skutecny Google/clipboard E2E zbyva |
-| Diktovani/recovery UI | Recovery v1-v4 codec, durable journal, quota/ownership a DPAPI/C# parity implementovany; capture/enginy, outbox upload a UI zbyvaji |
+| OAuth/token-store/PubSub klient | Native sign-in/out, realtime/history/clipboard a explicit installed-mode wiring implementovany; skutecny Google/clipboard E2E zbyva |
+| Diktovani/recovery UI | Native microphone/hotkeys/overlay/paste controller, oba enginy, journal, polishing a outbox implementovany; real-world a rozsahlejsi fault/E2E akceptace zbyva |
 | History cache | JSON/retence/200 entries, atomicka persistence, native list/text a manual copy latest/selected/original implementovany; C# file parity overena |
-| Settings | Vsechna aktualni C# JSON pole a obousmerna file parity; nativne zatim pouze pause, ne kompletni Settings UI ani autostart |
+| Settings a instalator | Vsechna C# JSON pole, nativni Settings/History/Recovery, DPI fonty, per-user autostart a kompatibilni IPC; installer sestaven, nebyl instalovan |
 | Rust cloud API, worker, cleanup | Zatim neprepsano |
 | Hosting | Klasicka ACA zustava: API, KEDA queue worker a hourly cleanup Job; Express byl uzivatelem zrusen |
 
@@ -572,3 +572,46 @@ Jde o knihovni engine povrchy, ne kompletni Windows aplikaci. Native microphone,
 hotkey/overlay/focus/clipboard/paste controller, polishing/outbox scheduling,
 full Settings/Recovery a installer se jeste musi napojit. Zadny test nespustil
 mikrofon, neprecetl osobni clipboard/tokeny ani nezavolal placene AI.
+
+## Native device/UI wiring a build-only installer
+
+Native controller nyni zapojuje mikrofon (WinMM, stejna WaveIn cesta a format jako
+C#), bounded queue 50x40 ms, oba enginy, nonactivating overlay, hold/toggle/cancel,
+History a Recovery. Target selection je pri startu hold nebo stopu toggle;
+focus/process/thread/clipboard sequence a modifier guards chrani jediny Ctrl+V
+bez Enter. Sequence je zachycena uvnitr clipboard publication locku. Overload,
+disk/device chyby a stop timeout zachovavaji Recovery a nepaste partial text.
+
+Settings ma aktualni C# pole a standardni native controls, keyboard navigation,
+DPI-specific system fonts a per-monitor bounds. Save while idle zachovava nezname
+JSON fields, atomicky persistuje, znovu pripoji native client a pouziva jen HKCU Run.
+Native History umi cloud Refresh bez autocopy, Clear s confirmation a obe verze textu.
+Legacy dictation History ID je puvodni `dictation-<N-uuid>`, streaming dashed UUID.
+Explicit discard pred delivery odstrani svuj History entry i audio/outbox; completed
+audit Recovery zachovava original fixed completion a puvodni final/raw text.
+
+Opt-in polishing pouziva single physical request, original-indexed literal unique
+edits, bounded rolling windows a frozen delivery. Late odpovedi nemeni pasted text;
+unsent tail neni AI failure. Outbox drenuje oddelene po 30 s jen v idle pod puvodni
+URL/newline/email binding. Ack smaze outbox, transient/409 ho podrzi, original
+completion fixuje 48h expiry. Audit neblokuje paste a nevysila autocopy notification.
+
+Prime porovnani se skutecnym backend wire modelem odhalilo chybejici
+`character_count` ve summary receiptu; Rust ho uz nevymysli jako required field.
+Local `--backend-model` parity cte aktualni Pydantic model a skutecny Rust parser.
+Rust-only CI tento volitelny backend-environment check neprovadi; C#/Rust text a
+checkpoint parity dale bezi samostatne.
+
+Per-user native Inno installer je sestaven, nikoli spusten nebo instalovan.
+Bundle obsahuje jen exe a repo icon, zadnou konfiguraci/secrets nebo user data.
+Source zachovava AppId, jeden Run value a stejny C# mutex/auto-reset events;
+graceful --quit timeout abortuje upgrade bez force-kill. Obousmerny real-process
+C#/Rust IPC test pouziva nahodne fixture namespace. `--installed` runtime cesta
+je napsana, ale nebyla aktivovana nad osobnim stavem; isolated mode ho odmita.
+
+Lokalni evidence: 115 Rust tests, fmt/Clippy/release, sest native lifecycle
+groups vcetne hidden Settings value/focus parity, pet platform/DPAPI/IPC groups,
+ctyri text/audio parity a actual backend summary check prosly. Installer build
+prosel se stavajicim Inno compilerem. Windows real Google/microphone/paste,
+screen-reader/high-DPI/installer upgrade, feature-matched performance a cloudove
+Rust etapy zustavaji neprovedene. Tyto checky nejsou `PASS`.

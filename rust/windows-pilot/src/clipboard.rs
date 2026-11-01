@@ -5,7 +5,7 @@ use windows::Win32::Foundation::{
     ERROR_SUCCESS, GetLastError, GlobalFree, HANDLE, HGLOBAL, HWND, SetLastError,
 };
 use windows::Win32::System::DataExchange::{
-    CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
+    CloseClipboard, EmptyClipboard, GetClipboardSequenceNumber, OpenClipboard, SetClipboardData,
 };
 use windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock};
 
@@ -39,6 +39,10 @@ fn unicode_text(text: &str) -> Result<Vec<u16>, ClipboardError> {
 }
 
 pub(crate) fn write(owner: HWND, text: &str) -> Result<(), ClipboardError> {
+    write_with_sequence(owner, text).map(|_| ())
+}
+
+pub(crate) fn write_with_sequence(owner: HWND, text: &str) -> Result<u32, ClipboardError> {
     let encoded = unicode_text(text)?;
     let bytes = encoded
         .len()
@@ -83,7 +87,7 @@ pub(crate) fn write(owner: HWND, text: &str) -> Result<(), ClipboardError> {
     })?;
     // CF_UNICODETEXT is rendered immediately; only successful publication transfers ownership.
     buffer.0 = None;
-    Ok(())
+    Ok(unsafe { GetClipboardSequenceNumber() })
 }
 
 #[cfg(test)]

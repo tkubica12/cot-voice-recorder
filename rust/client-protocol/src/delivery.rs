@@ -46,6 +46,16 @@ impl DeliveryPolicy {
         self.0.load(Ordering::Acquire) & PAUSED != 0
     }
 
+    pub fn can_upload_audit(&self) -> bool {
+        self.0.load(Ordering::Acquire) & (DICTATION_BUSY | INACTIVE) == 0
+    }
+
+    pub fn authenticated(&self) -> bool {
+        self.0.load(Ordering::Acquire) & INACTIVE == 0
+    }
+    pub fn dictation_busy(&self) -> bool {
+        self.0.load(Ordering::Acquire) & DICTATION_BUSY != 0
+    }
     pub fn allows_auto_copy(&self) -> bool {
         let flags = self.0.load(Ordering::Acquire);
         if flags & INACTIVE != 0 {

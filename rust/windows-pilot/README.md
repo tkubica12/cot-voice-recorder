@@ -5,11 +5,12 @@ production replacement. Its default mode remains the platform-only foundation.
 Closing the window or pressing Esc hides it. A second ordinary launch activates
 the existing pilot; benchmark launches with a readiness path reject duplicates.
 
-Without `--state-directory` it has no Google login, network connection, clipboard
+Without `--state-directory` (and outside `--installed` mode) it has no Google login, network connection, clipboard
 or transcript/history access. With that explicit argument it loads only
 `settings.json`, `tokens.bin` and `history.json` in the selected existing absolute
-directory. `--oauth-config` is also explicit; no installed configuration or user
-state is discovered. Its
+directory. `--oauth-config` is also explicit. Isolated mode refuses the real
+installed state directory and its descendants; no installed tokens/history/audio
+are discovered. Its
 `Local\VoicePrompt.RustPilot.*` mutexes and window classes are separate from C#.
 It uses a stock system icon until the client packaging stage.
 
@@ -68,8 +69,9 @@ list and read-only text view, Copy latest/selected/original, persisted pause and
 reconnect. User-triggered sign-in opens the system browser and uses the bounded
 PKCE loopback flow. The realtime path fetches with a Google ID token, saves history
 before clipboard delivery and queues work to the native UI thread. No WebView
-or .NET runtime is used. No microphone, dictation, Recovery, global shortcut or
-autostart registration is implemented yet.
+or .NET runtime is used. Native microphone, both dictation modes, global shortcuts,
+nonactivating overlay, guarded paste, Recovery and audit outbox are now wired.
+These surfaces are implemented but have not passed real-device or production E2E.
 
 ```powershell
 # Use an explicitly chosen isolated directory; do not use installed app state for tests.
@@ -92,9 +94,33 @@ Notifications contain generic readiness/fallback messages, not transcript text.
 Settings preserve every current C# field and retain unknown fields on Rust writes.
 Invalid/corrupt settings fail explicitly instead of silently selecting production
 defaults. Per-minute history cleanup persists retention; read errors preserve files.
-Native controls provide keyboard dialog navigation and DPI-scaled geometry, but
-full accessibility/font/DPI acceptance and the complete Settings UI remain pending.
-This is not installer/upgrade single-instance compatibility with C#.
+Native Settings includes the current backend, pause, autostart, shortcut/language,
+streaming/polishing and final-wait fields. Saving while idle persists atomically,
+reconnects the native client and applies the one per-user Run mechanism. Standard
+controls provide keyboard dialog navigation, DPI-specific system fonts and
+per-monitor bounds. Human screen-reader/high-DPI acceptance remains pending.
+History supports manual cloud Refresh (no autocopy), Clear with confirmation and
+copy latest/selected/original; Recovery supports list/recover/explicit deletion.
+
+The microphone adapter deliberately preserves the existing WinMM/WaveIn path:
+16 kHz mono PCM16, 40 ms buffers and a bounded 50-buffer disk-consumer queue.
+WinMM is legacy; WASAPI is Microsoft's recommendation for new designs, but changing
+capture engines and resampling concurrently would invalidate behavior/latency parity.
+Overload and device/storage failures stop explicitly with durable recovery retained.
+Tests exercise synthetic queues, not a real microphone.
+
+Hold selects its focus target at Start, hands-free at Stop. The guard latches
+window/process/thread/focused-control changes, waits for released modifiers,
+checks the clipboard sequence captured inside the publication lock and sends
+exactly one Ctrl+V without Enter. Stale/cancelled/auth-invalidated UI jobs cannot
+paste. The overlay does not activate a foreground app. Real paste has not been tested.
+
+Polishing remains opt-in, single physical request, bounded rolling windows and
+literal unique nonoverlapping edits against the original text. Stop freezes late
+responses and leaves unprocessed tails raw; failures stay in diagnostics/History.
+Audit freezes before delivery and drains independently every 30 seconds while idle.
+Only acknowledged upload deletes the outbox, with fixed original completion/expiry.
+Pause does not block explicit manual copy or audit upload; account/backend changes do.
 
 ## Recovery codec parity, not the recovery runtime
 
@@ -154,7 +180,27 @@ Backend binding preserves the original URL/newline/email format and is checked a
 under the token session lock; sign-out cancels a bound request before its text is used.
 
 Device capture/hotkeys/overlay/paste, polishing/outbox scheduling and native Recovery
-UI still need wiring. Library/session checks are not complete interactive dictation E2E.
+UI are now wired. Library/session checks are not complete interactive dictation E2E.
+
+## Build-only migration installer
+
+`scripts\Build-RustWindowsInstaller.ps1` builds the release executable and an
+Inno Setup per-user x64 installer under ignored `rust\target\installer-output`.
+It uses the existing installed compiler, never installs tooling, never runs the
+installer and stages only the executable and repository icon. It bundles no OAuth
+configuration, tokens, history, settings or recovery and needs no .NET runtime.
+
+The source installer reuses the existing AppId/Run value, preserves user data and
+requests graceful synchronous `--quit`; inability to exit aborts, with no force-kill.
+The native compatible-instance adapter uses the exact C# mutex/auto-reset events.
+Bidirectional tests run real C#/Rust processes in randomized fixture namespaces,
+not the installed application's namespace.
+
+`--installed` (also selected by packaged `VoicePrompt.exe`) is the runtime cutover
+path: it uses the compatible instance guard and existing per-user configuration and
+state. **Do not run it or the installer for unattended tests.** Actual installation,
+upgrade/rollback and personal-state acceptance require the later explicit consent.
+The built installer is a migration preview, not a released or accepted replacement.
 
 The desktop-only lifecycle runner uses temporary synthetic caches. Its self-test
 disables both OAuth configuration and the real clipboard and checks hidden startup

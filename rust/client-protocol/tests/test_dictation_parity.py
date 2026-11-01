@@ -32,6 +32,36 @@ def compare(mode: str, data: bytes, *, is_json: bool = False) -> None:
         raise AssertionError(f"{mode} parity mismatch")
 
 
+def check_backend_model() -> None:
+    import sys
+    from datetime import UTC, datetime, timedelta
+
+    sys.path.insert(
+        0, str(Path(__file__).resolve().parents[3].joinpath("backend", "src"))
+    )
+    from voice_recorder.models import TranscriptSummary
+
+    now = datetime.now(UTC)
+    summary = TranscriptSummary(
+        transcript_id="synthetic-transcript",
+        recording_id="synthetic-recording",
+        preview="synthetic",
+        completed_at=now,
+        expires_at=now + timedelta(hours=48),
+        language="auto",
+        refine_model="none",
+        source="windows_dictation",
+        transcribe_model="MAI-Transcribe-2-Streaming",
+    )
+    data = summary.model_dump_json().encode()
+    if (
+        b"character_count" in data
+        or run([str(CLIENT)], "summary-check", data) != b"synthetic-transcript"
+    ):
+        raise AssertionError("Actual backend summary/Rust client parity failed")
+    print("Actual backend model -> Rust summary parity: PASS")
+
+
 class DictationParityTests(unittest.TestCase):
     def test_normalization_matches_bmp_and_supplementary_compatibility_fixtures(
         self,
@@ -129,7 +159,14 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--client", type=Path, required=True)
     parser.add_argument("--reference", type=Path, required=True)
+    parser.add_argument(
+        "--backend-model",
+        action="store_true",
+        help="Also use the installed backend Python dependencies; not run by Rust-only CI",
+    )
     args = parser.parse_args()
     CLIENT = args.client.resolve(strict=True)
     REFERENCE = args.reference.resolve(strict=True)
+    if args.backend_model:
+        check_backend_model()
     unittest.main(argv=[__file__], verbosity=2)
