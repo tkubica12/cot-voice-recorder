@@ -15,6 +15,61 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Err("Entity fixture exceeds supported bounds.".into());
     }
     let values: serde_json::Value = serde_json::from_slice(&data)?;
+    if mode == "archive" {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        let result = runtime.block_on(async {
+            let config = voiceprompt_cloud::config::Config::parse(&[
+                ("VR_ENVIRONMENT", "test"),
+                ("VR_GOOGLE_ALLOWED_AUDIENCES", "fixture"),
+                ("VR_ALLOWLISTED_EMAIL", "fixture@example.invalid"),
+                ("VR_STORAGE_ACCOUNT_NAME", "fixture123"),
+                ("VR_FOUNDRY_ENDPOINT", "https://fixture.invalid/"),
+                ("VR_SPEECH_ENDPOINT", "https://fixture.invalid/"),
+                ("VR_WEBPUBSUB_ENDPOINT", "https://fixture.invalid/"),
+            ].into_iter().map(|(key, value)| (key.into(), value.into())).collect())?;
+            let config = std::sync::Arc::new(config);
+            let services = voiceprompt_cloud::services::Services::new(config.clone(),
+                voiceprompt_cloud::repository::Repository::memory(),
+                voiceprompt_cloud::ports::Blobs::memory(), voiceprompt_cloud::ports::Queue::memory())?;
+            let payload = serde_json::from_value(values["payload"].clone()).map_err(|_| voiceprompt_cloud::problem::Problem::validation("Invalid synthetic archive payload."))?;
+            let transcript = services.archive(values["id"].as_str().unwrap_or(""), payload).await?;
+            let full = services.transcript(&transcript.transcript_id).await?;
+            let envelope = services.blobs.get(&config.transcript_container, &transcript.body_path, 16*1024*1024).await
+                .map_err(|_| voiceprompt_cloud::problem::Problem::internal())?;
+            Ok::<_, voiceprompt_cloud::problem::Problem>(serde_json::json!({
+                "status":200, "summary":voiceprompt_cloud::models::summary(&transcript), "full":full,
+                "envelope":base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &envelope),
+                "digest":transcript.content_digest, "path":transcript.body_path,
+            }))
+        });
+        let result = match result {
+            Ok(result) => result,
+            Err(error) => serde_json::json!({"status":error.status, "code":error.code}),
+        };
+        std::io::stdout()
+            .lock()
+            .write_all(&serde_json::to_vec(&result)?)?;
+        return Ok(());
+    }
+    if mode == "edits" {
+        let text = values["text"].as_str().ok_or("Missing text fixture.")?;
+        let payload = values["payload"]
+            .as_str()
+            .ok_or("Missing edit payload fixture.")?;
+        let previous = values["previous"].as_str().unwrap_or("");
+        let result = match voiceprompt_cloud::edits::validate(text, payload, previous) {
+            Ok(result) => {
+                serde_json::json!({"accepted":true,"text":result.text,"edits":result.edits})
+            }
+            Err(error) => serde_json::json!({"accepted":false,"category":error.0}),
+        };
+        std::io::stdout()
+            .lock()
+            .write_all(&serde_json::to_vec(&result)?)?;
+        return Ok(());
+    }
     if let Some(kind) = mode.strip_prefix("encode-") {
         let entity = match kind {
             "recording" => serde_json::from_value::<Recording>(values)?.entity()?,

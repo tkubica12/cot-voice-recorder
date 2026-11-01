@@ -11,7 +11,7 @@ pub struct Config {
     pub email: String,
     pub storage_account: String,
     pub foundry: Url,
-    pub speech: Url,
+    pub speech: Option<Url>,
     pub webpubsub: Url,
     pub hub: String,
     pub group: String,
@@ -26,6 +26,14 @@ pub struct Config {
     pub recordings_table: String,
     pub chunks_table: String,
     pub transcripts_table: String,
+    pub foundry_api_version: String,
+    pub speech_api_version: String,
+    pub speech_model: String,
+    pub speech_style: String,
+    pub speech_timeout: f64,
+    pub transcribe_provider: String,
+    pub transcribe_deployment: String,
+    pub webpubsub_ttl_minutes: u32,
 }
 
 fn endpoint(value: &str, allow_loopback: bool) -> Result<Url, Problem> {
@@ -150,7 +158,11 @@ impl Config {
                 allow_test,
             )?,
             foundry: endpoint(&required("VR_FOUNDRY_ENDPOINT")?, allow_test)?,
-            speech: endpoint(&required("VR_SPEECH_ENDPOINT")?, allow_test)?,
+            speech: values
+                .get("VR_SPEECH_ENDPOINT")
+                .filter(|value| !value.trim().is_empty())
+                .map(|value| endpoint(value, allow_test))
+                .transpose()?,
             webpubsub: endpoint(&required("VR_WEBPUBSUB_ENDPOINT")?, allow_test)?,
             hub: value("VR_WEBPUBSUB_HUB", "transcripts"),
             group: value("VR_WEBPUBSUB_GROUP", "user"),
@@ -171,6 +183,18 @@ impl Config {
             recordings_table: value("VR_RECORDINGS_TABLE", "recordings"),
             chunks_table: value("VR_CHUNKS_TABLE", "chunks"),
             transcripts_table: value("VR_TRANSCRIPTS_TABLE", "transcripts"),
+            foundry_api_version: value("VR_FOUNDRY_API_VERSION", "2024-10-21"),
+            speech_api_version: value("VR_SPEECH_API_VERSION", "2025-10-15"),
+            speech_model: value("VR_SPEECH_MODEL", "MAI-Transcribe-2"),
+            speech_style: value("VR_SPEECH_TRANSCRIBE_STYLE", "verbatim"),
+            speech_timeout: value("VR_SPEECH_TIMEOUT_SECONDS", "180")
+                .parse()
+                .map_err(|_| Problem::validation("Invalid speech timeout."))?,
+            transcribe_provider: value("VR_TRANSCRIBE_PROVIDER", "azure_speech"),
+            transcribe_deployment: value("VR_TRANSCRIBE_DEPLOYMENT", "gpt-4o-transcribe"),
+            webpubsub_ttl_minutes: value("VR_WEBPUBSUB_TOKEN_TTL_MINUTES", "60")
+                .parse()
+                .map_err(|_| Problem::validation("Invalid Web PubSub token lifetime."))?,
         };
         for name in [
             &config.hub,
@@ -185,12 +209,31 @@ impl Config {
             &config.recordings_table,
             &config.chunks_table,
             &config.transcripts_table,
+            &config.transcribe_deployment,
+            &config.foundry_api_version,
+            &config.speech_api_version,
+            &config.speech_model,
         ] {
             if name.trim().is_empty() || name.len() > 1024 || name.chars().any(char::is_control) {
                 return Err(Problem::validation(
                     "Server resource/deployment names must be nonempty and bounded.",
                 ));
             }
+        }
+        if !matches!(config.speech_style.as_str(), "verbatim" | "clean")
+            || !config.speech_timeout.is_finite()
+            || config.speech_timeout <= 0.0
+            || config.speech_timeout > 3600.0
+            || !matches!(
+                config.transcribe_provider.as_str(),
+                "azure_speech" | "azure_openai"
+            )
+            || config.transcribe_provider == "azure_speech" && config.speech.is_none()
+            || !(1..=1440).contains(&config.webpubsub_ttl_minutes)
+        {
+            return Err(Problem::validation(
+                "Invalid transcription provider/style/timeout.",
+            ));
         }
         Ok(config)
     }
@@ -240,5 +283,19 @@ mod tests {
         let mut values = valid();
         values.insert("VR_GOOGLE_JWKS_URI".into(), "http://127.0.0.1:1234/".into());
         assert!(Config::parse(&values).is_err());
+    }
+    #[test]
+    fn legacy_openai_can_omit_speech_and_model_timeouts_remain_finite() {
+        let mut values = valid();
+        values.remove("VR_SPEECH_ENDPOINT");
+        assert!(Config::parse(&values).is_err());
+        values.insert("VR_TRANSCRIBE_PROVIDER".into(), "azure_openai".into());
+        assert!(Config::parse(&values).unwrap().speech.is_none());
+        values.insert("VR_SPEECH_TIMEOUT_SECONDS".into(), "180.5".into());
+        assert_eq!(Config::parse(&values).unwrap().speech_timeout, 180.5);
+        for value in ["NaN", "inf", "-1", "0", "bad"] {
+            values.insert("VR_SPEECH_TIMEOUT_SECONDS".into(), value.into());
+            assert!(Config::parse(&values).is_err(), "{value}");
+        }
     }
 }

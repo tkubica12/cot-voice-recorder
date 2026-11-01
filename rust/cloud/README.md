@@ -18,9 +18,16 @@ Implemented:
   replacement requires the exact opaque ETag and rejects wildcard/unconditional
   updates. Queue renewal replaces its pop receipt; stale receipts are explicit.
 - Stable RFC 9457 problem response fields and authentication challenge.
+- Recording lifecycle/upload/completion/finalize reservation and transcript/audit
+  services, wired through the actual Axum router. Readiness remains false until
+  production bootstrap, which is not implemented yet.
+- Batch MAI Speech and alternate Foundry transcription, exact-prompt literal-edit
+  refinement, and Web PubSub REST negotiation/preview-only delivery. Ephemeral
+  dictation and refinement retain four/two physical slots after waiter cancellation
+  or timeout. Provider bodies are not exposed.
 
 Stored domain/entity codecs, strict wire defaults, content-digest/sample validation
-and conditional repository primitives now exist. API handlers, live MAI relay,
+and conditional repository primitives now exist. Live MAI relay,
 ordered worker replay, finalization, cleanup, container/ACA wiring and full external
 contracts remain unfinished. Blob enumeration and production bootstrap are not wired.
 Do not deploy the current library or run an alternate worker over existing data.
@@ -31,9 +38,10 @@ cargo test --manifest-path rust\Cargo.toml --offline --locked -p voiceprompt-clo
 cargo clippy --manifest-path rust\Cargo.toml --workspace --offline --locked --all-targets -- -D warnings
 ```
 
-The fourteen direct cloud tests use generated in-memory RSA keys and local HTTP
+The 35 direct cloud tests use generated in-memory RSA keys and local HTTP
 fixtures. They exercise real signature validation, cached JWKS, rejected
-HS256/unsigned/wrong claims, UAMI selection, Table CAS and Queue lease receipts.
+HS256/unsigned/wrong claims, UAMI selection, Table CAS, Queue lease receipts,
+actual HTTP handlers, multipart/provider contracts and physical-call cancellation.
 No Azure, paid model, production data or credentials are used. These are not
 private-endpoint/UAMI acceptance against the actual cloud.
 
@@ -74,3 +82,19 @@ REST references: [ACA identity endpoint](https://learn.microsoft.com/azure/conta
 [Table conditional replacement](https://learn.microsoft.com/rest/api/storageservices/update-entity2).
 The Azure topology and full acceptance criteria are in
 [`docs\rust-migration.md`](../../docs/rust-migration.md).
+
+## Direct service and provider compatibility
+
+The edit runner compares the current Python validator and exact existing system
+prompt with Rust. The audit runner calls the current Python archive/retrieval
+services and compares Rust-generated envelope bytes, digests, fixed expiry,
+preview and original/final text. All fixtures are synthetic and in memory.
+
+```powershell
+backend\.venv\Scripts\python.exe rust\cloud\tests\test_edit_parity.py --oracle rust\target\release\examples\entity_contract.exe
+backend\.venv\Scripts\python.exe rust\cloud\tests\test_archive_parity.py --oracle rust\target\release\examples\entity_contract.exe
+```
+
+These do not prove live Azure connectivity, full WebSocket/worker parity,
+production readiness or feature-matched performance. No cloud deployment or paid
+model call is part of these checks.

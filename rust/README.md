@@ -16,12 +16,13 @@ The audio crate has no external crates and forbids unsafe code. The isolated
 primitives using the user-approved crates.io exception for this repository.
 [`client-protocol`](client-protocol/README.md) adds OAuth/PKCE/token-cache/JWT,
 loopback callback, auth-state and PubSub contracts. The explicit-path native mode
-now wires these contracts into sign-in, realtime
-delivery, durable history and clipboard commands. It is still not a complete
-dictation client.
+now wires these contracts into sign-in, realtime delivery, durable history,
+clipboard commands and native dictation/recovery/settings/installer surfaces.
+The real-device, accessibility and upgrade acceptance is still incomplete.
 Cargo.lock is committed. Fetch its locked packages once, then run checks offline.
 [`cloud`](cloud/README.md) now adds the staged strict OIDC/UAMI and storage REST
-foundation. It is not yet the complete API/worker/cleanup or a deployable replacement.
+foundation, HTTP services and batch AI/PubSub adapters. It is not yet the complete
+API/relay/worker/cleanup or a deployable replacement.
 Python/npm/NuGet feeds remain unchanged. Never use GitHub source dependencies or
 disable security controls as a workaround.
 

@@ -100,6 +100,11 @@ impl Problem {
                 HeaderValue::from_static("Bearer error=\"invalid_token\""),
             );
         }
+        if self.status == 429 {
+            response
+                .headers_mut()
+                .insert("Retry-After", HeaderValue::from_static("1"));
+        }
         response
     }
 }

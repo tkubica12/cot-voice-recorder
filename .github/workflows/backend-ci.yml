@@ -4,10 +4,12 @@ on:
   push:
     paths:
       - "backend/**"
+      - "rust/cloud/**"
       - ".github/workflows/backend-ci.yml"
   pull_request:
     paths:
       - "backend/**"
+      - "rust/cloud/**"
       - ".github/workflows/backend-ci.yml"
   workflow_dispatch: {}
 
@@ -58,3 +60,9 @@ jobs:
 
       - name: Bidirectional actual SDK and Python entity parity
         run: uv run --locked python ../rust/cloud/tests/test_entity_parity.py --oracle ../rust/target/release/examples/entity_contract
+
+      - name: Exact dictation prompt and Python-to-Rust edit protection parity
+        run: uv run --locked python ../rust/cloud/tests/test_edit_parity.py --oracle ../rust/target/release/examples/entity_contract
+
+      - name: Actual Python audit envelope and retrieval parity
+        run: uv run --locked python ../rust/cloud/tests/test_archive_parity.py --oracle ../rust/target/release/examples/entity_contract

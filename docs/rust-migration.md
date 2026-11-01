@@ -21,7 +21,7 @@ zustat u klasicke ACA; na ACA Express se v teto migraci neprechazi.
 | Diktovani/recovery UI | Native microphone/hotkeys/overlay/paste controller, oba enginy, journal, polishing a outbox implementovany; real-world a rozsahlejsi fault/E2E akceptace zbyva |
 | History cache | JSON/retence/200 entries, atomicka persistence, native list/text a manual copy latest/selected/original implementovany; C# file parity overena |
 | Settings a instalator | Vsechna C# JSON pole, nativni Settings/History/Recovery, DPI fonty, per-user autostart a kompatibilni IPC; installer sestaven, nebyl instalovan |
-| Rust cloud API, worker, cleanup | OIDC/JWKS, ACA UAMI, REST/CAS a domain/wire/Table codecs implementovany; service/router/relay/worker/cleanup wiring a akceptace zbyvaji |
+| Rust cloud API, worker, cleanup | OIDC/JWKS, UAMI, REST/CAS, service/router, batch AI, refinement a PubSub implementovany; live relay, worker, cleanup, bootstrap a uplna akceptace zbyvaji |
 | Hosting | Klasicka ACA zustava: API, KEDA queue worker a hourly cleanup Job; Express byl uzivatelem zrusen |
 
 Nativni zaklad neni kompletni klient. Jeho rychlost a pamet nelze porovnat
@@ -674,3 +674,36 @@ Backend CI zachovava existing Microsoft-feed uv.lock, prestava re-resolvovat na
 public PyPI a zapojuje bidirectional SDK parity s realnym Rust oracle.
 Full Rust HTTP/relay/worker/cleanup, container wiring a performance/real-world
 checks jsou stale zbyle aktivni casti celeho cile.
+
+## Cloud services, HTTP a AI adapters
+
+Rust services a skutecny Axum router nyni obsluhuji create/get/chunk/complete,
+transcript get/list, idempotentni audit, neperzistentni dictation transcribe/refine
+a realtime negotiate. Zpracovani zachovava durable publication, replay completion,
+CAS rezervaci finalize pred queue send a watchdog; samotny worker jeste neexistuje.
+Readiness zustava false pred bootstrapem. Nejde o nasaditelnou nahradu.
+
+Batch Azure Speech a alternativni Foundry transcription pouzivaji UAMI a presne
+multipart/AI endpointy. Diktovani ma oddeleny clean/strict response profil a 20s
+limit. Refinement zachovava doslova existujici prompt, JSON data a ochranu anchors,
+numbers, identifiers, scripts, whitespace a context echo. Pool ma 4/2 sloty;
+timeout nebo zruseny HTTP waiter neuvolni slot probihajici fyzicke prace.
+Provider bodies se nepropaguji do chyb/logu a zadna placena AI nebyla zavolana.
+
+Web PubSub REST zachovava konfigurovane user/group/hub a token TTL, MI scope
+a omezenou joinLeaveGroup roli. Completion posila pouze preview, ne full/raw text;
+windows_dictation audit nesmi emitovat clipboard completion.
+
+Lokalni workspace testy prosly: 150 (35 cloud). Prime lokalni HTTP fixture overuji
+real Rust routing, multipart audio/hints, Foundry prompt/payload, provider
+terminal/transient chyby, PubSub token/user paths a zrusene/timed-out work slots.
+Externi actual-Python parity prosla pro SDK entity (3 skupiny), edit protection
+a presny prompt (2), audit envelope/digest/preview/retrieval a UTF-8 byte quota (2).
+Audit zustava max 1 MiB UTF-8 na kazdy text, ne 1 MiB Unicode znaku. Python navic
+poklada U+001C..U+001F za whitespace; Rust helper tuto kompatibilitu zachovava.
+Locked release, fmt a Clippy prosly. CI pro novy inkrement se overuje samostatne.
+
+Live MAI relay, continuous/legacy worker, cleanup, production bootstrap a
+container/klasicka ACA wiring jsou nadale aktivni nezavrsene casti celeho cile.
+Neprobehl skutecny Azure/OIDC/device/paste/installer test ani feature-matched
+performance acceptance. Prahy a neprodukcni hranice se nemeni.
