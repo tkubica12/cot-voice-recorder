@@ -470,6 +470,28 @@ async fn https_azure_contract() {
         )
         .await
         .unwrap();
+    storage
+        .put_blob_if_absent(
+            "raw",
+            "finalize/zero-length.lock",
+            Vec::new(),
+            "text/plain; charset=utf-8",
+        )
+        .await
+        .unwrap();
+    assert!(
+        storage
+            .get_blob("raw", "finalize/zero-length.lock", 32)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        storage
+            .delete_blob("raw", "finalize/zero-length.lock")
+            .await
+            .unwrap()
+    );
     let (legacy_recording_id, legacy_transcript_id) = worker_and_cleanup(Arc::new(storage)).await;
     println!(
         "{}",

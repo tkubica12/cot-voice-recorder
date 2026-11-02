@@ -1740,3 +1740,18 @@ oba odstrani. Typed proof guard odmitne stale oracle nebo chybejici casti.
 Tato slozena E2E cast se teprve provede v CI; devet existing worker tests,
 compile/Clippy/fmt a pet local TLS/MI/typed-proof guards prosly. Nerovna se
 dosud provedene primitive storage proof automaticky proofu celeho workeru.
+
+Slozeny5ed21b6 run nasledne prokazal dalsi actual wire bug: ASR/chunk
+durable save prosel, ale finalizer zustal Transcribing, protoze create
+prazdneho canonical lock Blob vratilo400. Vec::new request nemel explicitni
+Content-Length:0, ktery Put Blob vyzaduje. Byte-level local socket test
+stejnou chybu reprodukoval nezavisle na emulaturu.
+
+Azure request writer nyni nastavuje presnou byte Content-Length pro kazde
+Some(body), vcetne nuly; nevklada se chunked transfer, nove retry ani
+success-shaped fallback. Prime regression po oprave prosel a actual
+emulator scenar ma navic explicitni empty-lock create/get/delete roundtrip
+pred workerem. Devet native storage tests a strict Clippy/fmt proslo.
+Reference je [Put Blob required headers](https://learn.microsoft.com/rest/api/storageservices/put-blob).
+Nove actual worker/cleanup E2E se musi dokoncit v CI, prvni failed run
+zustava zachovany a neni vydavan za completed proof.

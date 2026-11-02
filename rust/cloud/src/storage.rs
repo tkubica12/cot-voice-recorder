@@ -150,7 +150,7 @@ impl AzureStorage {
             request = request.header(*name, *value);
         }
         if let Some(body) = body {
-            request = request.body(body);
+            request = request.header("Content-Length", body.len()).body(body);
         }
         let response = request.send().await.map_err(|_| error())?;
         match response.status().as_u16() {
@@ -902,6 +902,44 @@ mod tests {
             storage.replace("recordings", &entity).await,
             Err(StorageError::Failure(_))
         ));
+        server.await.unwrap();
+        identity_server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn empty_blob_lock_declares_zero_length_instead_of_implicit_or_chunked_body() {
+        use tokio::io::AsyncWriteExt;
+        let (identity, identity_server) = identity_fixture().await;
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let (headers, body) = read_request(&mut stream).await;
+            assert!(
+                headers
+                    .to_ascii_lowercase()
+                    .contains("content-length: 0\r\n")
+            );
+            assert!(!headers.to_ascii_lowercase().contains("transfer-encoding:"));
+            assert!(body.is_empty());
+            stream
+                .write_all(
+                    b"HTTP/1.1 201 Created\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .await
+                .unwrap();
+        });
+        fixture(port, identity)
+            .put_blob_if_absent(
+                "raw",
+                "finalize/synthetic.lock",
+                Vec::new(),
+                "text/plain; charset=utf-8",
+            )
+            .await
+            .unwrap();
         server.await.unwrap();
         identity_server.await.unwrap();
     }
