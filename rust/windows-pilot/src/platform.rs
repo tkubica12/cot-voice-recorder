@@ -648,15 +648,6 @@ impl Drop for RegisteredClass {
 
 struct OwnedWindow(HWND);
 
-struct OwnedIcon(HICON);
-impl Drop for OwnedIcon {
-    fn drop(&mut self) {
-        if let Err(error) = unsafe { DestroyIcon(self.0) } {
-            eprintln!("Native icon cleanup failed: {error}");
-        }
-    }
-}
-
 struct MainFontLifetime;
 impl Drop for MainFontLifetime {
     fn drop(&mut self) {
@@ -1482,6 +1473,7 @@ fn dispatch(
             }
             let bounds = unsafe { std::ptr::read_unaligned(lparam.0 as *const RECT) };
             crate::dpi::suggested_bounds(hwnd, bounds)?;
+            crate::icons::AppIcons::for_dpi(crate::dpi::window_dpi(hwnd))?.apply(hwnd);
             update_main_font(hwnd)?;
             Ok(LRESULT(0))
         }
@@ -1798,39 +1790,12 @@ pub fn run_tray(options: TrayOptions) -> Result<(), NativeError> {
         .0,
     );
     let name = class_name(&options.instance_key)?;
-    let owned_icon = if installed {
-        let executable = std::env::current_exe()
-            .map_err(|error| NativeError::Io("Get installed icon directory", error))?;
-        let path = executable
-            .parent()
-            .ok_or(NativeError::Verification(
-                "Missing installed executable parent.",
-            ))?
-            .join("app.ico");
-        let path = wide(path.as_os_str())?;
-        let handle = api("Load installed VoicePrompt icon", unsafe {
-            LoadImageW(
-                None,
-                PCWSTR(path.as_ptr()),
-                IMAGE_ICON,
-                0,
-                0,
-                LR_LOADFROMFILE | LR_DEFAULTSIZE,
-            )
-        })?;
-        Some(OwnedIcon(HICON(handle.0)))
-    } else {
-        None
-    };
-    let icon = match owned_icon.as_ref() {
-        Some(icon) => icon.0,
-        None => api("LoadIconW", unsafe { LoadIconW(None, IDI_APPLICATION) })?,
-    };
+    let class_icons = crate::icons::AppIcons::for_dpi(96)?;
     let cursor = api("LoadCursorW", unsafe { LoadCursorW(None, IDC_ARROW) })?;
     let class = WNDCLASSW {
         lpfnWndProc: Some(window_proc),
         hInstance: instance,
-        hIcon: icon,
+        hIcon: class_icons.large,
         hCursor: cursor,
         hbrBackground: unsafe { GetSysColorBrush(COLOR_WINDOW) },
         lpszClassName: PCWSTR(name.as_ptr()),
@@ -1866,6 +1831,8 @@ pub fn run_tray(options: TrayOptions) -> Result<(), NativeError> {
         )
     })?;
     let _window = OwnedWindow(hwnd);
+    let icons = crate::icons::AppIcons::for_dpi(crate::dpi::window_dpi(hwnd))?;
+    icons.apply(hwnd);
     update_main_font(hwnd)?;
     let dpi = crate::dpi::window_dpi(hwnd) as i32;
     api("Size native client for initial DPI", unsafe {
@@ -1888,7 +1855,7 @@ pub fn run_tray(options: TrayOptions) -> Result<(), NativeError> {
     if let Some(error) = CALLBACK_ERROR.with(|slot| slot.borrow_mut().take()) {
         return Err(error);
     }
-    let mut tray = Tray::add(hwnd, icon)?;
+    let mut tray = Tray::add(hwnd, icons.small)?;
     let data = b"synthetic native DPAPI startup probe";
     if unprotect(&protect(data)?)? != data {
         return Err(NativeError::Verification(

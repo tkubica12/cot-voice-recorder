@@ -20,6 +20,7 @@ DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 UninstallDisplayIcon={app}\{#AppExeName}
+SetupIconFile={#SourceDir}\app.ico
 OutputDir={#OutputDir}
 OutputBaseFilename=VoicePrompt-Rust-Setup
 Compression=lzma2/max
@@ -47,7 +48,7 @@ Source: "{#SourceDir}\app.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Parameters: "--installed"; IconFilename: "{app}\app.ico"
-Name: "{group}\Uninstall {#AppName}"; Filename: "{uninstallexe}"
+Name: "{group}\Uninstall {#AppName}"; Filename: "{uninstallexe}"; IconFilename: "{app}\app.ico"
 Name: "{userdesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Parameters: "--installed"; IconFilename: "{app}\app.ico"; Tasks: desktopicon
 
 [Registry]

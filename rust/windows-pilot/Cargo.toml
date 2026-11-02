@@ -44,3 +44,6 @@ windows = { version = "0.62.2", features = [
 
 [target.'cfg(windows)'.dev-dependencies]
 tokio = { version = "1.54.1", features = ["test-util"] }
+
+[build-dependencies]
+winresource = "=0.1.30"

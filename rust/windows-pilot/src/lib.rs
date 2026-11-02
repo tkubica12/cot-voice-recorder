@@ -10,6 +10,9 @@ mod fixtures;
 mod auth_only;
 
 #[cfg(windows)]
+mod icons;
+
+#[cfg(windows)]
 mod clipboard;
 
 #[cfg(windows)]

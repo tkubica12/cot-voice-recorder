@@ -4,16 +4,19 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import ctypes
 import json
 import os
 import random
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
 import uuid
+from ctypes import wintypes
 from pathlib import Path
 
 PILOT: Path
@@ -56,6 +59,74 @@ class PlatformParityTests(unittest.TestCase):
             f"{(time.perf_counter() - started) * 1000:.3f}ms; bounded60s, operation budget20s",
             flush=True,
         )
+
+    def test_release_executable_embeds_every_original_icon_image_byte_exact(
+        self,
+    ) -> None:
+        original = (
+            Path(__file__).resolve().parents[3]
+            / "windows"
+            / "src"
+            / "VoicePrompt.App"
+            / "Assets"
+            / "app.ico"
+        ).read_bytes()
+        self.assertEqual(original[:4], b"\0\0\1\0")
+        count = struct.unpack_from("<H", original, 4)[0]
+        self.assertGreater(count, 1)
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.LoadLibraryExW.argtypes = [
+            wintypes.LPCWSTR,
+            wintypes.HANDLE,
+            wintypes.DWORD,
+        ]
+        kernel.LoadLibraryExW.restype = wintypes.HMODULE
+        kernel.FreeLibrary.argtypes = [wintypes.HMODULE]
+        kernel.FreeLibrary.restype = wintypes.BOOL
+        kernel.FindResourceW.argtypes = [
+            wintypes.HMODULE,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+        ]
+        kernel.FindResourceW.restype = wintypes.HANDLE
+        kernel.SizeofResource.argtypes = [wintypes.HMODULE, wintypes.HANDLE]
+        kernel.SizeofResource.restype = wintypes.DWORD
+        kernel.LoadResource.argtypes = [wintypes.HMODULE, wintypes.HANDLE]
+        kernel.LoadResource.restype = wintypes.HANDLE
+        kernel.LockResource.argtypes = [wintypes.HANDLE]
+        kernel.LockResource.restype = ctypes.c_void_p
+        # Map resources only. Never execute this module or use installed app state.
+        module = kernel.LoadLibraryExW(str(PILOT), None, 0x2 | 0x20)
+        if not module:
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+
+            def resource(kind: int, identifier: int) -> bytes:
+                entry = kernel.FindResourceW(module, identifier, kind)
+                if not entry:
+                    raise ctypes.WinError(ctypes.get_last_error())
+                size = kernel.SizeofResource(module, entry)
+                loaded = kernel.LoadResource(module, entry)
+                address = kernel.LockResource(loaded) if loaded else None
+                if not size or not address:
+                    raise ctypes.WinError(ctypes.get_last_error())
+                return ctypes.string_at(address, size)
+
+            group = resource(14, 1)  # RT_GROUP_ICON, the product's first shell icon.
+            self.assertEqual(group[:6], original[:6])
+            self.assertEqual(len(group), 6 + count * 14)
+            for index in range(count):
+                source = original[6 + index * 16 : 6 + (index + 1) * 16]
+                embedded = group[6 + index * 14 : 6 + (index + 1) * 14]
+                self.assertEqual(embedded[:12], source[:12])
+                length, offset = struct.unpack_from("<II", source, 8)
+                identifier = struct.unpack_from("<H", embedded, 12)[0]
+                self.assertEqual(
+                    resource(3, identifier), original[offset : offset + length]
+                )
+        finally:
+            if not kernel.FreeLibrary(module):
+                raise ctypes.WinError(ctypes.get_last_error())
 
     def test_installed_modes_reject_fixture_flags_before_personal_startup(self) -> None:
         with tempfile.TemporaryDirectory(

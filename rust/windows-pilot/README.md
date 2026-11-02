@@ -12,7 +12,10 @@ directory. `--oauth-config` is also explicit. Isolated mode refuses the real
 installed state directory and its descendants; no installed tokens/history/audio
 are discovered. Its
 `Local\VoicePrompt.RustPilot.*` mutexes and window classes are separate from C#.
-Isolated mode uses a stock system icon; installed mode loads the packaged app.ico.
+Both isolated and installed modes use the original repo icon embedded in the EXE,
+with DPI-sized window/tray icons. Settings uses the same embedded asset. The
+build-only installer and its shortcuts reuse the original `app.ico`; no sidecar
+file is needed to display the executable or native window icon.
 
 Windows code is isolated in `src\platform.rs`; the audio core still forbids unsafe
 code. The Windows crate version was queried in the user-approved crates.io source,

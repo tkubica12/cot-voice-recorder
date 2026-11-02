@@ -38,7 +38,7 @@ znovu v odpovidajicim scope.
 | Diktovani/recovery UI | Native microphone/hotkeys/overlay/paste controller, oba enginy, journal, polishing a outbox implementovany; real-world a rozsahlejsi fault/E2E akceptace zbyva |
 | History cache | JSON/retence/200 entries, atomicka persistence, native list/text a manual copy latest/selected/original implementovany; C# file parity overena |
 | Settings a instalator | Vsechna C# JSON pole, nativni Settings/History/Recovery, DPI fonty, per-user autostart a kompatibilni IPC; installer sestaven, nebyl instalovan |
-| Original icon a podobne zive popup UI | Nove zavazna podminka; puvodni asset je v installer staging, uplny EXE/tray/window/shortcut audit a vizualni/reactive overlay parity zatim NEOVERENY |
+| Original icon a podobne zive popup UI | Original ICO embedded v EXE a DPI window/tray/Settings, source installer/shortcut wiring a byte-exact resource parity overeny; actual reactive overlay/vizualni akceptace stale chybi |
 | Rust cloud API, worker, cleanup | API/AI/PubSub/live relay, processors/finalization/queue loop, cleanup, bootstrap/CLI a source-only image wiring implementovany; image CI proslo, uplna akceptace zbyva |
 | Hosting | Klasicka ACA zustava: API, KEDA queue worker a hourly cleanup Job; Express byl uzivatelem zrusen |
 
@@ -1978,3 +1978,42 @@ neprovedeny/bez prokazaneho attemptu a povolil pokracovat original-icon/
 live-UI auditem a pouze synthetic fixture opravou. Nove otevreni
 guarded-paste procesu potrebuje predchozi vyslovne rozhodnuti; neni
 automaticky povolene. Zadne dalsi domnenky o uzivatelove akci se nepridavaji.
+
+### Original icon: resource a packaging inkrement
+
+Po preruseni byl znovu overen skutecny refactor-rust/da1c6eb checkout a
+zachovany ocekavane necommitnute icon zmeny; zadna nova physical akce
+nebyla provedena. Actual puvodni Assets/app.ico je nyni build-time
+RT_GROUP_ICON1 v native EXE, nikoli obecna systemova ikona v isolated
+rezimu nebo pouze sidecar v installed rezimu. Small/big window ikony,
+tray a Settings pouzivaji stejny embedded original asset; window/Settings
+reaguji na DPI. Installer setup, uninstall i start-menu/desktop shortcuts
+maji original ICO. Shared resource handles se nesmi DestroyIcon.
+
+Zvoleny winresource=0.1.30 byl pred pridanim overen v povolenem crates.io
+sparse feedu a resolved pod deklarovanym MSRV1.85 bez upgradu existujicich
+locked zavislosti. Resource compiler je jiz existujici Windows SDK, zadny
+novy tooling nebyl instalovan. Actual compiler1.85 overeni nove graph
+teprve doda nove CI; resolver neni nahrada compiler proof.
+
+Workspace244 regular Rust tests, fmt a Clippy-Dwarnings PASS.
+Novy native binding test overuje obe WM_GETICON velikosti pri96/120/
+144/192/288DPI bez Show/focus zmeny. Sedm actual-release platform parity
+groups PASS vcetne byte-exact porovnani VSECH original ICO entries a
+RT_ICON payloads v actual release EXE, nejen existence resource.
+Native EXE SHA25697ceed2cd1d03d094e6939b58f8a8f4104968a1f2e1f31b84f038ecd76543019.
+Build-only installer SHA25678210c20887917ece6837e56098d80a548a9384769a9f098d7c299d264c5b40f,
+nikdy spusten/instalovan. Original ICO zustal byte-exact
+SHA2565c43009a56fd315d150a0cbf4574c7dda858296a0006321ba5647023f72faa42.
+
+Tento resource/source PASS jeste NENI screenshot/visual acceptance.
+Actual WPF DictationIndicator ma440x112DIP rounded17 dark(30,30,34)
+panel,8px state dot,12px header,14px preview/20px lines, work-area
+bottom-center18, noactivate/click-through a900ms saved fallback.
+Dosavadni Rust plain STATIC border/bottom-right/bez clocku a s
+neomezenym terminal popupem tomu neodpovida. Nasleduje skutecny native
+renderer a reactive controller parity; stara performance evidence
+se na tyto budouci zmeny neprepisuje.
+
+da1c6eb Windows/Linux/MSRV/container RustCI41441386069 a predchozi
+fa27f86 RustCI41439973457 nasledne PASS. Cela migrace zustava nehotova.

@@ -313,6 +313,7 @@ impl SettingsUi {
         })?;
         ui.load(settings)?;
         ui.font.apply_children(window)?;
+        crate::icons::AppIcons::for_dpi(ui.font.dpi)?.apply(window);
         unsafe {
             SetWindowPos(
                 window,
@@ -396,6 +397,10 @@ unsafe extern "system" fn procedure(
         };
         if let Err(error) = crate::dpi::suggested_bounds(window, bounds) {
             eprintln!("Settings DPI bounds: {error}");
+        }
+        match crate::icons::AppIcons::for_dpi(crate::dpi::window_dpi(window)) {
+            Ok(icons) => icons.apply(window),
+            Err(error) => eprintln!("Settings icon DPI update failed: {error}"),
         }
         SETTINGS.with(|slot| {
             if let Some(ui) = slot.borrow_mut().as_mut() {
