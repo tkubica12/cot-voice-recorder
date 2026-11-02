@@ -1435,3 +1435,47 @@ Dosavadni nekompletni hour runs se neprepisuji ani nevykazuji jako uspech.
 Vysledky nove chain se overi z raw evidence a skuteckych procesnich identit,
 nikoli z pouheho faktu, ze command byl odstartovan. Celkovy migracni accepted
 status zustava false, dokud nejsou dokonceny zbyle povolene i lidske brany.
+
+## Dokonceny actual synthetic engine hour f572599
+
+Restart-resilient engine beh f572599 dokoncil skutecnych3600.003454s,
+115200000 sample-exact captured/provider/confirmed PCM bytes a realny
+stream rotation na absolute cursoru95872000. Vsech2620 checkpointu bylo
+potvrzenych, session shutdown joined a store se vratil do stejneho prazdneho
+recovery idle. Nezavisle bylo overeno vsech4203 raw samples,301/3601/301
+pocty a casy, vlastni PID/image hash i kompletni finalni metriky.
+
+| Synthetic native engine hour | Vysledek |
+| --- | --- |
+| Mean private warm idle | 2.045MiB |
+| Mean private po shutdown/idle | 3.547MiB |
+| Mean idle growth | 1.502MiB |
+| Worst post-idle minus median warm baseline | 1.645MiB; limit10MiB PASS |
+| Peak capture private | 6.410MiB |
+| CPU one-core mean pred/behem/po | 1.82% /9.27% /3.19% |
+
+Artifact synthetic-engine-hour-durable-f572599/synthetic-engine-hour.json
+SHA256 ceeeb07a5bea2cb514fcbf26897752f5061e785266f377d773b83c2f7c26a430.
+Producer mel na sdilenem stroji maximum scheduling lateness18.195s; presne
+sample poradi/pocty zustaly zachovane. Neni to mikrofon/dropout/real-model
+nebo full-GUI-controller akceptace. Report nadale ma full_client_profile=false
+a whole_migration_acceptance=false. Native hour proces skoncil a veskery
+generovany hour state byl uklizen.
+
+Navic skutecny preruseny26min journal byl na oddelenych kopiich otevren
+actual Rust i C# RecoveryStore:50368000 captured,50304000 confirmed bytes,
+1114 checkpointu a jeden pending. Oba ctenari vratili shodny stav a pending
+audio zustalo validni; originalni tri soubory zustaly hash-exact nedotcene.
+To prokazuje real interrupted-data rollback, ne dodatecny hour PASS.
+
+Navazujici signed-out rerun po sesti startup parech narazil na PermissionError
+pri cteni prave vznikleho ready markeru. Partial startup data nejsou uplne
+mereni a maji vlastni failure evidence. Oba published writers zaviraji file
+pred atomic rename; konkretni transient Windows lock owner neni prokazan.
+Collector nyni povazuje za ready az uspesne bounded cteni, nikoli exists().
+Jen FileNotFound/PermissionError maji kratky retry, PermissionError maximalne
+250ms v ramci puvodniho15s startup deadline; ten ani1s/70% cile se nemeni.
+Do latence se zapocita cely wait a trial se nerestartuje. Persistentni ACL/
+access error, oversize nebo invalid JSON stale explicitne selze.
+Sest guard tests vcetne simulated transient/persistent lock a actual frozen
+client composition proslo; novy uplny profil se zmeri znovu zvlast.

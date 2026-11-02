@@ -8,17 +8,77 @@ import json
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import uuid
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from measure_clients import FixtureProcess, bundle_hashes, fixture_files
+from measure_clients import (
+    FixtureProcess,
+    bundle_hashes,
+    fixture_files,
+    read_ready_payload,
+)
 
 BINARIES: dict[str, Path]
 
 
 class ClientFixtureTests(unittest.TestCase):
+    def test_readable_readiness_includes_transient_file_lock_latency_and_never_restarts_trial(
+        self,
+    ) -> None:
+        process = Mock(returncode=None)
+        process.poll.return_value = None
+        with tempfile.TemporaryDirectory(prefix="VoicePrompt-ready-lock-") as directory:
+            path = Path(directory).joinpath("ready.json")
+            path.write_bytes(b'{"synthetic":true}')
+            original = Path.open
+            attempts = 0
+
+            def open_after_lock(
+                selected: Path, *args: object, **kwargs: object
+            ) -> object:
+                nonlocal attempts
+                attempts += 1
+                if attempts < 3:
+                    raise PermissionError("Synthetic Windows sharing failure.")
+                return original(selected, *args, **kwargs)
+
+            began = time.perf_counter()
+            with patch.object(Path, "open", open_after_lock):
+                result = read_ready_payload(path, process, began, 15)
+            self.assertEqual(result, b'{"synthetic":true}')
+            self.assertEqual(attempts, 3)
+            self.assertGreaterEqual(time.perf_counter() - began, 0.010)
+
+    def test_persistent_readiness_access_error_and_oversize_payload_are_not_success(
+        self,
+    ) -> None:
+        process = Mock(returncode=None)
+        process.poll.return_value = None
+        with tempfile.TemporaryDirectory(
+            prefix="VoicePrompt-ready-refusal-"
+        ) as directory:
+            path = Path(directory).joinpath("ready.json")
+            began = time.perf_counter()
+            with (
+                patch.object(
+                    Path,
+                    "open",
+                    side_effect=PermissionError("Synthetic persistent ACL failure."),
+                ),
+                self.assertRaises(PermissionError),
+            ):
+                read_ready_payload(path, process, began, 15)
+            self.assertLess(time.perf_counter() - began, 1)
+            path.write_bytes(b"x" * 4097)
+            with self.assertRaises(ValueError):
+                read_ready_payload(path, process, time.perf_counter(), 15)
+            with self.assertRaises(TimeoutError):
+                read_ready_payload(path, process, time.perf_counter() - 16, 15)
+
     def test_bundle_attestation_covers_runtime_dependencies_without_discovering_oauth_files(
         self,
     ) -> None:

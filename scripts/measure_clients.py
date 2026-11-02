@@ -20,6 +20,50 @@ SCOPE = "full-client-signed-out-fixture"
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def read_ready_payload(
+    ready: Path, process: subprocess.Popen, started: float, timeout_seconds: int
+) -> bytes:
+    deadline = started + timeout_seconds
+    lock_deadline = None
+    while True:
+        if time.perf_counter() >= deadline:
+            raise TimeoutError(
+                f"Full-client fixture readiness exceeded {timeout_seconds} seconds."
+            )
+        if process.poll() is not None:
+            raise RuntimeError(
+                f"Full-client fixture exited before readable readiness: {process.returncode}"
+            )
+        try:
+            with ready.open("rb") as stream:
+                payload = stream.read(4097)
+        except FileNotFoundError:
+            pass
+        except PermissionError as error:
+            now = time.perf_counter()
+            if lock_deadline is None:
+                lock_deadline = min(now + 0.250, deadline)
+            if now >= lock_deadline:
+                error.add_note(
+                    f"Readiness remained inaccessible; Windows error {error.winerror if hasattr(error, 'winerror') else None}. "
+                    "No ACL/sharing controls were changed and the trial was not restarted."
+                )
+                raise
+        else:
+            if len(payload) > 4096:
+                raise ValueError("Full-client readiness exceeds supported bounds.")
+            if time.perf_counter() >= deadline:
+                raise TimeoutError(
+                    "Full-client readiness was not readable within its original startup budget."
+                )
+            return payload
+        if time.perf_counter() >= deadline:
+            raise TimeoutError(
+                f"Full-client fixture readiness exceeded {timeout_seconds} seconds."
+            )
+        time.sleep(0.005)
+
+
 def fixture_files(
     state: Path, key: str, history_count: int, epoch: datetime | None = None
 ) -> dict[str, bytes]:
@@ -137,19 +181,11 @@ class FixtureProcess:
                 creationflags=subprocess.CREATE_NO_WINDOW,
                 env=environment,
             )
-            while not ready.exists():
-                if self.process.poll() is not None:
-                    _, error = self.process.communicate()
-                    raise RuntimeError(
-                        f"{implementation} fixture failed: {error.decode(errors='replace')}"
-                    )
-                if time.perf_counter() - started > readiness_timeout_seconds:
-                    raise TimeoutError(
-                        f"Full-client fixture readiness exceeded {readiness_timeout_seconds} seconds."
-                    )
-                time.sleep(0.005)
+            payload = read_ready_payload(
+                ready, self.process, started, readiness_timeout_seconds
+            )
             self.startup_ms = (time.perf_counter() - started) * 1000
-            self.marker = json.loads(ready.read_bytes())
+            self.marker = json.loads(payload)
             expected_marker = {
                 "status": "ready",
                 "scope": SCOPE,
