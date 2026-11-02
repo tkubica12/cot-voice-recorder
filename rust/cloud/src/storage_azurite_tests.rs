@@ -291,6 +291,17 @@ async fn continuous_worker(storage: Arc<AzureStorage>) -> (String, String) {
             .unwrap();
     }
     services.complete(&record.recording_id, 2).await.unwrap();
+    let chunks = services.chunks(&record.recording_id).await.unwrap();
+    assert_eq!(chunks.len(), 2);
+    let audio_paths: Vec<_> = chunks
+        .iter()
+        .map(|chunk| {
+            chunk
+                .blob_path
+                .clone()
+                .expect("Streaming content-addressed Blob path")
+        })
+        .collect();
     let expected = segments.concat();
     let model = tokio::spawn(async move {
         let (stream, _) = tokio::time::timeout(Duration::from_secs(15), listener.accept())
@@ -348,16 +359,13 @@ async fn continuous_worker(storage: Arc<AzureStorage>) -> (String, String) {
     assert_eq!(ready.stream_attempt, 1);
     assert_eq!(ready.streamed_samples, 160320);
     assert!(ready.stream_lease_id.is_none());
-    for index in 0..2 {
-        assert!(
+    for (path, pcm) in audio_paths.iter().zip(&segments) {
+        assert_eq!(
             storage
-                .get_blob(
-                    &config.audio_container,
-                    &format!("{}/{index}.wav", record.recording_id),
-                    1024 * 1024
-                )
+                .get_blob(&config.audio_container, path, 1024 * 1024)
                 .await
-                .is_ok()
+                .unwrap(),
+            voiceprompt_core::wav::to_wav(pcm).unwrap()
         );
     }
     for _ in 0..8 {
@@ -379,14 +387,10 @@ async fn continuous_worker(storage: Arc<AzureStorage>) -> (String, String) {
         services.transcript(&transcript_id).await.unwrap().body,
         "synthetic Azure continuous final"
     );
-    for index in 0..2 {
+    for path in &audio_paths {
         assert!(matches!(
             storage
-                .get_blob(
-                    &config.audio_container,
-                    &format!("{}/{index}.wav", record.recording_id),
-                    1024 * 1024
-                )
+                .get_blob(&config.audio_container, path, 1024 * 1024)
                 .await,
             Err(StorageError::NotFound)
         ));

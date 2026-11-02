@@ -1792,3 +1792,12 @@ tokeny/storage/model/notifikace zustavaji explicitne synthetic/loopback.
 Compile/Clippy/fmt, ctyri existing ordered continuous regressions a pet
 local safety/proof guards prosly. Tento novy composed continuous scenario
 se musi jeste skutecne provest v CI a nelze jej odvodit z legacy PASS.
+
+Prvni1c92826 continuous run dosahl ASR-ready/160320 samples, ale test pak
+chybne hledal legacy id/index.wav. Actual streaming storage spravne pouziva
+persisted content-addressed blob_path s digestem. Test nyni zmrazi obe
+skutecne Chunk metadata paths pred modelem, pred finalizaci overi byte-exact
+WAV v obou objektech a po ni vyzaduje NotFound na techze paths. Stored data
+layout se nemeni ani neprevadi na legacy naming; opraven byl jen testovaci
+predpoklad. Ctyri existing continuous regressions a strict Clippy/fmt prosly;
+cely composed scenario stale ceka na successful actual rerun.
