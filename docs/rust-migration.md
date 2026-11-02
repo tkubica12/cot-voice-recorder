@@ -1513,3 +1513,19 @@ ale first-PCM cas nemeril. Zadna z techto nove instrumentovanych physical
 probe nebyla spustena; C# build ma0 warnings/errors, Rust Clippy/fmt a presne
 jeden synthetic queue test prosly. Repeat/paired baseline vyzaduje novy
 konkretni souhlas, nejde o implicitni rozsireni jedineho predchoziho testu.
+
+Uzivatel nasledne samostatne schvalil presne jednu alternating30Rust+30C#
+serii, kazdy trial240ms count/zero a zadne audio soubory/upload, auth/cloud,
+clipboard/paste/hotkeys. Collector scripts/measure_microphone.py je bounded na
+presne60 pozorovani a nema automaticky retry. Pred otevrenim zarizeni overi
+nepritomnost osobni/physical VoicePrompt instance a explicitni image names;
+hashuje actual managed/runtime DLL bundle i nativni fixture. Uklada pouze
+typed pocty/timing/PID/exit a nejprve attempt marker, aby selhani nebylo
+maskovano opakovanim. Vyhodnocuje vsech30 trialu nearest-rank p95 first-valid-
+PCM proti puvodnimu110%baseline cilu; open-return je jen vedlejsi telemetry.
+
+Ctyri pure synthetic telemetry/schema/completeness/threshold testy prosly
+a CI spousti pouze je, nikdy fyzicky collector. Ulozena schema neumoznuji
+vydavat chybejici/invalid first_pcm_ms nebo nekompletni trial count za uspech.
+Samotny CLI opt-in flag neni opravneni; konkretni uzivatelsky souhlas je
+nutnou predchozi podminkou provadene serie.

@@ -8,6 +8,8 @@ on:
       - "windows/src/VoicePrompt.Core/**"
       - "windows/tools/ClientFixture/**"
       - "scripts/measure_clients.py"
+      - "scripts/measure_microphone.py"
+      - "scripts/tests/test_microphone_measurement.py"
       - "scripts/measure_synthetic_capture.py"
       - "scripts/tests/test_synthetic_capture.py"
       - "scripts/tests/test_full_client_fixture.py"
@@ -24,6 +26,8 @@ on:
       - "windows/src/VoicePrompt.Core/**"
       - "windows/tools/ClientFixture/**"
       - "scripts/measure_clients.py"
+      - "scripts/measure_microphone.py"
+      - "scripts/tests/test_microphone_measurement.py"
       - "scripts/measure_synthetic_capture.py"
       - "scripts/tests/test_synthetic_capture.py"
       - "scripts/tests/test_full_client_fixture.py"
@@ -183,6 +187,12 @@ jobs:
           python scripts\tests\test_full_client_fixture.py
           --csharp windows\tools\ClientFixture\bin\Release\net8.0-windows\win-x64\VoicePromptClientFixture.exe
           --rust rust\target\release\VoicePromptRustPilot.exe
+
+      - name: Pure first-PCM telemetry guards without physical-device access
+        if: runner.os == 'Windows'
+        working-directory: .
+        shell: pwsh
+        run: python scripts\tests\test_microphone_measurement.py
 
       - name: Bounded synthetic engine collector smoke, never hour or full-client acceptance
         if: runner.os == 'Windows'
