@@ -1014,3 +1014,30 @@ Posledni build-only installer ma SHA256
 Predchozi deb0980 ma potvrzene Windows/Linux, obe MSRV1.85 kontroly,
 container build a backend CI. Fyzicke Windows/Google/install/Azure testy a
 baseline/hodinova acceptance jsou stale neprovedene lidske hranice.
+
+## Aktualni acceptance checkpoint
+
+Implementacni povrchy Windows/cloud jsou propojene a synthetic/direct/reference
+checks jsou persistentne v CI. To neni schvaleni cutoveru ani tvrzeni o perfektni
+celkove akceptaci. Nejnovejsi overeny code checkpoint 08f8f44 prosel Windows/
+Linux Rust, obema MSRV1.85 jobs, container build/guards a backend parity CI.
+
+| Check | Stav | Dukaz nebo presna mezera |
+| --- | --- | --- |
+| Implementace a bounded synthetic regressions | PASS | 213 Windows workspace testu, actual native/cloud E2E, C#/Python/reference parity; release/fmt/Clippy |
+| Deklarovany compiler Windows/Linux | PASS | CI all-targets Rust1.85; bez lokalni toolchain instalace |
+| Source-only Linux image | PASS | CI build, UID10001 a missing-config guards; zadny push/deploy |
+| C01 feature-matched baseline | BLOCKED | Nutny vyhrazeny Windows profil/stroj bez osobni VoicePrompt instance; skutecny C# klient ma fixed IPC/per-user paths |
+| C02 pamet/start/API/hour verdikt | NOT_RUN | Zbyva30 startu, vsechny predepsane serie a hodinova capture/idle stabilita; foundation cisla se nepouzivaji jako nahrada |
+| C03 plna real-world akceptace | BLOCKED | Actual Google, mikrofon/focus/clipboard/paste, accessibility/DPI, install/upgrade a Azure private-endpoint/UAMI runtime vyzaduji vlastni scoped souhlas/prostredi |
+| C04 lokalni uklid a neprodukcni hranice | PASS | Checkout/remote odpovidaji, fixture procesy a shell commands skoncily; zadna instalace, release, paid model nebo Azure zmena |
+
+Pozadavek na izolovany Windows profil/stroj byl odeslan koordinujici relaci.
+Samotne poskytnuti profilu neschvaluje instalaci, mikrofon, clipboard, Google,
+Azure ani placene modely. Tyto akce se nesmeji provest bez dalsiho presneho
+opravneni. Cely cil zustava nedokonceny na techto acceptance branach.
+
+Dodatecny orphan safeguard omezuje novy plain-transcript sweep na znamy
+canonical UUID.txt format. Nezname stare .txt objekty zustavaji nedotcene
+s viditelnym diagnostickym zaznamem. Sedm cleanup testu vcetne unexpected-name
+fixture a strict Clippy/fmt proslo; zadna produkcni data nebyla ctena ani smazana.

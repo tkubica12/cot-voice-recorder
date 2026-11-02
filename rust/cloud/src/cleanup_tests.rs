@@ -367,7 +367,10 @@ async fn partially_failed_recording_cleanup_remains_durably_discoverable_and_res
 async fn old_unpublished_plain_transcript_is_removed_only_when_no_metadata_or_active_publisher_owns_it()
  {
     let services = crate::services::tests::fixture();
-    for path in ["unpublished.txt", "active.txt", "fresh.txt"] {
+    let unpublished = "00000000-0000-4000-8000-000000000001.txt";
+    let active = "00000000-0000-4000-8000-000000000002.txt";
+    let fresh = "00000000-0000-4000-8000-000000000003.txt";
+    for path in [unpublished, active, fresh, "unexpected.txt"] {
         services
             .blobs
             .put(
@@ -378,7 +381,7 @@ async fn old_unpublished_plain_transcript_is_removed_only_when_no_metadata_or_ac
             )
             .await
             .unwrap();
-        if path != "fresh.txt" {
+        if path != fresh {
             services
                 .blobs
                 .age_fixture(
@@ -392,7 +395,7 @@ async fn old_unpublished_plain_transcript_is_removed_only_when_no_metadata_or_ac
     let publisher = BlobLease::existing(
         services.blobs.clone(),
         services.config.transcript_container.clone(),
-        "active.txt".into(),
+        active.into(),
     )
     .await
     .unwrap();
@@ -400,25 +403,21 @@ async fn old_unpublished_plain_transcript_is_removed_only_when_no_metadata_or_ac
     assert!(matches!(
         services
             .blobs
-            .get(
-                &services.config.transcript_container,
-                "unpublished.txt",
-                4096
-            )
+            .get(&services.config.transcript_container, unpublished, 4096)
             .await,
         Err(StorageError::NotFound)
     ));
     assert!(
         services
             .blobs
-            .get(&services.config.transcript_container, "active.txt", 4096)
+            .get(&services.config.transcript_container, active, 4096)
             .await
             .is_ok()
     );
     assert!(
         services
             .blobs
-            .get(&services.config.transcript_container, "fresh.txt", 4096)
+            .get(&services.config.transcript_container, fresh, 4096)
             .await
             .is_ok()
     );
@@ -427,8 +426,19 @@ async fn old_unpublished_plain_transcript_is_removed_only_when_no_metadata_or_ac
     assert!(matches!(
         services
             .blobs
-            .get(&services.config.transcript_container, "active.txt", 4096)
+            .get(&services.config.transcript_container, active, 4096)
             .await,
         Err(StorageError::NotFound)
     ));
+    assert!(
+        services
+            .blobs
+            .get(
+                &services.config.transcript_container,
+                "unexpected.txt",
+                4096
+            )
+            .await
+            .is_ok()
+    );
 }

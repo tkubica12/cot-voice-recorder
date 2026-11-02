@@ -325,6 +325,10 @@ pub async fn run(services: &Services) -> Result<CleanupResult, StorageError> {
         let Some(id) = entry.name.strip_suffix(".txt") else {
             continue;
         };
+        if crate::services::canonical_uuid(id).ok().as_deref() != Some(id) {
+            eprintln!("Cleanup preserved an unexpected plain transcript object name.");
+            continue;
+        }
         let lease = match BlobLease::existing(
             services.blobs.clone(),
             services.config.transcript_container.clone(),
