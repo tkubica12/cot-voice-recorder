@@ -121,6 +121,11 @@ fixed synthetic marker, and invokes the actual `DesktopGuard` once without
 Enter, Save, retries, microphone, global hotkeys, accounts or backend access.
 The old clipboard is never read, backed up or restored. The normal installer
 does not contain this test-only code.
+Phase evidence is immutable (`manual-paste-started.json`, `-armed.json`,
+`-delivering.json`, `-result.json`, `-closed.json`); the delivering phase
+must publish before any clipboard call. An observer never races a report
+replacement. Failures are preserved separately in the owned root, and all
+previous phase/result/failure files reject reuse.
 
 Clipboard writes use immediate `CF_UNICODETEXT` publication from moveable global
 memory, transferring ownership only after successful `SetClipboardData`.

@@ -31,7 +31,7 @@ struct Report {
 }
 
 impl Report {
-    fn save(&self, root: &Path, mode: WriteMode) -> Result<(), crate::NativeError> {
+    fn publish(&self, root: &Path, name: &'static str) -> Result<(), crate::NativeError> {
         let bytes = serde_json::to_vec(&serde_json::json!({
             "scope":SCOPE,"pid":std::process::id(),"attempted":self.attempted,
             "target_matched":self.target_matched,
@@ -43,7 +43,7 @@ impl Report {
             "account_or_backend":false,"whole_migration_acceptance":false,
         }))
         .map_err(|_| crate::NativeError::Verification("Encode manual desktop result failed."))?;
-        atomic_write(&root.join("manual-paste-result.json"), &bytes, mode)
+        atomic_write(&root.join(name), &bytes, WriteMode::CreateNew)
     }
 }
 
@@ -98,8 +98,9 @@ fn timer(window: HWND, id: usize, milliseconds: u32) -> Result<(), std::io::Erro
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let root = std::env::current_dir()?;
     crate::fixtures::validate_scope(&root, None, SCOPE)?;
+    ensure_fresh(&root)?;
     let mut report = Report::default();
-    report.save(&root, WriteMode::CreateNew)?;
+    report.publish(&root, "manual-paste-started.json")?;
     let instance: HINSTANCE = unsafe { GetModuleHandleW(None) }?.into();
     let class = WNDCLASSW {
         lpfnWndProc: Some(procedure),
@@ -262,6 +263,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     )?;
                 } else {
                     report.clipboard_write_attempted = true;
+                    report.publish(&root, "manual-paste-delivering.json")?;
                     match crate::clipboard::write_with_sequence(window.window, MARKER) {
                         Ok(sequence) => {
                             report.clipboard_marker_published = true;
@@ -307,16 +309,24 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 )?;
             }
             (WM_TIMER, 3) => break,
-            _ => unsafe {
-                let _ = TranslateMessage(&message);
-                DispatchMessageW(&message);
-            },
+            _ => {
+                unsafe {
+                    let _ = TranslateMessage(&message);
+                    DispatchMessageW(&message);
+                }
+                continue;
+            }
         }
-        report.save(&root, WriteMode::Replace)?;
+        if message.message == ARM {
+            report.publish(&root, "manual-paste-armed.json")?;
+        }
+        if report.finished {
+            report.publish(&root, "manual-paste-result.json")?;
+        }
     }
     drop(window);
     report.closed = true;
-    report.save(&root, WriteMode::Replace)?;
+    report.publish(&root, "manual-paste-closed.json")?;
     if !report.finished || !report.marker_observed || !report.input_sent {
         return Err(
             "One manual desktop attempt did not pass; no automatic retry authorized.".into(),
@@ -325,10 +335,48 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn ensure_fresh(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    for name in [
+        "manual-paste-started.json",
+        "manual-paste-armed.json",
+        "manual-paste-delivering.json",
+        "manual-paste-result.json",
+        "manual-paste-closed.json",
+        "manual-paste-failure.json",
+    ] {
+        if root.join(name).try_exists()? {
+            return Err("Manual desktop acceptance cannot reuse any previous case root.".into());
+        }
+    }
+    Ok(())
+}
+
 #[test]
 #[ignore = "Needs one explicit user-approved clipboard overwrite/automatic Ctrl+V in own test field; never CI."]
 fn manual_native_guarded_paste_once() {
-    run().unwrap();
+    if let Err(error) = run() {
+        if let Ok(root) = std::env::current_dir() {
+            if crate::fixtures::validate_scope(&root, None, SCOPE).is_ok() {
+                match serde_json::to_vec(&serde_json::json!({
+                    "scope":SCOPE,"pid":std::process::id(),
+                    "status":"fixture_failed_no_automatic_retry",
+                    "error":error.to_string(),
+                })) {
+                    Ok(bytes) => {
+                        if let Err(failure) = atomic_write(
+                            &root.join("manual-paste-failure.json"),
+                            &bytes,
+                            WriteMode::CreateNew,
+                        ) {
+                            eprintln!("Preserve manual desktop failure failed: {failure}");
+                        }
+                    }
+                    Err(failure) => eprintln!("Encode manual desktop failure failed: {failure}"),
+                }
+            }
+        }
+        panic!("Manual desktop fixture failed: {error}");
+    }
 }
 
 #[test]
@@ -350,8 +398,46 @@ fn manual_desktop_fixture_requires_an_owned_fresh_scope_before_any_ui_or_clipboa
             accepted
         );
     }
+
     let report = Report::default();
-    report.save(&directory.0, WriteMode::CreateNew).unwrap();
-    assert!(report.save(&directory.0, WriteMode::CreateNew).is_err());
+    report
+        .publish(&directory.0, "manual-paste-started.json")
+        .unwrap();
+    assert!(
+        report
+            .publish(&directory.0, "manual-paste-started.json")
+            .is_err()
+    );
     assert!(!report.attempted && !report.clipboard_write_attempted && !report.input_sent);
+}
+
+#[test]
+fn immutable_manual_phases_do_not_replace_a_report_held_by_an_observer() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let directory = crate::recovery_store::tests::TemporaryRoot::new();
+    let report = Report::default();
+    ensure_fresh(&directory.0).unwrap();
+    report
+        .publish(&directory.0, "manual-paste-started.json")
+        .unwrap();
+    assert!(ensure_fresh(&directory.0).is_err());
+    let path = directory.0.join("manual-paste-started.json");
+    let blocking = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0x1 | 0x2)
+        .open(&path)
+        .unwrap();
+    assert!(atomic_write(&path, b"cannot-replace-observed-phase", WriteMode::Replace).is_err());
+    report
+        .publish(&directory.0, "manual-paste-armed.json")
+        .unwrap();
+    assert!(
+        report
+            .publish(&directory.0, "manual-paste-started.json")
+            .is_err()
+    );
+    drop(blocking);
+    report
+        .publish(&directory.0, "manual-paste-result.json")
+        .unwrap();
 }

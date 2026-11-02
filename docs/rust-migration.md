@@ -7,6 +7,21 @@ prepis: nejprve overit prinos na funkcnim pilotu, potom prenaset chovani a data.
 Android, Azure sluzby a Bicep zustavaji zachovany. Posledni rozhodnuti uzivatele:
 zustat u klasicke ACA; na ACA Express se v teto migraci neprechazi.
 
+Uzivatel nasledne vyslovne doplnil zavaznou vizualni podminku:
+"at to ma i puvodni ikonku a velmi podobne zive UI! nejen identickou
+funkcnost. Nastavovaci menu appky muze byt designove jine, ale UI popup
+apod. bych rad co nejpodobnejsi".
+Puvodni repo assets/ikona se musi znovu pouzit na vsech relevantnich
+native EXE/tray/window/shortcut/installer povrsich. Dictation overlay,
+popupy a stavove indikace maji vychazet ze skutecneho puvodniho WPF
+UI/source vzhledem, interakcemi a zivymi/reaktivnimi prechody, ne z noveho
+domysleneho stylu. Settings smi byt designove jine. Funkcni/data parity
+bez vizualniho overeni tuto novou akceptacni podminku NESPLNUJE.
+Aktualni native vizualni parity zatim neni prokazana; je nutny audit a
+oprava proti referenci. Drive namerene performance dukazy nad puvodnimi
+binary se neprepisuji na budoucni UI zmeny; relevantni regrese se zmeri
+znovu v odpovidajicim scope.
+
 ## Aktualni progress
 
 | Cast | Stav |
@@ -23,6 +38,7 @@ zustat u klasicke ACA; na ACA Express se v teto migraci neprechazi.
 | Diktovani/recovery UI | Native microphone/hotkeys/overlay/paste controller, oba enginy, journal, polishing a outbox implementovany; real-world a rozsahlejsi fault/E2E akceptace zbyva |
 | History cache | JSON/retence/200 entries, atomicka persistence, native list/text a manual copy latest/selected/original implementovany; C# file parity overena |
 | Settings a instalator | Vsechna C# JSON pole, nativni Settings/History/Recovery, DPI fonty, per-user autostart a kompatibilni IPC; installer sestaven, nebyl instalovan |
+| Original icon a podobne zive popup UI | Nove zavazna podminka; puvodni asset je v installer staging, uplny EXE/tray/window/shortcut audit a vizualni/reactive overlay parity zatim NEOVERENY |
 | Rust cloud API, worker, cleanup | API/AI/PubSub/live relay, processors/finalization/queue loop, cleanup, bootstrap/CLI a source-only image wiring implementovany; image CI proslo, uplna akceptace zbyva |
 | Hosting | Klasicka ACA zustava: API, KEDA queue worker a hourly cleanup Job; Express byl uzivatelem zrusen |
 
@@ -1930,3 +1946,35 @@ prosly,4 native manual/long fixtures zustaly ignored. Novy ownership/
 exclusive-result guard nepouziva real clipboard ani UI. Skutecny manual
 test se do ziskani presneho souhlasu NESPOUSTI; neprokazuje hold/toggle/
 whole-controller hour nebo celou physical akceptaci.
+
+Uzivatel pak jeden takovy automatic guarded-paste case vyslovne schvalil.
+fa27f86 frozen ignored fixture se spustil ve vlastnim rootu, PID45552/
+window5246560 byly overene, zadny agent Run klik nebyl proveden.
+Okno ale neocekavane skoncilo pred zaznamenanym attemptem:
+original report attempted=false, clipboard_write_attempted=false,
+input_sent=false a closed=false; process i console window jsou gone.
+Report SHA2569c795d16e23e9768ab6ba0ccba61ff7594b57c1e5db1b7a5516750232c2d1ba5
+je zachovany byte-exact. Neni to PASS ani prokazany guard rejection.
+Exit code a puvodni stderr nejsou dostupne, presny duvod tedy neni
+diagnostikovan. Koordinator dostal konkretni dotaz, zda uzivatel vubec
+stihl Run kliknout; zadny automaticky novy start/retry se nekonal.
+
+Prime nonphysical Windows file-lock regression dokazal, ze mutable
+atomic report replacement muze selhat pri drzenem reader handle.
+Nesmi se to vydavat za prokazanou pricinu puvodniho ukonceni.
+Fixture proto nyni publikuje pouze immutable once-per-phase started/
+armed/delivering/result/closed proof; pred clipboard API musi uspesne
+publikovat delivering phase. Zadny report se neprepisuje pri kazde
+UI zprave a reader nemusi uvolnovat replacement target. Sanitaized
+failure se uchova exclusive v own rootu, vsechny stare case roots se
+odmitaji. Pod aktivnim blokujicim synthetic readerem regression GREEN,
+native50 regular+7 startup/fmt/Clippy PASS, physical case stale ignored.
+Stara evidence nebyla prepsana a oprava se netestovala novym clipboard
+overwritem nebo paste bez vyjasneni presneho opravneni.
+
+Uzivatelovo jedine skutecne pozorovani bylo "Okno nevidim"; nepotvrdil
+Run klik ani zavreni okna. Koordinator proto case vyslovne uzavrel jako
+neprovedeny/bez prokazaneho attemptu a povolil pokracovat original-icon/
+live-UI auditem a pouze synthetic fixture opravou. Nove otevreni
+guarded-paste procesu potrebuje predchozi vyslovne rozhodnuti; neni
+automaticky povolene. Zadne dalsi domnenky o uzivatelove akci se nepridavaji.
