@@ -130,6 +130,17 @@ must publish before any clipboard call. An observer never races a report
 replacement. Failures are preserved separately in the owned root, and all
 previous phase/result/failure files reject reuse.
 
+A separate ignored `desktop::manual_tests::manual_guarded_paste_observer_only`
+entrypoint is a **read-only observer diagnostic**, not reopening that physical
+case. It requires its own `native-guarded-paste-observer-only-fixture` marker and
+fresh root, shows the same DPI-aware/icon-bearing fixture shell with Run once
+disabled and the blank target read-only, and closes after three minutes. Its separate
+event loop rejects action messages before any clipboard, focus-target, or native
+input port. Immutable `observer-ready.json`/`observer-closed.json` are not paste
+attempt evidence. Both scopes reject each other's markers and all old phase roots.
+An actual paste test still needs new explicit permission and a new physical root;
+observer success cannot consume or substitute for that decision.
+
 Clipboard writes use immediate `CF_UNICODETEXT` publication from moveable global
 memory, transferring ownership only after successful `SetClipboardData`.
 Bounded retries apply only to a busy clipboard. Pause, suspended/sign-out state

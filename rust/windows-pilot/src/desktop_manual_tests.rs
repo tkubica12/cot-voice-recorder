@@ -11,6 +11,7 @@ use windows::core::{PCWSTR, w};
 use crate::platform::{WriteMode, atomic_write};
 
 const SCOPE: &str = "single-native-guarded-paste-fixture";
+const OBSERVER_SCOPE: &str = "native-guarded-paste-observer-only-fixture";
 const MARKER: &str = "VoicePrompt synthetic guarded paste test 2026";
 const RUN: usize = 7001;
 const ARM: u32 = WM_APP + 71;
@@ -95,18 +96,33 @@ fn timer(window: HWND, id: usize, milliseconds: u32) -> Result<(), std::io::Erro
     Ok(())
 }
 
-fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let root = std::env::current_dir()?;
-    crate::fixtures::validate_scope(&root, None, SCOPE)?;
-    ensure_fresh(&root)?;
-    let mut report = Report::default();
-    report.publish(&root, "manual-paste-started.json")?;
+struct FixtureWindow {
+    window: TestWindow,
+    status: HWND,
+    edit: HWND,
+    button: HWND,
+    _font: crate::dpi::DpiFont,
+}
+
+fn create_fixture_window(observer_only: bool) -> Result<FixtureWindow, Box<dyn std::error::Error>> {
+    unsafe {
+        windows::Win32::UI::HiDpi::SetProcessDpiAwarenessContext(
+            windows::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+        )
+    }?;
     let instance: HINSTANCE = unsafe { GetModuleHandleW(None) }?.into();
+    let icons = crate::icons::AppIcons::for_dpi(96)?;
     let class = WNDCLASSW {
         lpfnWndProc: Some(procedure),
         hInstance: instance,
         lpszClassName: CLASS,
         hCursor: unsafe { LoadCursorW(None, IDC_ARROW) }?,
+        hIcon: icons.large,
+        hbrBackground: unsafe {
+            windows::Win32::Graphics::Gdi::GetSysColorBrush(
+                windows::Win32::Graphics::Gdi::COLOR_WINDOW,
+            )
+        },
         ..Default::default()
     };
     if unsafe { RegisterClassW(&class) } == 0 {
@@ -117,8 +133,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             CreateWindowExW(
                 WS_EX_APPWINDOW,
                 CLASS,
-                w!("VoicePrompt - Guarded paste test"),
-                WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+                if observer_only {
+                    w!("Isolated Rust observer - no paste")
+                } else {
+                    w!("Isolated Rust test - guarded paste")
+                },
+                WS_OVERLAPPEDWINDOW,
                 CW_USEDEFAULT,
                 CW_USEDEFAULT,
                 700,
@@ -131,18 +151,27 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }?,
         instance,
     };
+    let dpi = crate::dpi::window_dpi(window.window);
+    crate::icons::AppIcons::for_dpi(dpi)?.apply(window.window);
+    let scale = |value| value * dpi as i32 / 96;
     let status = unsafe {
         CreateWindowExW(
             WINDOW_EX_STYLE::default(),
             w!("STATIC"),
-            w!(
-                "One authorized clipboard overwrite + automatic Ctrl+V.\r\nClick Run once personally, then do not change focus or keys for one second.\r\nNo microphone, accounts, backend, Enter or Save. No retry."
-            ),
+            if observer_only {
+                w!(
+                    "Observer diagnostics only. Clipboard and native input ports are disabled.\r\nRun once is disabled: this is NOT an authorized paste attempt.\r\nThe own blank field is read-only. This preview closes automatically after three minutes."
+                )
+            } else {
+                w!(
+                    "One authorized clipboard overwrite + automatic Ctrl+V.\r\nClick Run once personally, then do not change focus or keys for one second.\r\nNo microphone, accounts, backend, Enter or Save. No retry."
+                )
+            },
             WS_CHILD | WS_VISIBLE,
-            20,
-            20,
-            650,
-            90,
+            scale(20),
+            scale(20),
+            scale(650),
+            scale(90),
             Some(window.window),
             None,
             Some(instance),
@@ -155,10 +184,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             w!("STATIC"),
             w!("Synthetic target (not saved)"),
             WS_CHILD | WS_VISIBLE,
-            20,
-            120,
-            650,
-            24,
+            scale(20),
+            scale(120),
+            scale(650),
+            scale(24),
             Some(window.window),
             None,
             Some(instance),
@@ -170,11 +199,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             WS_EX_CLIENTEDGE,
             w!("EDIT"),
             w!(""),
-            WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-            20,
-            150,
-            650,
-            35,
+            WS_CHILD
+                | WS_VISIBLE
+                | WS_TABSTOP
+                | if observer_only {
+                    WINDOW_STYLE(ES_READONLY as u32)
+                } else {
+                    WINDOW_STYLE::default()
+                },
+            scale(20),
+            scale(150),
+            scale(650),
+            scale(35),
             Some(window.window),
             None,
             Some(instance),
@@ -185,18 +221,72 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         CreateWindowExW(
             WINDOW_EX_STYLE::default(),
             w!("BUTTON"),
-            w!("Run once"),
+            if observer_only {
+                w!("Run once (disabled)")
+            } else {
+                w!("Run once")
+            },
             WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-            20,
-            210,
-            160,
-            35,
+            scale(20),
+            scale(210),
+            scale(200),
+            scale(35),
             Some(window.window),
             Some(HMENU(RUN as *mut _)),
             Some(instance),
             None,
         )
     }?;
+    if observer_only {
+        let _ = unsafe { EnableWindow(button, false) };
+    }
+    let font = crate::dpi::DpiFont::create(dpi)?;
+    font.apply_children(window.window)?;
+    let mut area = windows::Win32::Foundation::RECT::default();
+    unsafe {
+        SystemParametersInfoW(
+            SPI_GETWORKAREA,
+            0,
+            Some((&mut area as *mut windows::Win32::Foundation::RECT).cast()),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS::default(),
+        )
+    }?;
+    let width = scale(700).min(area.right - area.left);
+    let height = scale(330).min(area.bottom - area.top);
+    unsafe {
+        SetWindowPos(
+            window.window,
+            None,
+            area.left + (area.right - area.left - width) / 2,
+            area.top + (area.bottom - area.top - height) / 2,
+            width,
+            height,
+            SWP_NOACTIVATE | SWP_NOZORDER,
+        )?;
+        let _ = ShowWindow(window.window, SW_SHOWNOACTIVATE);
+    }
+    Ok(FixtureWindow {
+        window,
+        status,
+        edit,
+        button,
+        _font: font,
+    })
+}
+
+fn run() -> Result<(), Box<dyn std::error::Error>> {
+    let root = std::env::current_dir()?;
+    crate::fixtures::validate_scope(&root, None, SCOPE)?;
+    ensure_fresh(&root)?;
+    let mut report = Report::default();
+    report.publish(&root, "manual-paste-started.json")?;
+    let FixtureWindow {
+        window,
+        status,
+        edit,
+        button,
+        _font,
+    } = create_fixture_window(false)?;
     timer(window.window, 3, 180000)?;
     let mut guard = None;
     let mut previous_clipboard = 0;
@@ -343,12 +433,117 @@ fn ensure_fresh(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
         "manual-paste-result.json",
         "manual-paste-closed.json",
         "manual-paste-failure.json",
+        "observer-ready.json",
+        "observer-closed.json",
+        "observer-failure.json",
     ] {
         if root.join(name).try_exists()? {
             return Err("Manual desktop acceptance cannot reuse any previous case root.".into());
         }
     }
     Ok(())
+}
+
+fn run_observer() -> Result<(), Box<dyn std::error::Error>> {
+    let root = std::env::current_dir()?;
+    crate::fixtures::validate_scope(&root, None, OBSERVER_SCOPE)?;
+    ensure_fresh(&root)?;
+    let foreground = unsafe { GetForegroundWindow() };
+    let fixture = create_fixture_window(true)?;
+    assert_eq!(unsafe { GetForegroundWindow() }, foreground);
+    timer(fixture.window.window, 3, 180_000)?;
+    let observer_window = fixture.window.window;
+    let dpi = crate::dpi::window_dpi(observer_window);
+    let publish = |name, closed| -> Result<(), Box<dyn std::error::Error>> {
+        let bytes = serde_json::to_vec(&serde_json::json!({
+            "scope":OBSERVER_SCOPE,"pid":std::process::id(),
+            "window":observer_window.0 as usize,
+            "dpi":dpi,
+            "closed":closed,"observer_only":true,"run_enabled":false,
+            "action_attempted":false,"clipboard_read":false,"clipboard_write":false,
+            "native_input":false,"account_backend_microphone_hotkeys":false,
+            "whole_migration_acceptance":false,
+        }))?;
+        atomic_write(&root.join(name), &bytes, WriteMode::CreateNew)?;
+        Ok(())
+    };
+    publish("observer-ready.json", false)?;
+    let mut message = MSG::default();
+    loop {
+        let received = unsafe { GetMessageW(&mut message, None, 0, 0) }.0;
+        if received == -1 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        if received == 0
+            || message.message == CLOSE
+            || (message.message == WM_TIMER && message.wParam.0 == 3)
+        {
+            break;
+        }
+        if message.message == ARM {
+            return Err(
+                "Observer-only fixture rejected an action message before any physical port.".into(),
+            );
+        }
+        unsafe {
+            let _ = TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+    }
+    assert_eq!(unsafe { GetWindowTextLengthW(fixture.edit) }, 0);
+    drop(fixture);
+    assert!(!unsafe { IsWindow(Some(observer_window)) }.as_bool());
+    publish("observer-closed.json", true)?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "Read-only bounded observer preview, a different scope/entrypoint from the physical test. Run disabled, no clipboard/input APIs. Launch with UI tools."]
+fn manual_guarded_paste_observer_only() {
+    if let Err(error) = run_observer() {
+        if let Ok(root) = std::env::current_dir() {
+            if crate::fixtures::validate_scope(&root, None, OBSERVER_SCOPE).is_ok() {
+                let bytes = serde_json::to_vec(&serde_json::json!({
+                    "scope":OBSERVER_SCOPE,"pid":std::process::id(),
+                    "status":"observer_failed_no_action","error":error.to_string(),
+                }))
+                .expect("encode observer failure");
+                if let Err(failure) = atomic_write(
+                    &root.join("observer-failure.json"),
+                    &bytes,
+                    WriteMode::CreateNew,
+                ) {
+                    eprintln!("Preserve observer failure failed: {failure}");
+                }
+            }
+        }
+        panic!("Observer-only fixture failed: {error}");
+    }
+}
+
+#[test]
+fn observer_and_physical_scopes_are_mutually_exclusive_and_cannot_reuse_phase_roots() {
+    let directory = crate::recovery_store::tests::TemporaryRoot::new();
+    for (scope, other) in [(OBSERVER_SCOPE, SCOPE), (SCOPE, OBSERVER_SCOPE)] {
+        std::fs::write(
+            directory.0.join("migration-fixture.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "scope":scope, "instance_key":"0123456789abcdef0123456789abcdef",
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(crate::fixtures::validate_scope(&directory.0, None, scope).is_ok());
+        assert!(crate::fixtures::validate_scope(&directory.0, None, other).is_err());
+    }
+    ensure_fresh(&directory.0).unwrap();
+    atomic_write(
+        &directory.0.join("observer-ready.json"),
+        b"synthetic immutable phase",
+        WriteMode::CreateNew,
+    )
+    .unwrap();
+    assert!(ensure_fresh(&directory.0).is_err());
 }
 
 #[test]

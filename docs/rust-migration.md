@@ -2074,3 +2074,46 @@ SHA256d6602eaf0877ae3afeb1b44aeadc83475974c47aa662baac61805a63e1050f3e.
 8cd3a26 full RustCI41451827924 PASS vcetne actual MSRV1.85 noveho
 winresource graph. Reactive-overlay CI a nove post-UI startup/idle
 mereni teprve nasleduji; stara f572599 cisla se na novy build neprepisuji.
+
+7b4aff4 reactive-overlay full RustCI41456349495 a original C#WindowsCI
+41456349586 nasledne PASS. Novy frozen7b4aff4 signed-out30+30/3 paired
+301-point comparison nyni bezi v oddelenych explicitnich synthetic roots;
+native SHA25637f83a8302992a8acd67b500d5ac0d273fc638f31f3998fb723512b34135cd21.
+Dokoncene dilci samplery ani zive own-PID readiness zatim nejsou
+finalni performance acceptance a nejde o controller/physical hour.
+
+### Bezpecna observer diagnostika bez znovuotevreni paste akce
+
+Novy observer-only entrypoint ma JINY scope a event loop nez actual
+guarded-paste case. Run je disabled, vlastni prazdne pole read-only,
+ARM se odmitne pred clipboard/focus/native-input porty. Scope markery
+jsou vzajemne vylucne a stare action/observer phase roots se odmitnou.
+Phase soubory zustavaji immutable a closed se publikuje az po zaniklem
+own HWND. Shared fixture shell ma original icon, DPI-aware fonty,
+explicitni background a work-area centrovani/initial show bez aktivace.
+Normalni installer tuto cfg(test) diagnostiku neobsahuje.
+
+Prvni60s observer se sam normalne uzavrel bez akce; jeho titulkovy prefix
+byl v CUI katalogu aliasovan na installed VoicePrompt, tedy se nevydava
+za uspesny AX-control proof. To NENI dukaz priciny stareho fyzickeho
+case exit. Testovaci titulek je nyni zamerne odlisny:
+"Isolated Rust observer - no paste", maximalni bound3min.
+V novem fresh observer rootu byly ownPID46448/HWND3014990/image
+nezavisle overeny a CUI canonical process target skutecne precetl
+disabled Run a read-only blank field;144DPI1050x495 panel a original
+ikona byly take vizualne overeny. Jediny CUI klik byl Close, nikoli Run.
+Po nem se HWND/process normalne zavrely, closed report ma veskere
+action/clipboard/input flags false:
+guarded-observer-7b4aff4-b/state/observer-closed.json
+SHA256ca5a820fbaf413410252c661a553971c91bb904fcb75fc5c9bce596d5f599c74.
+Own transient launchery byly odstraneny; raw dukazy zustaly.
+
+Puvodni fyzicky case je stale uzavren jako NEPROVEDENY/bez prokazaneho
+attemptu; nebyl otevren action-enabled proces ani novy clipboard/paste.
+Koordinator dostal presny nejmensi novy scope pro vyslovne rozhodnuti
+po signed-out mereni: nove3min okno "Isolated Rust test - guarded paste",
+jeden osobni Run once,500ms guard delay, jeden fixed-marker overwrite
+a nejvyse jedno DesktopGuard Ctrl+V do vlastniho pole, bez retry/Enter/
+Save/jinych aplikaci/device/account/cloud portu. Stary clipboard se
+necte/neobnovuje a marker zustane. Observer success toto opravneni
+nenahrazuje a zadny drivejsi souhlas se nerecykluje.
