@@ -1529,3 +1529,33 @@ a CI spousti pouze je, nikdy fyzicky collector. Ulozena schema neumoznuji
 vydavat chybejici/invalid first_pcm_ms nebo nekompletni trial count za uspech.
 Samotny CLI opt-in flag neni opravneni; konkretni uzivatelsky souhlas je
 nutnou predchozi podminkou provadene serie.
+
+## Physical paired microphone readiness: schvalena serie dokoncena
+
+Jedna samostatne schvalena serie probehla presne30Rust+30C# trialu v alternating
+poradi, kazdy s240ms pozadovanym capture oknem, bez jedineho automatic retry.
+Vsech60 attempt/result records, actual frozen bundle hashes, typed PCM counts,
+process exit0 a raw timing vypocty byly nezavisle overeny.
+
+| Default-device readiness, p95 | C# | Rust |
+| --- | --- | --- |
+| Prvni validni PCM, primarni criterion | 352.8143ms | 284.8815ms |
+| Open return, jen vedlejsi telemetry | 276.0153ms | 213.0476ms |
+| Stop/dispose | 21.8863ms | 33.4994ms |
+
+Rust first-PCM p95 je80.7455%baseline a splnuje puvodni<=110% cil. Neni to
+open-return proxy; prvni PCM je v C# skutecny DataAvailable a v Rustu validni
+buffer prijaty z real capture fronty. Stop je zvlast uvedeny a neni zamaskovan
+jen rychlejsi first-PCM metrikou. Nezavadel se novy stop benchmark threshold.
+
+Vsech60 vlastnich procesu skoncilo; capture/close nemelo zadnou stderr chybu.
+Neulozil/neuploadoval se zadny zvuk, buffer byl RAM-only/zero a nepouzil se
+auth/cloud, clipboard/paste ani hotkeys. Osobni instance byla nepritomna
+pri preflightu a agent ji neukoncoval. Report
+paired-microphone-readiness-cc3367b/microphone-readiness.json ma SHA256
+50ca8fe94a7959293e95f7d27c7cba1c443d8a1f55eb999111786e422817aaf1.
+
+Tento druhy konkretni souhlas je spotrebovany. Serie nemeri jine vstupy,
+hotkey/focus/paste ani full-client-hour/network chovani. Proto zustava
+whole_migration_acceptance=false; dalsi fyzicke scenare nelze automaticky
+zopakovat nebo pripojit k drivejsimu mikrofonimu opravneni.
