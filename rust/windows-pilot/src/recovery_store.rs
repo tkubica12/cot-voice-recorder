@@ -169,9 +169,7 @@ impl NativeRecoveryStore {
         }
         let state = self.0.load(id, true)?;
         // Retry publish-before-delete leftovers once on reopen, not on every new confirmation.
-        for chunk in state.chunks.iter().filter(|chunk| chunk.text.is_some()) {
-            self.0.remove_audio(id, chunk.index)?;
-        }
+        self.0.retry_confirmed_audio(&state)?;
         active.insert(id.into());
         Ok(NativeRecoveryJournal {
             root: self.0.clone(),
@@ -405,6 +403,13 @@ impl RecoveryRoot {
         }
     }
 
+    fn retry_confirmed_audio(&self, state: &RecoveryManifest) -> Result<(), NativeError> {
+        for chunk in state.chunks.iter().filter(|chunk| chunk.text.is_some()) {
+            self.remove_audio(&state.id, chunk.index)?;
+        }
+        Ok(())
+    }
+
     fn delete_flat(&self, id: &str) -> Result<(), NativeError> {
         let directory = self.session_path(id)?;
         let entries = match std::fs::read_dir(&directory) {
@@ -536,6 +541,7 @@ impl NativeRecoveryJournal {
         let _active = self.root.lock()?;
         self.ensure_open()?;
         let mut state = self.root.load(&self.id, false)?;
+        let retry_deletions = through == state.confirmed_bytes;
         let released = state.confirm(
             through,
             text,
@@ -545,6 +551,9 @@ impl NativeRecoveryJournal {
             utc_ticks(now)?,
         )?;
         self.root.write_manifest(&state)?;
+        if retry_deletions {
+            return self.root.retry_confirmed_audio(&state);
+        }
         for index in released {
             self.root.remove_audio(&self.id, index)?;
         }

@@ -1403,3 +1403,11 @@ child-pipe-backpressure failure testy prosly; neuspech nemuze publikovat
 complete report. Full hour se musi znovu provest nad novym frozen buildem,
 se stejnymi301/3601/301 samples a nezmenenym5s completion/30s controller oknem.
 Fyzicky mikrofon, clipboard, Google, install ani Azure se zatim nepouzily.
+
+Publish-before-delete cleanup retry zustava take na stejnem otevrenem journalu:
+identicke confirmation na uz durable cursoru explicitne retryuje leftovers,
+zatimco normalni postupujici cursor stale vraci jen nove potvrzene indexy.
+Rozsireny actual v4 file-lock test nejprve prokaze viditelnou chybu, pak
+same-cursor retry, nasledne samostatny crash/reopen retry; pending audio
+zustava zachovane v kazde fazi. Vsech devet native store testu a strict
+Clippy/fmt proslo. Prave bezici25f0e21 frozen hour retry se nemeni.

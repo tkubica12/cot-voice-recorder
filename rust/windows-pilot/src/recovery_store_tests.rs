@@ -247,6 +247,41 @@ fn reopen_retries_confirmed_orphan_deletion_without_touching_pending_audio() {
         }
         let orphan = store.0.audio_path(&id, 0).unwrap();
         std::fs::write(&orphan, protect(&first).unwrap()).unwrap();
+        if streaming {
+            let locked = OpenOptions::new()
+                .read(true)
+                .share_mode(0)
+                .open(&orphan)
+                .unwrap();
+            assert!(
+                journal
+                    .confirm_streaming(
+                        6400,
+                        "synthetic".into(),
+                        vec![1; 6400],
+                        false,
+                        Some(1),
+                        now(),
+                    )
+                    .is_err()
+            );
+            drop(locked);
+            journal
+                .confirm_streaming(
+                    6400,
+                    "synthetic".into(),
+                    vec![1; 6400],
+                    false,
+                    Some(1),
+                    now(),
+                )
+                .unwrap();
+            assert!(
+                !orphan.exists(),
+                "Same-cursor retry must finish the earlier deletion."
+            );
+            std::fs::write(&orphan, protect(&first).unwrap()).unwrap();
+        }
         drop(journal);
         let locked = OpenOptions::new()
             .read(true)
