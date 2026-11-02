@@ -1,7 +1,9 @@
 use crate::NativeError;
 use std::mem::size_of;
 use windows::Win32::Foundation::{HWND, LPARAM, RECT, WPARAM};
-use windows::Win32::Graphics::Gdi::{CreateFontIndirectW, DeleteObject, HFONT};
+use windows::Win32::Graphics::Gdi::{
+    CLEARTYPE_QUALITY, CreateFontIndirectW, DEFAULT_CHARSET, DeleteObject, HFONT, LOGFONTW,
+};
 use windows::Win32::UI::HiDpi::{GetDpiForWindow, SystemParametersInfoForDpi};
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumChildWindows, NONCLIENTMETRICSW, SPI_GETNONCLIENTMETRICS, SWP_NOACTIVATE, SWP_NOZORDER,
@@ -18,6 +20,49 @@ pub(crate) struct DpiFont {
 }
 
 impl DpiFont {
+    pub fn sized(dpi: u32, size_dip: i32, weight: i32) -> Result<Self, NativeError> {
+        if !(48..=768).contains(&dpi)
+            || !(6..=64).contains(&size_dip)
+            || !(100..=900).contains(&weight)
+        {
+            return Err(NativeError::InvalidArgument(
+                "Unsupported native UI font specification.",
+            ));
+        }
+        let mut specification = LOGFONTW {
+            lfHeight: -(size_dip * dpi as i32 + 48) / 96,
+            lfWeight: weight,
+            lfCharSet: DEFAULT_CHARSET,
+            lfQuality: CLEARTYPE_QUALITY,
+            ..Default::default()
+        };
+        let family: Vec<_> = "Segoe UI".encode_utf16().collect();
+        specification.lfFaceName[..family.len()].copy_from_slice(&family);
+        let handle = unsafe { CreateFontIndirectW(&specification) };
+        if handle.0.is_null() {
+            return Err(NativeError::Api(
+                "Create original-theme Segoe UI font",
+                windows::core::Error::from_thread(),
+            ));
+        }
+        Ok(Self { handle, dpi })
+    }
+
+    pub fn handle(&self) -> HFONT {
+        self.handle
+    }
+
+    pub fn apply(&self, window: HWND) {
+        unsafe {
+            let _ = SendMessageW(
+                window,
+                WM_SETFONT,
+                Some(WPARAM(self.handle.0 as usize)),
+                Some(LPARAM(1)),
+            );
+        }
+    }
+
     pub fn create(dpi: u32) -> Result<Self, NativeError> {
         let mut metrics = NONCLIENTMETRICSW {
             cbSize: size_of::<NONCLIENTMETRICSW>() as u32,

@@ -135,6 +135,13 @@ jobs:
           dictation_overlay::tests::synthetic_render_hide_cycles_release_all_gdi_handles
           -- --exact --ignored --nocapture --test-threads=1
 
+      - name: Synthetic main-theme resource regression without windows or physical ports
+        if: runner.os == 'Windows'
+        run: >
+          cargo test --offline --locked -p voiceprompt-windows-pilot --lib
+          main_theme::tests::synthetic_main_theme_cycles_release_fonts_brushes_pens_and_bitmaps
+          -- --exact --ignored --nocapture --test-threads=1
+
       - name: NoPorts post-Run focus contract and immutable operation proof
         if: runner.os == 'Windows'
         shell: pwsh

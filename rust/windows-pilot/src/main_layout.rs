@@ -6,8 +6,15 @@ pub(crate) struct Bounds {
     pub height: i32,
 }
 
+pub(crate) const SECTION_ITEM_HEIGHT_DIP: i32 = 30;
+
 pub(crate) struct MainLayout {
+    pub logo: Bounds,
+    pub title: Bounds,
     pub status: Bounds,
+    pub status_card: Bounds,
+    pub status_labels: [Bounds; 3],
+    pub status_values: [Bounds; 3],
     pub toolbar: [Bounds; 5],
     pub tabs: Bounds,
     pub text_toggle: Bounds,
@@ -57,7 +64,7 @@ impl MainLayout {
         let (mut toolbar, _) = flow([76, 76, 126, 88, 96], content, scale);
         for item in &mut toolbar {
             item.x += margin;
-            item.y += scale(110);
+            item.y += scale(133);
         }
         let (mut history_actions, footer_height) = flow([110, 96, 108, 96, 108], content, scale);
         for item in &mut history_actions {
@@ -69,25 +76,58 @@ impl MainLayout {
             item.x += margin;
             item.y += height - margin - recovery_footer_height;
         }
-        let top = scale(196);
+        let top = scale(219);
         let recovery_top = top + scale(56);
+        let column_width = (content - scale(24)) / 3;
+        let status_labels = std::array::from_fn(|index| Bounds {
+            x: margin + scale(12) + column_width * index as i32,
+            y: scale(78),
+            width: column_width - scale(8),
+            height: scale(16),
+        });
+        let status_values = std::array::from_fn(|index| Bounds {
+            x: status_labels[index].x,
+            y: scale(94),
+            width: status_labels[index].width,
+            height: scale(19),
+        });
         Ok(Self {
-            status: Bounds {
+            logo: Bounds {
                 x: margin,
-                y: scale(12),
-                width: content,
-                height: scale(88),
+                y: scale(16),
+                width: scale(40),
+                height: scale(40),
             },
+            title: Bounds {
+                x: scale(68),
+                y: scale(16),
+                width: content - scale(52),
+                height: scale(24),
+            },
+            status: Bounds {
+                x: scale(68),
+                y: scale(40),
+                width: content - scale(52),
+                height: scale(17),
+            },
+            status_card: Bounds {
+                x: margin,
+                y: scale(68),
+                width: content,
+                height: scale(53),
+            },
+            status_labels,
+            status_values,
             toolbar,
             tabs: Bounds {
                 x: margin,
-                y: scale(152),
-                width: content,
+                y: scale(175),
+                width: content - scale(138),
                 height: scale(32),
             },
             text_toggle: Bounds {
                 x: width - margin - scale(130),
-                y: scale(152),
+                y: scale(175),
                 width: scale(130),
                 height: scale(30),
             },
@@ -140,6 +180,9 @@ mod tests {
                 let layout = MainLayout::calculate(width as i32, height as i32, dpi).unwrap();
                 for bounds in [
                     layout.status,
+                    layout.logo,
+                    layout.title,
+                    layout.status_card,
                     layout.tabs,
                     layout.text_toggle,
                     layout.history,
@@ -148,12 +191,16 @@ mod tests {
                 ]
                 .into_iter()
                 .chain(layout.toolbar)
+                .chain(layout.status_labels)
+                .chain(layout.status_values)
                 .chain(layout.history_actions)
                 .chain(layout.recovery_actions)
                 {
                     within(bounds, width as i32, height as i32);
                 }
                 assert!(layout.history.y + layout.history.height < layout.history_actions[0].y);
+                assert!(layout.tabs.height >= SECTION_ITEM_HEIGHT_DIP * dpi as i32 / 96);
+                assert!(layout.tabs.x + layout.tabs.width < layout.text_toggle.x);
                 assert!(
                     layout
                         .toolbar

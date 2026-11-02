@@ -26,6 +26,7 @@ use windows::Win32::Storage::FileSystem::{
     MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW, MoveFileW,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::System::SystemServices::{SS_ENDELLIPSIS, SS_ICON, SS_REALSIZECONTROL};
 use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::Controls as controls;
 use windows::Win32::UI::HiDpi::{
@@ -35,6 +36,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     EnableWindow, GetKeyState, HOT_KEY_MODIFIERS, MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_WIN, VK_C,
     VK_CONTROL, VK_F5, VK_LWIN, VK_MENU, VK_RETURN, VK_RWIN, VK_SHIFT, VK_SPACE,
 };
+use windows::Win32::UI::Shell as shell;
 use windows::Win32::UI::Shell::{
     NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIIF_INFO, NIIF_WARNING, NIM_ADD,
     NIM_DELETE, NIM_MODIFY, NIM_SETFOCUS, NIM_SETVERSION, NIN_BALLOONUSERCLICK, NIN_SELECT,
@@ -77,6 +79,15 @@ const MAIN_TABS: usize = 1050;
 const SHOW_HISTORY_TEXT: usize = 1051;
 const RECOVERY_HELP: usize = 1052;
 const REFRESH_RECOVERY: usize = 1053;
+const HEADER_LOGO: usize = 1060;
+const HEADER_TITLE: usize = 1061;
+const CONNECTION_LABEL: usize = 1062;
+const ACCOUNT_LABEL: usize = 1063;
+const CACHE_LABEL: usize = 1064;
+const CONNECTION_VALUE: usize = 1065;
+const ACCOUNT_VALUE: usize = 1066;
+const CACHE_VALUE: usize = 1067;
+const SECTION_PAINT_SUBCLASS: usize = 0x5650;
 const INSTANCE_TIMER: usize = 3;
 
 thread_local! {
@@ -87,9 +98,10 @@ thread_local! {
     static RELOAD_CLIENT: RefCell<Option<ClientOptions>> = const { RefCell::new(None) };
     static CLIENT_TICK: RefCell<u32> = const { RefCell::new(100) };
     static COMPATIBLE_INSTANCE: RefCell<Option<crate::CompatibleInstance>> = const { RefCell::new(None) };
-    static MAIN_FONT: RefCell<Option<crate::dpi::DpiFont>> = const { RefCell::new(None) };
+    static MAIN_FONT: RefCell<Option<crate::main_theme::MainTheme>> = const { RefCell::new(None) };
     static MAIN_LAYOUT_READY: Cell<bool> = const { Cell::new(false) };
     static MAIN_SECTION_STATE: Cell<Option<(isize, bool)>> = const { Cell::new(None) };
+    static MAIN_HOVER: Cell<Option<(HWND, i32, i32)>> = const { Cell::new(None) };
     #[cfg(test)]
     static UI_PREVIEW_ROOT: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
     #[cfg(test)]
@@ -670,6 +682,7 @@ impl Drop for MainFontLifetime {
     fn drop(&mut self) {
         MAIN_LAYOUT_READY.with(|ready| ready.set(false));
         MAIN_SECTION_STATE.with(|state| state.set(None));
+        MAIN_HOVER.with(|state| state.set(None));
         let font = MAIN_FONT.with(|slot| slot.borrow_mut().take());
         drop(font);
     }
@@ -1286,6 +1299,7 @@ fn refresh_client_ui(hwnd: HWND) -> Result<(), NativeError> {
         {
             relayout(hwnd)?;
         }
+        refresh_hover(hwnd);
         if !host.status.has_changed().map_err(|_| {
             NativeError::Verification("The client status channel stopped.")
         })? && UI_HISTORY.with(|history| history.borrow().is_some()) {
@@ -1312,11 +1326,24 @@ fn refresh_client_ui(hwnd: HWND) -> Result<(), NativeError> {
             UI_RECOVERY.with(|slot| *slot.borrow_mut() = Some(status.recovery.clone()));
             unsafe { let _ = SendMessageW(list, LB_SETCURSEL, Some(WPARAM(index)), None); }
         }
-        set_text(hwnd, STATUS_CONTROL, &format!(
-            "Isolated Rust client - explicit local state.\r\nSign-in: {:?}{} | Realtime: {:?}\r\n{}\r\nNo installed VoicePrompt data is discovered automatically.",
-            status.auth, if status.signing_in { " (browser flow pending)" } else { "" },
-            status.realtime, if shortcut_error { "Dictation shortcut unavailable. Choose an unused shortcut in Settings." } else { status.issue.unwrap_or("") },
-        ))?;
+        set_text(hwnd, STATUS_CONTROL, if shortcut_error { "Dictation shortcut unavailable. Choose an unused shortcut in Settings." }
+            else { status.issue.unwrap_or("Transcripts arrive from the cloud and land on your clipboard.") })?;
+        set_text(hwnd, CONNECTION_VALUE, match status.realtime {
+            voiceprompt_client_protocol::websocket::RealtimeState::Stopped => "Stopped",
+            voiceprompt_client_protocol::websocket::RealtimeState::Suspended => "Suspended",
+            voiceprompt_client_protocol::websocket::RealtimeState::Connecting => "Connecting\u{2026}",
+            voiceprompt_client_protocol::websocket::RealtimeState::Connected => "Connected",
+            voiceprompt_client_protocol::websocket::RealtimeState::Reconnecting => "Reconnecting\u{2026}",
+            voiceprompt_client_protocol::websocket::RealtimeState::SignInRequired => "Sign-in required",
+            voiceprompt_client_protocol::websocket::RealtimeState::NotConfigured => "Not configured",
+        })?;
+        set_text(hwnd, ACCOUNT_VALUE, if status.signing_in { "Signing in..." } else { match status.auth {
+            voiceprompt_client_protocol::state::AuthState::NotConfigured => "Not configured",
+            voiceprompt_client_protocol::state::AuthState::SignedOut => "Signed out",
+            voiceprompt_client_protocol::state::AuthState::SignedIn => "Signed in",
+            voiceprompt_client_protocol::state::AuthState::SignInNeeded => "Sign-in required",
+        }})?;
+        set_text(hwnd, CACHE_VALUE, &status.history.len().to_string())?;
         set_text(hwnd, PAUSE, if host.policy.paused() { "Resume auto-copy" } else { "Pause auto-copy" })?;
         let selected = selected_id(hwnd)?;
         let original_available = selected_history_entry(&status.history, selected.as_deref()).is_some_and(|entry| entry.raw_body.is_some());
@@ -1345,7 +1372,8 @@ fn refresh_client_ui(hwnd: HWND) -> Result<(), NativeError> {
             let list = api("GetDlgItem (history)", unsafe { GetDlgItem(Some(hwnd), HISTORY_LIST as i32) })?;
             unsafe { let _ = SendMessageW(list, LB_RESETCONTENT, None, None); }
             for entry in status.history.iter() {
-                let label = format!("{}  {}", entry.completed_at, entry.preview.chars().take(120).collect::<String>());
+                let label = format!("{}. {}", if entry.preview.trim().is_empty() { "(no preview)" } else { &entry.preview },
+                    crate::main_presentation::history_metadata(entry, time::OffsetDateTime::now_utc())?);
                 let text = wide(OsStr::new(&label))?;
                 let result = unsafe { SendMessageW(list, LB_ADDSTRING, None, Some(LPARAM(text.as_ptr() as isize))) };
                 if result.0 < 0 {
@@ -1370,6 +1398,8 @@ fn layout(hwnd: HWND, width: i32, height: i32) -> Result<(), NativeError> {
             .map_err(NativeError::Verification)?;
     let (page, showing_text) = section_state(hwnd)?;
     let mut items = vec![
+        (HEADER_LOGO, positions.logo),
+        (HEADER_TITLE, positions.title),
         (STATUS_CONTROL, positions.status),
         (MAIN_TABS, positions.tabs),
         (SHOW_HISTORY_TEXT, positions.text_toggle),
@@ -1378,6 +1408,16 @@ fn layout(hwnd: HWND, width: i32, height: i32) -> Result<(), NativeError> {
         (RECOVERY_HELP, positions.recovery_help),
         (RECOVERY_LIST, positions.recovery),
     ];
+    items.extend(
+        [CONNECTION_LABEL, ACCOUNT_LABEL, CACHE_LABEL]
+            .into_iter()
+            .zip(positions.status_labels),
+    );
+    items.extend(
+        [CONNECTION_VALUE, ACCOUNT_VALUE, CACHE_VALUE]
+            .into_iter()
+            .zip(positions.status_values),
+    );
     items.extend(
         [SIGN_IN, SIGN_OUT, PAUSE, RECONNECT, OPEN_SETTINGS]
             .into_iter()
@@ -1401,8 +1441,20 @@ fn layout(hwnd: HWND, width: i32, height: i32) -> Result<(), NativeError> {
     );
     for (id, bounds) in items {
         let child = api("GetDlgItem", unsafe { GetDlgItem(Some(hwnd), id as i32) })?;
+        let inset = if matches!(id, HISTORY_LIST | HISTORY_BODY | RECOVERY_LIST) {
+            (crate::dpi::window_dpi(hwnd) as i32 + 48) / 96
+        } else {
+            0
+        };
         api("Position adaptive native control", unsafe {
-            MoveWindow(child, bounds.x, bounds.y, bounds.width, bounds.height, true)
+            MoveWindow(
+                child,
+                bounds.x + inset,
+                bounds.y + inset,
+                bounds.width - inset * 2,
+                bounds.height - inset * 2,
+                true,
+            )
         })?;
         let visible = match id {
             HISTORY_LIST => page == 0 && !showing_text,
@@ -1418,6 +1470,12 @@ fn layout(hwnd: HWND, width: i32, height: i32) -> Result<(), NativeError> {
         }
     }
     MAIN_SECTION_STATE.with(|state| state.set(Some((page, showing_text))));
+    if !unsafe { windows::Win32::Graphics::Gdi::InvalidateRect(Some(hwnd), None, true) }.as_bool() {
+        return Err(NativeError::Api(
+            "Invalidate previous native section geometry",
+            windows::core::Error::from_thread(),
+        ));
+    }
     Ok(())
 }
 
@@ -1437,6 +1495,43 @@ fn section_state(hwnd: HWND) -> Result<(isize, bool), NativeError> {
     let showing_text = unsafe { SendMessageW(text_view, BM_GETCHECK, None, None) }.0
         == controls::BST_CHECKED.0 as isize;
     Ok((page, showing_text))
+}
+
+fn refresh_hover(hwnd: HWND) {
+    if !unsafe { IsWindowVisible(hwnd) }.as_bool() {
+        return;
+    }
+    let mut point = POINT::default();
+    if let Err(error) = unsafe { GetCursorPos(&mut point) } {
+        eprintln!("Native hover updates suspended: {error}");
+        return;
+    }
+    let target = unsafe { WindowFromPoint(point) };
+    let child = if unsafe { IsChild(hwnd, target) }.as_bool() {
+        target
+    } else {
+        HWND::default()
+    };
+    let current = (child, point.x, point.y);
+    MAIN_HOVER.with(|state| {
+        if state.get() == Some(current) {
+            return;
+        }
+        if let Some((previous, _, _)) = state.get() {
+            if !previous.0.is_null() {
+                unsafe {
+                    let _ =
+                        windows::Win32::Graphics::Gdi::InvalidateRect(Some(previous), None, false);
+                }
+            }
+        }
+        if !child.0.is_null() {
+            unsafe {
+                let _ = windows::Win32::Graphics::Gdi::InvalidateRect(Some(child), None, false);
+            }
+        }
+        state.set(Some(current));
+    });
 }
 
 fn relayout(hwnd: HWND) -> Result<(), NativeError> {
@@ -1467,7 +1562,15 @@ fn create_sections(hwnd: HWND, instance: HINSTANCE) -> Result<(), NativeError> {
             MAIN_TABS,
             controls::WC_TABCONTROLW,
             w!("Sections"),
-            WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+            WS_CHILD
+                | WS_VISIBLE
+                | WS_TABSTOP
+                | WINDOW_STYLE(
+                    controls::TCS_OWNERDRAWFIXED
+                        | controls::TCS_FIXEDWIDTH
+                        | controls::TCS_BUTTONS
+                        | controls::TCS_FLATBUTTONS,
+                ),
         ),
     ] {
         api("Create native History/Recovery sections", unsafe {
@@ -1512,6 +1615,14 @@ fn create_sections(hwnd: HWND, instance: HINSTANCE) -> Result<(), NativeError> {
             ));
         }
     }
+    if !unsafe { shell::SetWindowSubclass(tabs, Some(section_paint), SECTION_PAINT_SUBCLASS, 0) }
+        .as_bool()
+    {
+        return Err(NativeError::Api(
+            "Apply original native section presentation",
+            windows::core::Error::from_thread(),
+        ));
+    }
     let mut previous = HWND_TOP;
     for id in [
         MAIN_TABS,
@@ -1552,13 +1663,166 @@ fn create_sections(hwnd: HWND, instance: HINSTANCE) -> Result<(), NativeError> {
     Ok(())
 }
 
+unsafe extern "system" fn section_paint(
+    window: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    subclass: usize,
+    _data: usize,
+) -> LRESULT {
+    if message == WM_NCDESTROY {
+        unsafe {
+            let _ = shell::RemoveWindowSubclass(window, Some(section_paint), subclass);
+            return shell::DefSubclassProc(window, message, wparam, lparam);
+        }
+    }
+    if message != WM_PAINT || !MAIN_LAYOUT_READY.with(Cell::get) {
+        return unsafe { shell::DefSubclassProc(window, message, wparam, lparam) };
+    }
+    let result = MAIN_FONT.with(|slot| {
+        let Ok(slot) = slot.try_borrow() else {
+            return Ok(None);
+        };
+        let Some(theme) = slot.as_ref() else {
+            return Ok(None);
+        };
+        let mut paint = windows::Win32::Graphics::Gdi::PAINTSTRUCT::default();
+        let dc = unsafe { windows::Win32::Graphics::Gdi::BeginPaint(window, &mut paint) };
+        let drawing = (|| {
+            let mut bounds = RECT::default();
+            api("Read original section strip", unsafe {
+                GetClientRect(window, &mut bounds)
+            })?;
+            theme.canvas(dc, bounds)?;
+            let selected = unsafe { SendMessageW(window, controls::TCM_GETCURSEL, None, None) }.0;
+            for (index, text) in ["History", "Recovery"].into_iter().enumerate() {
+                let mut rect = RECT::default();
+                if unsafe {
+                    SendMessageW(
+                        window,
+                        controls::TCM_GETITEMRECT,
+                        Some(WPARAM(index)),
+                        Some(LPARAM((&mut rect as *mut RECT) as isize)),
+                    )
+                }
+                .0 == 0
+                {
+                    return Err(NativeError::Verification(
+                        "Could not read original native section bounds.",
+                    ));
+                }
+                let item = controls::DRAWITEMSTRUCT {
+                    CtlType: controls::ODT_TAB,
+                    CtlID: MAIN_TABS as u32,
+                    itemID: index as u32,
+                    itemState: if selected == index as isize {
+                        controls::ODS_FLAGS(
+                            controls::ODS_SELECTED.0
+                                | if unsafe {
+                                    windows::Win32::UI::Input::KeyboardAndMouse::GetFocus()
+                                } == window
+                                {
+                                    controls::ODS_FOCUS.0
+                                } else {
+                                    0
+                                },
+                        )
+                    } else {
+                        controls::ODS_FLAGS(0)
+                    },
+                    hwndItem: window,
+                    hDC: dc,
+                    rcItem: rect,
+                    ..Default::default()
+                };
+                theme.tab(&item, text)?;
+            }
+            Ok::<_, NativeError>(())
+        })();
+        if !unsafe { windows::Win32::Graphics::Gdi::EndPaint(window, &paint) }.as_bool() {
+            eprintln!("Original section strip paint cleanup failed.");
+        }
+        drawing?;
+        Ok::<_, NativeError>(Some(LRESULT(0)))
+    });
+    match result {
+        Ok(Some(value)) => value,
+        Ok(None) => unsafe { shell::DefSubclassProc(window, message, wparam, lparam) },
+        Err(error) => {
+            eprintln!("Original native section rendering failed: {error}");
+            CALLBACK_ERROR.with(|slot| *slot.borrow_mut() = Some(error));
+            unsafe { PostQuitMessage(1) };
+            LRESULT(0)
+        }
+    }
+}
+
 fn update_main_font(hwnd: HWND) -> Result<(), NativeError> {
     let dpi = crate::dpi::window_dpi(hwnd);
     MAIN_FONT.with(|slot| {
         if slot.borrow().as_ref().is_none_or(|font| font.dpi != dpi) {
-            let font = crate::dpi::DpiFont::create(dpi)?;
-            font.apply_children(hwnd)?;
-            *slot.borrow_mut() = Some(font);
+            let theme = crate::main_theme::MainTheme::new(dpi)?;
+            theme.base.apply_children(hwnd)?;
+            theme.title.apply(api("Read branding title", unsafe {
+                GetDlgItem(Some(hwnd), HEADER_TITLE as i32)
+            })?);
+            for id in [STATUS_CONTROL, CONNECTION_LABEL, ACCOUNT_LABEL, CACHE_LABEL] {
+                theme
+                    .caption
+                    .apply(api("Read original caption control", unsafe {
+                        GetDlgItem(Some(hwnd), id as i32)
+                    })?);
+            }
+            theme
+                .section_caption
+                .apply(api("Read recovery explanation", unsafe {
+                    GetDlgItem(Some(hwnd), RECOVERY_HELP as i32)
+                })?);
+            theme.strong.apply(api("Read recovery list font", unsafe {
+                GetDlgItem(Some(hwnd), RECOVERY_LIST as i32)
+            })?);
+            for id in [CONNECTION_VALUE, ACCOUNT_VALUE, CACHE_VALUE] {
+                theme
+                    .strong
+                    .apply(api("Read original status value", unsafe {
+                        GetDlgItem(Some(hwnd), id as i32)
+                    })?);
+            }
+            let logo = api("Read original branding control", unsafe {
+                GetDlgItem(Some(hwnd), HEADER_LOGO as i32)
+            })?;
+            let tabs = api("Read original section control", unsafe {
+                GetDlgItem(Some(hwnd), MAIN_TABS as i32)
+            })?;
+            let history = api("Read original history control", unsafe {
+                GetDlgItem(Some(hwnd), HISTORY_LIST as i32)
+            })?;
+            let scale = |value: i32| (value * dpi as i32 + 48) / 96;
+            unsafe {
+                let _ = SendMessageW(
+                    logo,
+                    STM_SETICON,
+                    Some(WPARAM(crate::icons::AppIcons::branding(dpi)?.0 as usize)),
+                    None,
+                );
+                let _ = SendMessageW(
+                    tabs,
+                    controls::TCM_SETITEMSIZE,
+                    None,
+                    Some(LPARAM(
+                        (scale(81) | (scale(crate::main_layout::SECTION_ITEM_HEIGHT_DIP) << 16))
+                            as isize,
+                    )),
+                );
+                let _ = SendMessageW(
+                    history,
+                    LB_SETITEMHEIGHT,
+                    Some(WPARAM(0)),
+                    Some(LPARAM(scale(47) as isize)),
+                );
+            }
+            *slot.borrow_mut() = Some(theme);
         }
         Ok(())
     })
@@ -1638,9 +1902,7 @@ fn dispatch(
                 CreateWindowExW(
                     WINDOW_EX_STYLE::default(),
                     w!("STATIC"),
-                    w!(
-                        "Native Rust migration pilot\r\n\r\nReady: tray, isolated instance, current-user DPAPI.\r\nNot yet connected: Google login, PubSub, dictation, history.\r\n\r\nThe installed VoicePrompt and its data remain unchanged."
-                    ),
+                    w!("Transcripts arrive from the cloud and land on your clipboard."),
                     WS_CHILD | WS_VISIBLE,
                     16,
                     16,
@@ -1673,15 +1935,15 @@ fn dispatch(
                 (DELETE_RECOVERY, w!("Delete recovery")),
                 (REFRESH_RECOVERY, w!("Refresh")),
                 (OPEN_SETTINGS, w!("Settings")),
-                (REFRESH_HISTORY, w!("Refresh History")),
-                (CLEAR_HISTORY, w!("Clear History")),
+                (REFRESH_HISTORY, w!("Refresh")),
+                (CLEAR_HISTORY, w!("Clear history")),
             ] {
                 let control = api("CreateWindowExW (button)", unsafe {
                     CreateWindowExW(
                         WINDOW_EX_STYLE::default(),
                         w!("BUTTON"),
                         label,
-                        WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                        WS_CHILD | WS_VISIBLE | WS_TABSTOP | WINDOW_STYLE(BS_OWNERDRAW as u32),
                         0,
                         0,
                         1,
@@ -1710,7 +1972,12 @@ fn dispatch(
                         | WS_VISIBLE
                         | WS_TABSTOP
                         | WS_VSCROLL
-                        | WINDOW_STYLE(LBS_NOTIFY as u32),
+                        | WINDOW_STYLE(
+                            (LBS_NOTIFY
+                                | LBS_OWNERDRAWFIXED
+                                | LBS_HASSTRINGS
+                                | LBS_NOINTEGRALHEIGHT) as u32,
+                        ),
                 ),
                 (
                     HISTORY_BODY,
@@ -1733,7 +2000,7 @@ fn dispatch(
             ] {
                 let control = api("CreateWindowExW (history)", unsafe {
                     CreateWindowExW(
-                        WS_EX_CLIENTEDGE,
+                        WINDOW_EX_STYLE::default(),
                         class,
                         PCWSTR::null(),
                         style,
@@ -1757,6 +2024,57 @@ fn dispatch(
                 }
             }
             create_sections(hwnd, instance)?;
+            for (id, caption, style) in [
+                (
+                    HEADER_LOGO,
+                    w!("VoicePrompt logo"),
+                    WINDOW_STYLE(SS_ICON.0 | SS_REALSIZECONTROL.0),
+                ),
+                (
+                    HEADER_TITLE,
+                    w!("VoicePrompt"),
+                    WINDOW_STYLE(SS_ENDELLIPSIS.0),
+                ),
+                (
+                    CONNECTION_LABEL,
+                    w!("CONNECTION"),
+                    WINDOW_STYLE(SS_ENDELLIPSIS.0),
+                ),
+                (ACCOUNT_LABEL, w!("ACCOUNT"), WINDOW_STYLE(SS_ENDELLIPSIS.0)),
+                (
+                    CACHE_LABEL,
+                    w!("CACHED TRANSCRIPTS"),
+                    WINDOW_STYLE(SS_ENDELLIPSIS.0),
+                ),
+                (
+                    CONNECTION_VALUE,
+                    w!("Stopped"),
+                    WINDOW_STYLE(SS_ENDELLIPSIS.0),
+                ),
+                (
+                    ACCOUNT_VALUE,
+                    w!("Not configured"),
+                    WINDOW_STYLE(SS_ENDELLIPSIS.0),
+                ),
+                (CACHE_VALUE, w!("0"), WINDOW_STYLE(SS_ENDELLIPSIS.0)),
+            ] {
+                api("Create original branding/status control", unsafe {
+                    CreateWindowExW(
+                        WINDOW_EX_STYLE::default(),
+                        w!("STATIC"),
+                        caption,
+                        WS_CHILD | WS_VISIBLE | style,
+                        0,
+                        0,
+                        1,
+                        1,
+                        Some(hwnd),
+                        Some(HMENU(id as *mut c_void)),
+                        Some(instance),
+                        None,
+                    )
+                })?;
+            }
             #[cfg(test)]
             if UI_PREVIEW_ROOT.with(|slot| slot.borrow().is_some()) {
                 api("Queue isolated native client preview", unsafe {
@@ -1769,6 +2087,175 @@ fn dispatch(
             let width = (lparam.0 as u32 & 0xffff) as i32;
             let height = ((lparam.0 as u32 >> 16) & 0xffff) as i32;
             layout(hwnd, width, height)?;
+            Ok(LRESULT(0))
+        }
+        WM_MEASUREITEM => {
+            if lparam.0 == 0 {
+                return Err(NativeError::Verification(
+                    "Missing original row measurement.",
+                ));
+            }
+            let mut item =
+                unsafe { std::ptr::read_unaligned(lparam.0 as *const controls::MEASUREITEMSTRUCT) };
+            if item.CtlID == HISTORY_LIST as u32 {
+                item.itemHeight = (47 * crate::dpi::window_dpi(hwnd) + 48) / 96;
+                unsafe {
+                    std::ptr::write_unaligned(lparam.0 as *mut controls::MEASUREITEMSTRUCT, item);
+                }
+                return Ok(LRESULT(1));
+            }
+            Ok(unsafe { DefWindowProcW(hwnd, message, wparam, lparam) })
+        }
+        WM_DRAWITEM => {
+            if lparam.0 == 0 {
+                return Err(NativeError::Verification("Missing original UI draw state."));
+            }
+            let item =
+                unsafe { std::ptr::read_unaligned(lparam.0 as *const controls::DRAWITEMSTRUCT) };
+            let handled = MAIN_FONT.with(|slot| {
+                let slot = slot.borrow();
+                let Some(theme) = slot.as_ref() else {
+                    return Ok(false);
+                };
+                if item.CtlType == controls::ODT_BUTTON {
+                    let mut text = [0; 160];
+                    let count = unsafe { GetWindowTextW(item.hwndItem, &mut text) };
+                    let text = String::from_utf16(&text[..count as usize])
+                        .map_err(|_| NativeError::Verification("Invalid original button label."))?;
+                    theme.button(
+                        &item,
+                        &text,
+                        item.CtlID == COPY_SELECTED as u32,
+                        matches!(
+                            item.CtlID as usize,
+                            COPY_SELECTED
+                                | COPY_LATEST
+                                | COPY_ORIGINAL
+                                | REFRESH_HISTORY
+                                | CLEAR_HISTORY
+                                | RECOVER_SELECTED
+                                | REFRESH_RECOVERY
+                                | DELETE_RECOVERY
+                        ),
+                    )?;
+                    return Ok(true);
+                }
+                if item.CtlType == controls::ODT_TAB {
+                    let text = match item.itemID {
+                        0 => "History",
+                        1 => "Recovery",
+                        _ => return Ok(false),
+                    };
+                    theme.tab(&item, text)?;
+                    return Ok(true);
+                }
+                if item.CtlType == controls::ODT_LISTBOX && item.CtlID == HISTORY_LIST as u32 {
+                    UI_HISTORY.with(|history| {
+                        let history = history.borrow();
+                        if let Some(entry) = history
+                            .as_ref()
+                            .and_then(|entries| entries.get(item.itemID as usize))
+                        {
+                            theme.history_row(
+                                &item,
+                                &entry.preview,
+                                &crate::main_presentation::history_metadata(
+                                    entry,
+                                    time::OffsetDateTime::now_utc(),
+                                )?,
+                            )?;
+                        }
+                        Ok::<_, NativeError>(())
+                    })?;
+                    return Ok(true);
+                }
+                Ok::<_, NativeError>(false)
+            })?;
+            if handled {
+                Ok(LRESULT(1))
+            } else {
+                Ok(unsafe { DefWindowProcW(hwnd, message, wparam, lparam) })
+            }
+        }
+        WM_CTLCOLORSTATIC => {
+            let child = HWND(lparam.0 as *mut c_void);
+            let id = unsafe { GetDlgCtrlID(child) } as usize;
+            let brush = MAIN_FONT.with(|slot| {
+                slot.borrow().as_ref().map(|theme| {
+                    theme.static_colors(
+                        windows::Win32::Graphics::Gdi::HDC(wparam.0 as *mut c_void),
+                        matches!(
+                            id,
+                            STATUS_CONTROL
+                                | CONNECTION_LABEL
+                                | ACCOUNT_LABEL
+                                | CACHE_LABEL
+                                | RECOVERY_HELP
+                        ),
+                        matches!(
+                            id,
+                            CONNECTION_LABEL
+                                | ACCOUNT_LABEL
+                                | CACHE_LABEL
+                                | CONNECTION_VALUE
+                                | ACCOUNT_VALUE
+                                | CACHE_VALUE
+                        ),
+                    )
+                })
+            });
+            Ok(brush.map_or_else(
+                || unsafe { DefWindowProcW(hwnd, message, wparam, lparam) },
+                |brush| LRESULT(brush.0 as isize),
+            ))
+        }
+        WM_PAINT if MAIN_LAYOUT_READY.with(Cell::get) => {
+            let mut bounds = RECT::default();
+            api("Read original status-card viewport", unsafe {
+                GetClientRect(hwnd, &mut bounds)
+            })?;
+            let layout = crate::main_layout::MainLayout::calculate(
+                bounds.right,
+                bounds.bottom,
+                crate::dpi::window_dpi(hwnd),
+            )
+            .map_err(NativeError::Verification)?;
+            let mut paint = windows::Win32::Graphics::Gdi::PAINTSTRUCT::default();
+            let dc = unsafe { windows::Win32::Graphics::Gdi::BeginPaint(hwnd, &mut paint) };
+            let result = MAIN_FONT.with(|slot| {
+                if let Some(theme) = slot.borrow().as_ref() {
+                    theme.canvas(dc, bounds)?;
+                    let card = layout.status_card;
+                    theme.status_card(
+                        dc,
+                        RECT {
+                            left: card.x,
+                            top: card.y,
+                            right: card.x + card.width,
+                            bottom: card.y + card.height,
+                        },
+                    )?;
+                    let list = if section_state(hwnd)?.0 == 0 {
+                        layout.history
+                    } else {
+                        layout.recovery
+                    };
+                    theme.list_frame(
+                        dc,
+                        RECT {
+                            left: list.x,
+                            top: list.y,
+                            right: list.x + list.width,
+                            bottom: list.y + list.height,
+                        },
+                    )?;
+                }
+                Ok::<_, NativeError>(())
+            });
+            if !unsafe { windows::Win32::Graphics::Gdi::EndPaint(hwnd, &paint) }.as_bool() {
+                eprintln!("Original status-card paint cleanup failed.");
+            }
+            result?;
             Ok(LRESULT(0))
         }
         WM_GETMINMAXINFO => {
@@ -2149,6 +2636,7 @@ pub fn run_tray(options: TrayOptions) -> Result<(), NativeError> {
     api("SetProcessDpiAwarenessContext", unsafe {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)
     })?;
+    let _accessibility_apartment = crate::accessibility::Apartment::new()?;
     api(
         "Initialize native tab controls",
         unsafe {
@@ -2195,7 +2683,7 @@ pub fn run_tray(options: TrayOptions) -> Result<(), NativeError> {
             } else {
                 w!("VoicePrompt - Rust migration")
             },
-            WS_OVERLAPPEDWINDOW,
+            WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
             720,
@@ -2207,6 +2695,31 @@ pub fn run_tray(options: TrayOptions) -> Result<(), NativeError> {
         )
     })?;
     let _window = OwnedWindow(hwnd);
+    let mut accessible_controls = Vec::new();
+    for (id, name) in [
+        (HEADER_LOGO, "VoicePrompt logo"),
+        (HISTORY_LIST, "Cached transcripts, newest first"),
+        (HISTORY_BODY, "Selected transcript text"),
+        (RECOVERY_LIST, "Recoverable dictations"),
+        (
+            COPY_SELECTED,
+            "Copy the selected transcript to the clipboard",
+        ),
+        (COPY_LATEST, "Copy the newest transcript to the clipboard"),
+        (COPY_ORIGINAL, "Copy original dictation before AI cleanup"),
+        (REFRESH_HISTORY, "Refresh history from the backend"),
+        (CLEAR_HISTORY, "Delete all locally cached transcripts"),
+        (SIGN_IN, "Sign in with Google in the system browser"),
+        (SIGN_OUT, "Sign out and delete cached tokens"),
+    ] {
+        accessible_controls.push((
+            api("Read native accessible-name control", unsafe {
+                GetDlgItem(Some(hwnd), id as i32)
+            })?,
+            name,
+        ));
+    }
+    let _accessible_names = crate::accessibility::Labels::new(&accessible_controls)?;
     let icons = crate::icons::AppIcons::for_dpi(crate::dpi::window_dpi(hwnd))?;
     icons.apply(hwnd);
     update_main_font(hwnd)?;

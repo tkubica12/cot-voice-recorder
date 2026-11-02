@@ -57,6 +57,8 @@ mod dpi;
 #[cfg(windows)]
 pub use compatible_instance::{CompatibleInstance, InstanceEvent};
 #[cfg(windows)]
+mod accessibility;
+#[cfg(windows)]
 mod desktop;
 #[cfg(windows)]
 mod dictation;
@@ -68,6 +70,10 @@ mod dictation_ui;
 mod hotkeys;
 #[cfg(windows)]
 mod main_layout;
+#[cfg(windows)]
+mod main_presentation;
+#[cfg(windows)]
+mod main_theme;
 #[cfg(windows)]
 mod microphone;
 #[cfg(windows)]

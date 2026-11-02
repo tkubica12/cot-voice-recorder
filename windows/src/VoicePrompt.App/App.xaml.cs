@@ -162,9 +162,14 @@ public partial class App : Application
 
     private void ShowMainWindow()
     {
+        GetMainWindow()?.ShowWindow();
+    }
+
+    private MainWindow? GetMainWindow()
+    {
         if (_host is null)
         {
-            return;
+            return null;
         }
 
         if (_window is null)
@@ -173,7 +178,19 @@ public partial class App : Application
             _window.PauseStateChanged += paused => _tray?.SetPausedChecked(paused);
         }
 
-        _window.ShowWindow();
+        return _window;
+    }
+
+    internal MainWindow ShowSignedOutFixtureWindow()
+    {
+        if (_fixture is null)
+            throw new InvalidOperationException("Only a marked signed-out fixture can open a nonactivating preview.");
+        var window = GetMainWindow()
+            ?? throw new InvalidOperationException("The signed-out fixture host is not initialized.");
+        window.Title = "Isolated WPF reference client - no physical ports";
+        window.ShowActivated = false;
+        window.Show();
+        return window;
     }
 
     private async void CopyLatestAsync()

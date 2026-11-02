@@ -2336,3 +2336,72 @@ vizualni shoda: classic native buttons/system fonts, raw timestamp row
 a multi-line status stale potrebuji puvodni WPF header/logo/palette/
 font/row styling a actual reference srovnani. Zadna predchozi performance
 cisla se na tyto dalsi zmeny neprepisuji a cela UI/migrace neni uzavrena.
+
+### Actual WPF-like main theme: branding, live sections a repaint
+
+Navazujici native main prenasi skutecny Theme.xaml/MainWindow.xaml:
+40DIP embedded original logo, VoicePrompt header, SegoeUI13/11/17,
+puvodni bile/sede/oranzove barvy, rounded4 status strip se tremi live
+hodnotami, flat buttons a selected-tab underline. History ma original
+dvouradkovy preview/localized local-date metadata,48h remaining a AI
+suffix; original formats a copy guardy se nemeni. Actual WPF preview
+navic odhalilo dedeni SemiBold z vybraneho TabItem do obsahu, ktere
+se preneslo i do native History a section actions. Settings zustava
+samostatne; zadny WebView/framework/runtime navic nebyl pridan.
+
+Reference fixture ted otevre skutecny original MainWindow neaktivujicim
+Show s explicitnim signed-out synthetic rootem; normalni ShowWindow
+aktivace neni zmenena. Samotny tool musi linkovat original PNG do sveho
+entry resource assembly a ICO do EXE. Drivejsi screenshot bez logo
+resource se zachovava jako fixture chyba, ne jako puvodni design.
+Fresh reference PID49292/144DPI720x540DIP ma oba original assets,
+actual History/Recovery transition a normal closed/data-unchanged/noToken
+proof45e026eeb57c5de62392761ae9b184c7aba96cd3cf1073de082e231f1413156a.
+
+Actual native nahled zachytil tri coupled presentation chyby pred
+akceptaci:34DIP tab item orezaval underline ve32DIP stripu; strip
+prekryval Show selected text hit area; po section switch zustavaly
+stare border/button geometry. Tab item je ted30DIP, oba sibling rects
+jsou oddelene i v min sirce a parent po zmene geometrie prekresli
+canvas s WS_CLIPCHILDREN. Actual fresh default/minimum corrected binary
+5e425b2d77b979dec95732053625cb117fc08597098e4aab1330b71dc6759060
+zobrazuje ciste History -> Recovery -> History a read-only text toggle,
+bez starych car nebo prekryti. Default144DPI client1058x754 a min818x574
+zachovavaji original outer720x540/min560x420DIP; min footer se zalomi
+a lista je scrollovatelna. Dukazy jsou v native-main-repaint-816d7af
+a native-main-repaint-minimum-816d7af, PID21892/44000; jde o skutecny
+client runtime, nikoli bitmapovy mock. Predchozi failed styled roots
+zustavaji odlisene a nevydavaji se za corrected-source PASS.
+
+MSAA original logo/list/body/recovery/action names jsou explicitni,
+vlastni UI-thread COM apartment je vyvazen a annotations se uvolni
+pred HWND. Actual UIA uz nepopisuje logo nahodnym Recovery textem.
+Dynamic state values zustavaji vystavene jako vlastni text, nejsou
+prekryte statickym jmenem bez hodnoty. Status/section/hover aktualizace
+zustavaji zive a pouzivaji existujici UI tick.
+
+Pure font/layout/raster testy proveruji96/120/144/192/288DPI, original
+palette/Segoe roles, selected underline/row a obnoveni vybranych GDI
+objektu. Separate20 warmup+1000 draw/create/drop cycles bez HWND,
+cursor query nebo jakychkoli physical ports: GDI4->4,1.04s.
+Cela workspace259 regular testu a Clippy PASS pred poslednim coupled
+repaint fixem; nasledne vsech66 native regular testu a Clippy znovu PASS.
+To neni whole-GUI hour ani whole-client memory dukaz.
+
+Zbyvajici explicitni rozdily: extra main quick-action toolbar/separate
+Settings/optional read-only body, native checkbox/tab/text raster metrics;
+Recovery ma zatim puvodni raw jednoradkovou prezentaci misto vsech WPF
+detailu/empty status a SignedIn header zatim obecny text misto emailu.
+Full visual requirement se proto NEUZAVIRA. Actual main na jinych
+monitor DPI, human keyboard/screen-reader, full controller/physical,
+installer upgrade a private Azure akceptace take nejsou odvozene
+z techto synthetic nahledu. Frozen7b performance cisla nadale patri
+jen frozen7b; relevantni nove mereni musi mit vlastni binary/source.
+Finalni oba owned preview procesy21892/44000 uz skoncily normalne,
+synthetic files jsou byte-exact a token cache chybi; closed hashes
+e9d1b406e729f5d1135a7ff692fbf2382e1a53d0e29028976183783cb0c658ca
+a e96525105a54586a4f438a39580bdb2c396218ccac8292736f1f4e9ed8bcfb2e.
+Current release znovu sestaven,7 actual C#/Rust platform/DPAPI/IPC/
+original-PE-icon parity groups PASS, reference build zero warnings.
+Zadny clipboard/input/device/account/cloud port ani dalsi physical
+guarded-paste case se v tomto inkrementu nespustil.

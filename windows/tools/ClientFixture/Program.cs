@@ -10,7 +10,7 @@ internal static class Program
         {
             if (args.Length == 2 && args[0] == "--overlay-visual-fixture")
                 return OverlayVisualFixture.Run(args[1]);
-            if (args.Length == 5 && args[0] == "--client-fixture")
+            if (args.Length == 5 && args[0] is "--client-fixture" or "--client-visual-fixture")
             {
                 var fixture = SignedOutFixture.Create(args[1], args[2], args[3],
                     int.Parse(args[4], System.Globalization.CultureInfo.InvariantCulture));
@@ -19,6 +19,8 @@ internal static class Program
                 fixture.TraceProgress("application-constructed");
                 app.InitializeComponent();
                 fixture.TraceProgress("resources-initialized");
+                if (args[0] == "--client-visual-fixture")
+                    return ClientVisualFixture.Run(app, fixture);
                 return app.Run();
             }
             if (args.Length == 2 && args[0] == "--client-fixture-quit")

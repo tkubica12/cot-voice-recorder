@@ -186,8 +186,16 @@ defaults. Per-minute history cleanup persists retention; read errors preserve fi
 Native Settings includes the current backend, pause, autostart, shortcut/language,
 streaming/polishing and final-wait fields. Saving while idle persists atomically,
 reconnects the native client and applies the one per-user Run mechanism. Standard
-controls provide keyboard dialog navigation, DPI-specific system fonts and
-per-monitor bounds. Human screen-reader/high-DPI acceptance remains pending.
+controls provide keyboard dialog navigation and per-monitor bounds. Settings
+retains DPI-specific system fonts; the main window now uses the original WPF
+Segoe UI roles, white/gray/orange palette, embedded 40-DIP branding, rounded status
+card, flat section underline/buttons and two-line localized History rows. Actual
+selected-tab font inheritance, row selection and keyboard-focus styling follow
+the reference rather than a new visual theme. Native sections and the read-only
+text toggle do not overlap; section transitions clear previous borders without
+painting over child controls. Fonts/brushes/pens are owned and restored, with a
+separate 1,000-cycle graphics-only resource regression in CI.
+Human screen-reader/high-DPI acceptance remains pending.
 History supports manual cloud Refresh (no autocopy), Clear with confirmation and
 copy latest/selected/original; Recovery supports list/recover/explicit deletion.
 History double-click, Enter/Space and Ctrl+C now invoke the same cached selected
@@ -197,6 +205,18 @@ Refresh button. These are local owned-window messages, not new global hotkeys.
 Copy original follows the actual selected row's non-null `raw_body`, including
 an explicitly empty original, rather than merely the presence of any history.
 Mapping/selection tests do not claim a new physical clipboard or keyboard trial.
+
+The separately ignored full-client visual previews require a fresh marked
+signed-out fixture root and close after 180 seconds. They prohibit authentication,
+clipboard, capture, hotkeys and installed-state discovery, and check unchanged
+synthetic settings/history and absence of tokens on normal exit. The C# fixture's
+`--client-visual-fixture` uses the actual original `MainWindow`, PNG and ICO, not a
+recreated reference. Actual default/minimum native previews have been compared
+with it at 144 DPI. Extra main quick actions, separate Settings, optional text
+view, some native control metrics, and unfinished Recovery/account presentation
+remain explicit differences; this is not full visual or migration acceptance.
+Frozen post-overlay performance evidence belongs to its original binary and
+does not measure this later main-window styling.
 
 The main History/Recovery sections now adapt to the original 720x540-DIP window
 and 560x420 minimum instead of a fixed 570x730 all-controls canvas. Action rows

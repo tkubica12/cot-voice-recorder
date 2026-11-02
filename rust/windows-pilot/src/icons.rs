@@ -33,6 +33,16 @@ fn load(width: i32, height: i32) -> Result<HICON, NativeError> {
 }
 
 impl AppIcons {
+    pub(crate) fn branding(dpi: u32) -> Result<HICON, NativeError> {
+        if !(48..=768).contains(&dpi) {
+            return Err(NativeError::InvalidArgument(
+                "Unsupported branding icon DPI.",
+            ));
+        }
+        let size = (40 * dpi as i32 + 48) / 96;
+        load(size, size)
+    }
+
     pub(crate) fn for_dpi(dpi: u32) -> Result<Self, NativeError> {
         if !(48..=768).contains(&dpi) {
             return Err(NativeError::InvalidArgument(
@@ -115,6 +125,11 @@ mod tests {
         .unwrap();
         for dpi in [96, 120, 144, 192, 288] {
             let icons = AppIcons::for_dpi(dpi).unwrap();
+            let branding_size = (40 * dpi as i32 + 48) / 96;
+            assert_eq!(
+                size(AppIcons::branding(dpi).unwrap()),
+                (branding_size, branding_size)
+            );
             icons.apply(window);
             assert_eq!(
                 size(icons.small),
