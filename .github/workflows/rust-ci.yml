@@ -135,6 +135,35 @@ jobs:
           dictation_overlay::tests::synthetic_render_hide_cycles_release_all_gdi_handles
           -- --exact --ignored --nocapture --test-threads=1
 
+      - name: NoPorts post-Run focus contract and immutable operation proof
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:RUNNER_TEMP 'VoicePrompt-focus-proof'
+          if (Test-Path -LiteralPath $root) { throw 'A fresh NoPorts proof root is required.' }
+          New-Item -ItemType Directory -Path $root | Out-Null
+          $marker = @{ scope='native-post-run-focus-noports-fixture'; instance_key=[guid]::NewGuid().ToString('N') } | ConvertTo-Json -Compress
+          [IO.File]::WriteAllText((Join-Path $root 'migration-fixture.json'), $marker)
+          $events = @(cargo test --offline --locked -p voiceprompt-windows-pilot --lib --no-run --message-format json | ForEach-Object { $_ | ConvertFrom-Json })
+          if ($LASTEXITCODE -ne 0) { throw 'NoPorts test build failed.' }
+          $binaries = @($events | Where-Object { $_.reason -eq 'compiler-artifact' -and $_.target.name -eq 'voiceprompt_windows_pilot' -and $_.profile.test -and $_.executable })
+          if ($binaries.Count -ne 1) { throw 'Expected exactly one native test executable.' }
+          $executable = $binaries[0].executable
+          Push-Location -LiteralPath $root
+          try {
+            & $executable --exact desktop::manual_tests::post_run_focus_noports_fixture --ignored --nocapture --test-threads=1
+            if ($LASTEXITCODE -ne 0) { throw 'NoPorts post-Run focus proof failed.' }
+          } finally { Pop-Location }
+
+      - name: Preserve only NoPorts focus operation evidence
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: noports-focus-proof
+          path: ${{ runner.temp }}/VoicePrompt-focus-proof/focus-*.json
+          if-no-files-found: warn
+
       - name: Build existing C# DPAPI reference
         if: runner.os == 'Windows'
         working-directory: .

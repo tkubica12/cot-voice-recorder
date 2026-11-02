@@ -141,6 +141,27 @@ attempt evidence. Both scopes reject each other's markers and all old phase root
 An actual paste test still needs new explicit permission and a new physical root;
 observer success cannot consume or substitute for that decision.
 
+Visible test shells now use temporary topmost placement on the active monitor
+without initially activating it. A background AX-visible HWND alone is not proof
+that the user sees the window; human visibility was checked separately in the
+NoPorts observer. This does not change the normal client's window behavior.
+Physical evidence is write-ahead and immutable: started/ready/attempted/focus
+preflight/focused/armed/delivering/result/closed. In particular, started=false is
+only an initial snapshot, not evidence that a later Run was never accepted.
+
+The fixture's `SetFocus` handling checks an existing current-UI-thread target and
+the actual `GetFocus` postcondition. Win32 returns the **previous** focus: disabling
+the clicked Run button clears it, so a successful focus change can be projected
+by the binding as `Err(S_OK)`. This is not a generic suppression of Windows errors.
+The separate ignored `desktop::manual_tests::post_run_focus_noports_fixture`
+requires a fresh `native-post-run-focus-noports-fixture` marker. It reproduces
+the exact DisableWindow/SetFocus sequence using owned message-only controls, publishes
+immutable per-operation/attempt/target/normal-exit evidence, and never constructs
+clipboard or native-input ports. `HWND_MESSAGE` plus `WS_EX_NOACTIVATE` keeps the
+parent out of desktop Z-order; hidden alone was not a sufficient activation
+boundary in parallel regression. It verifies own PID/thread/parent/focus and nonactivation, not the
+full foreground/clipboard/SendInput guard or an actual paste acceptance.
+
 Clipboard writes use immediate `CF_UNICODETEXT` publication from moveable global
 memory, transferring ownership only after successful `SetClipboardData`.
 Bounded retries apply only to a busy clipboard. Pause, suspended/sign-out state

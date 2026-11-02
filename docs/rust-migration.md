@@ -2171,3 +2171,86 @@ autostart/installation nebo cloud latency/billing. Pozdejsi history input
 commit ma vlastni binary identity; finalni aktualni full-feature profile
 a zbyvajici physical/accessibility/upgrade/private-Azure akceptace tim
 nejsou automaticky uzavrene. Cela migrace zustava nehotova.
+
+### Viditelnost a SetFocus fixture: nove case dukazy, zadny tichy retry
+
+Po novem vyslovnem souhlasu byl jednou otevren PID43660/HWND3739382.
+User odpovedel presne "Okno nevidim". Case se normalne uzavrel v3min
+boundu17:23:26 s closed=true a attempted/write/input=false.
+Neni to PASS ani prokazany guard rejection. CUI AX-visible HWND neni
+dukaz skutecne human visibility; predchozi tvrzeni "viditelne" bylo
+prilis silne. Closed report SHA2565d73ab0f918bff8ea8ebba1e1f3e8b20ca9697eb2312efa560f2b4af6e65ac78.
+
+Pouze observer-only prezentace pak dostala active-monitor placement a
+temporary topmost se zachovanim foreground. Uzivatel ji SKUTECNE
+potvrdil "Ano, diagnosticke okno vidim"; Run disabled/read-only pole,
+jediny CUI Close, vsechny clipboard/input flags false. PID22452 skoncil,
+closed SHA25601e81bc89933524e8aae15f702f5f920007c65250a36bd97a0b6ff78e5f7b5e9.
+Toto potvrzeni samo NEPOVOLILO dalsi physical action.
+
+Po dalsim samostatnem souhlasu vznikl jediny novy PID19340/HWND5836320,
+frozen7e98e2f... se stejnou prezentaci. Asi3s po startu se proces ukoncil
+s "The operation completed successfully. (0x00000000)" drive nez byla
+dokoncena readiness/child Run otazka. Existuje started+failure, nikoli
+armed/delivering/result/closed. Started=false je jen pocatecni snapshot:
+NENI znamo, zda uzivatel klikl nebo zda byl Run event prijat. Proto
+se nepise "nulovy attempt". Bez write-ahead delivering proof tento
+build nemohl volat clipboard publication ani native paste. Failure
+SHA256bf704f5c47e8acbf3ff102cb19e2eac7e1447b3763ab94f437927392c6492582.
+Puvodni phase soubory zustaly immutable, zadny automaticky novy start.
+
+Prime hidden-control Win32 repro dokazalo konkretni fixture bug:
+DisableWindow na fokusovanem Run buttonu nastavi focus=NULL. Nasledny
+SetFocus(edit) uspesne zmeni skutecny focus, ale vraci PREDCHOZI NULL,
+coz binding projectuje jako Err(S_OK). Oprava je specificka pro SetFocus:
+existujici own current-UI-thread target a overeny actual GetFocus;
+nejde o obecne polykani Err(S_OK). Source physical fixture nyni
+publikuje attempted OKAMZITE po prijeti Run a samostatne focus
+preflight/focused s operation context, pred kazdym clipboard portem.
+
+Samostatny explicit marked-root NoPorts proces provedl STEJNOU
+post-Run posloupnost a6 immutable operation-context phases:
+focus-attempted -> disabled(NULL) -> set(actual edit,projectionHRESULT0)
+-> target-verified -> normalclosed. PID43588, exit0,60.586ms;
+own GUIThreadInfo/PID/thread/parent/focus podminky vsechny true,
+foreground unchanged, zadne okno nebylo shown, zadny clipboard/input
+port ani DesktopGuard nebyl konstruovan. Tento jednotlivy hidden run
+mel foreground unchanged, ale sam jeste neprokazal dostatecnou izolaci
+pro vsechny podminky; nasledujici regrese ji zesilila. Focus-set proof
+SHA256dcfe0d282858d53ac56a34bb7842988e381399d02d82cc65d268eb41d2bf33e4,
+target proof47a761121ba03ebe59344d7a2ce4c0c06bfe2884931891bea80e6e366e963e62,
+closed072693cc04c0fb86ba7bf127cf298d60270cd5c54192bfd42bc2f96de6549fc0.
+
+Toto prokazuje interop contract a fixture opravu, ne actual foreground/
+clipboard/SendInput guard ani zpetne presny stack chyby PID19340.
+Global foreground guard nebyl v NoPorts predstiran. Pred dalsim live
+oknem se musi dokoncit diagnostika a prijit dalsi vyslovne rozhodnuti;
+zadny drivejsi souhlas se nerecykluje.
+
+Rozsirena paralelni regrese nasledne zachytila4 foreground snapshot
+failures, takze hidden-only boundary se NEVYDAVA za spolehlive overenou.
+SetFocus muze podle Win32 aktivovat parent; presny owner drivejsiho
+foreground HWND nebyl zaznamenan, tedy se jeho pricina nedotvari.
+NoPorts parent nyni pouziva HWND_MESSAGE + WS_EX_NOACTIVATE, nema
+desktopovy Z-order ani visible surface. Nejprve cilene API repro,
+pak vsech62 native regular tests a cela aktualni workspace+Clippy
+znovu PASS bez potlaceni predchozich failures.
+
+Finalni separate NoPorts process proof s timto message-only parentem:
+PID51592, normalexit0,32.159ms;6 immutable phases se specific operation
+context. Disable->NULL, SetFocus projectedHRESULT0 a actual target focus,
+GetGUIThreadInfo/PID/thread/parent/focus true, foreground unchanged,
+window shown=false, zadne clipboard/input porty nebo DesktopGuard.
+Focus-set SHA256cbd027fda3318205d0bbfeb560be4ccacec823d515f75762a3a54e1a6d89c90b,
+target157f45e2c1aec4cb137b5ebcf66f1485d780cee4f553ff4d0af3375276cf625b,
+closed9fcd1c5daaa16a9124c458c1947a36ae8d76e1eb2fe2522fbbba4eefa5310ca3.
+Stejny Cargo-JSON executable discovery/explicit-root command byl
+overen lokalne a je pridan do Windows CI s allowlist uploadem pouze
+focus-*.json, nikoli libovolneho rootu.
+
+V physical fixture je nyni separate ready/attempted/focus-preflight/
+focused/armed/delivering/result/closed s operation context; started
+se nikdy nezamenuje za konecny stav. Trvala aktualni omezeni:
+NoPorts neprokazuje real foreground guard/clipboard/SendInput a
+nevytvari dalsi live consent. Zadny live retry po techto opravach
+nebyl proveden; dalsi uzivatelsky krok vyzaduje vyslovne rozhodnuti.
