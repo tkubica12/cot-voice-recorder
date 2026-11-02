@@ -1501,3 +1501,15 @@ provedeny ani povoleny. Tento jeden actual device check nema predstavovat
 30-trial readiness/110%baseline verdict, jine zarizeni, full-client hour nebo
 focus/paste akceptaci. Tyto zbyle scenare maji stale vlastni evidence/permission
 hranice. Bezpecne signed-out mereni s corrected readable markerem probiha zvlast.
+
+Pro pripadnou dalsi, dosud NEPOVOLENOU readiness serii jsou pouze zkompilovane
+count-only probes doplnene o cas prvniho validniho PCM bufferu. Samotny
+StartRecording/open return neni dostatecny proxy pro skutecnou PCM readiness:
+Rust meri prvni prijem z vlastni bounded capture fronty, C# prvni DataAvailable.
+Obe nadale pouzivaji240ms count/zero a zadne audio soubory, upload nebo clipboard.
+C# output navic uvadi open/stop/dispose timing a pocty; native telemetry pridava
+first_pcm_ms. Puvodni jediny schvaleny vysledek z frozen probe zustava pravdivy,
+ale first-PCM cas nemeril. Zadna z techto nove instrumentovanych physical
+probe nebyla spustena; C# build ma0 warnings/errors, Rust Clippy/fmt a presne
+jeden synthetic queue test prosly. Repeat/paired baseline vyzaduje novy
+konkretni souhlas, nejde o implicitni rozsireni jedineho predchoziho testu.

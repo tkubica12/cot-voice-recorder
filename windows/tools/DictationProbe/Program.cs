@@ -430,6 +430,7 @@ internal static class Program
     {
         try
         {
+            var opening = Stopwatch.StartNew();
             using var microphone = new WaveInEvent
             {
                 DeviceNumber = -1,
@@ -439,9 +440,14 @@ internal static class Program
             };
             var stopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var bytes = 0;
+            var buffers = 0;
+            long firstBufferTicks = 0;
             microphone.DataAvailable += (_, e) =>
             {
+                if (e.BytesRecorded > 0)
+                    Interlocked.CompareExchange(ref firstBufferTicks, opening.ElapsedTicks, 0);
                 Interlocked.Add(ref bytes, e.BytesRecorded);
+                Interlocked.Increment(ref buffers);
                 Array.Clear(e.Buffer);
             };
             microphone.RecordingStopped += (_, e) =>
@@ -450,11 +456,28 @@ internal static class Program
                 else stopped.TrySetResult();
             };
             microphone.StartRecording();
+            var openMilliseconds = opening.Elapsed.TotalMilliseconds;
             await Task.Delay(240);
+            var stopping = Stopwatch.StartNew();
             microphone.StopRecording();
             await stopped.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            microphone.Dispose();
+            var stopMilliseconds = stopping.Elapsed.TotalMilliseconds;
             Require(bytes >= 1280 && bytes % 2 == 0, "No complete PCM buffer received.");
+            Require(Interlocked.Read(ref firstBufferTicks) > 0, "First PCM readiness was not observed.");
             Console.WriteLine($"PASS default microphone capture/stop: bytes={bytes}; discarded, not uploaded or saved.");
+            Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(new
+            {
+                scope = "manual-default-microphone-240ms-count-only",
+                pcm_bytes_counted_then_zeroed = bytes,
+                buffers,
+                open_ms = openMilliseconds,
+                first_pcm_ms = (double)Interlocked.Read(ref firstBufferTicks) * 1000 / Stopwatch.Frequency,
+                stop_ms = stopMilliseconds,
+                saved_or_uploaded = false,
+                clipboard_or_keyboard = false,
+                full_migration_acceptance = false,
+            }));
             return 0;
         }
         catch (Exception ex)

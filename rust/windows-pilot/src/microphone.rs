@@ -316,12 +316,25 @@ mod tests {
         let began = std::time::Instant::now();
         let (microphone, mut receiver) = Microphone::start().unwrap();
         let opened_ms = began.elapsed().as_secs_f64() * 1000.0;
-        std::thread::sleep(Duration::from_millis(240));
+        let mut bytes = 0;
+        let mut buffers = 0;
+        let mut first_pcm_ms = None;
+        let until = std::time::Instant::now() + Duration::from_millis(240);
+        while std::time::Instant::now() < until {
+            if let Ok(buffer) = receiver.try_recv() {
+                assert_eq!(buffer.0.len() % 2, 0);
+                if !buffer.0.is_empty() && first_pcm_ms.is_none() {
+                    first_pcm_ms = Some(began.elapsed().as_secs_f64() * 1000.0);
+                }
+                bytes += buffer.0.len();
+                buffers += 1;
+            } else {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }
         let stopping = std::time::Instant::now();
         microphone.finish().unwrap();
         let stop_ms = stopping.elapsed().as_secs_f64() * 1000.0;
-        let mut bytes = 0;
-        let mut buffers = 0;
         while let Ok(buffer) = receiver.try_recv() {
             assert_eq!(buffer.0.len() % 2, 0);
             bytes += buffer.0.len();
@@ -332,12 +345,17 @@ mod tests {
             "No complete default-input PCM buffer arrived."
         );
         assert!(receiver.is_closed());
+        assert!(
+            first_pcm_ms.is_some(),
+            "First PCM readiness was not observed."
+        );
         println!(
             "{}",
             serde_json::json!({
                 "scope": "manual-default-microphone-240ms-count-only",
                 "pcm_bytes_counted_then_zeroed": bytes,
                 "buffers": buffers, "open_ms": opened_ms, "stop_ms": stop_ms,
+                "first_pcm_ms": first_pcm_ms,
                 "saved_or_uploaded": false, "clipboard_or_keyboard": false,
                 "full_migration_acceptance": false,
             })
