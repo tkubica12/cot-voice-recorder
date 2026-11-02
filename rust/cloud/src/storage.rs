@@ -426,7 +426,7 @@ impl AzureStorage {
                 Method::GET,
                 uri,
                 None,
-                &[("Accept", "application/json;odata=nometadata")],
+                &[("Accept", "application/json;odata=fullmetadata")],
             )
             .await
         {
@@ -441,8 +441,10 @@ impl AzureStorage {
             .filter(|value| !value.is_empty())
             .ok_or_else(error)?
             .to_owned();
-        let values = serde_json::from_slice(&Self::bytes(response, 4 * 1024 * 1024).await?)
-            .map_err(|_| error())?;
+        let mut values: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_slice(&Self::bytes(response, 4 * 1024 * 1024).await?)
+                .map_err(|_| error())?;
+        values.remove("odata.etag");
         Ok(Some(Entity { values, etag }))
     }
     pub async fn insert(
@@ -856,7 +858,12 @@ mod tests {
                     .to_ascii_lowercase()
                     .contains("authorization: bearer synthetic-storage-token")
             );
-            let body = r#"{"PartitionKey":"recording","RowKey":"fixture","state":"recording"}"#;
+            assert!(
+                headers
+                    .to_ascii_lowercase()
+                    .contains("accept: application/json;odata=fullmetadata")
+            );
+            let body = r#"{"PartitionKey":"recording","RowKey":"fixture","state":"recording","large":"1099511627776","large@odata.type":"Edm.Int64","created":"2026-11-02T00:00:00Z","created@odata.type":"Edm.DateTime","odata.etag":"body-metadata-is-not-the-write-version"}"#;
             stream.write_all(format!("HTTP/1.1 200 OK\r\nETag: W/\"synthetic-etag\"\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
             drop(stream);
             let (mut stream, _) = listener.accept().await.unwrap();
@@ -867,10 +874,12 @@ mod tests {
                     .to_ascii_lowercase()
                     .contains("if-match: w/\"synthetic-etag\"")
             );
-            assert_eq!(
-                serde_json::from_slice::<serde_json::Value>(&body).unwrap()["state"],
-                "transcribing"
-            );
+            let encoded: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(encoded["state"], "transcribing");
+            assert_eq!(encoded["large"], "1099511627776");
+            assert_eq!(encoded["large@odata.type"], "Edm.Int64");
+            assert_eq!(encoded["created@odata.type"], "Edm.DateTime");
+            assert!(encoded.get("odata.etag").is_none());
             stream.write_all(b"HTTP/1.1 412 Precondition Failed\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await.unwrap();
         });
         let storage = fixture(port, identity);
@@ -879,6 +888,8 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
+        assert_eq!(entity.values["large@odata.type"], "Edm.Int64");
+        assert!(entity.values.get("odata.etag").is_none());
         entity
             .values
             .insert("state".into(), serde_json::json!("transcribing"));

@@ -1699,3 +1699,17 @@ s presnym fixture certificate uspel a default untrusted client selhal
 s CERTIFICATE_VERIFY_FAILED. Nejen parsovani certificate tak overuje, ze
 se TLS verification nevypina. Vsechny ctyri local guards a native storage
 compile/tests prosly; actual emulator rerun nasledne rozhodne zbytek kontraktu.
+
+Druhy fullmetadata check33e739b pak zachytil skutecny adapter bug:
+native row po GET->CAS replace uz nemel Edm.Int64 typ. Nometadata read
+zahodil property annotations a nasledujici raw-entity replace serializoval
+puvodni typed hodnotu jako Edm.String. AzureStorage.entity nyni vyzaduje
+fullmetadata a zachovava Int64/DateTime annotations. HTTPheaderETag zustava
+jedinou autoritou pro CAS; bodyodata.etag se odstrani a nesmi prepsat verzi.
+Nepouziva se wildcard, retry-overwrite ani typova heuristika.
+
+Prime socket regression overuje requested metadata level, Int64+DateTime
+roundtrip, retained property types a staleCAS412. Osm native storage testu
+a strict Clippy/fmt proslo; stejny actual SDK/emulator scenar se musi znovu
+provest bez zmeny ocekavane stored-type semantiky. Jde o real opravu zachovani
+cloud dat, nikoli dalsi povoleni k Azure deploy nebo sahani na osobni stav.
