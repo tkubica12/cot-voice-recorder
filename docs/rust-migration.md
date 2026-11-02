@@ -21,7 +21,7 @@ zustat u klasicke ACA; na ACA Express se v teto migraci neprechazi.
 | Diktovani/recovery UI | Native microphone/hotkeys/overlay/paste controller, oba enginy, journal, polishing a outbox implementovany; real-world a rozsahlejsi fault/E2E akceptace zbyva |
 | History cache | JSON/retence/200 entries, atomicka persistence, native list/text a manual copy latest/selected/original implementovany; C# file parity overena |
 | Settings a instalator | Vsechna C# JSON pole, nativni Settings/History/Recovery, DPI fonty, per-user autostart a kompatibilni IPC; installer sestaven, nebyl instalovan |
-| Rust cloud API, worker, cleanup | API/AI/PubSub/live relay, processors/finalization/queue loop, cleanup, bootstrap/CLI a source-only image wiring implementovany; image CI a uplna akceptace zbyvaji |
+| Rust cloud API, worker, cleanup | API/AI/PubSub/live relay, processors/finalization/queue loop, cleanup, bootstrap/CLI a source-only image wiring implementovany; image CI proslo, uplna akceptace zbyva |
 | Hosting | Klasicka ACA zustava: API, KEDA queue worker a hourly cleanup Job; Express byl uzivatelem zrusen |
 
 Nativni zaklad neni kompletni klient. Jeho rychlost a pamet nelze porovnat
@@ -1145,3 +1145,67 @@ ACA0.5vCPU limity, private Azure latenci, worker nebo AI/relay. Proto ma vyslede
 scope authenticated-in-memory-http-no-ai-realtime a whole_migration_acceptance=false.
 Neni to feature-matched kompletni cloud C01/C02 ani nahrazeni jejich dosud
 chybejicich mereni a lidskych hranic.
+
+## Dokoncena kontrolovana mereni a timer rotation
+
+Full signed-out klientsky profil na frozen631c11f dokoncil vsech30+30 startu,
+tri paired serie po301 jednosekundovych vzorcich a stejnych200 history entries.
+Nezavisly prepocet overil vsech1806 memory samples, source/scope/PID/binary
+identitu, corpus hashes, skutecne petiminutove intervaly a nezmenene C# DLL/
+native bundle. Vsechny own fixture procesy graceful skoncily a state roots
+byly odstraneny; osobni aplikace/data ani physical ports se nepouzily.
+
+| Kontrolovany Windows signed-out profil | C# | Rust |
+| --- | --- | --- |
+| Process -> full-runtime ready, p95 | 1476.585ms | 446.809ms |
+| Mean private bytes, MiB | 94.374 | 3.426 |
+| Peak private bytes, MiB | 107.078 | 3.836 |
+
+Rust p95 je30.26% baseline; mean private bytes v jednotlivych paired seriich
+jsou3.72%,3.70%,3.47% C#. Vsechny serie tedy splnily presne1s/70% a80MiB/50%
+prahy tohoto profilu. Private bytes nejsou RSS ani working set.
+Evidence: session artifact client-comparison-full-631c11f,
+full-client-signed-out-comparison.json SHA256
+01fed312ceb8f2779d804b9c568c7d2b1e392f0defa0e0e88c25b381bc9b445d.
+
+Linux protocol profil na250ecc2 prosel v backend-ci41385009835. Actual
+FastAPI/Uvicorn pouziva stejny auto-selected event-loop startup jako produkcni
+entry point, nikoli zpomalenou asyncio.run nahradu. Nezavisly prepocet vsech
+raw metrik a hashes proti presnym Git source blobs potvrdil30+30 startu,
+tri serie po100 flows/700 operacich na implementaci a60 own-PID RSS pozorovani.
+
+| Linux authenticated memory-port HTTP profil | Python | Rust |
+| --- | --- | --- |
+| Process -> HTTP readiness, p95 | 610.409ms | 36.985ms |
+| RSS po serii1, MiB | 103.746 | 16.316 |
+| RSS po serii2, MiB | 104.242 | 18.590 |
+| RSS po serii3, MiB | 104.766 | 20.777 |
+
+Rust startup je6.06% baseline; vsechny RSS serie jsou15.73-19.83% baseline.
+Nejhorsi pomer vybrane API p95 je67.74% baseline; zadna z21 operation/series
+kombinaci neprekrocila110%. Artifact backend-protocol-performance,
+backend-protocol-performance.json SHA256
+2a2c8cec2ac6413dc8c71f57198b8183291c67943040a52dee96a5d5987d17e9.
+Podminky/omezeni tohoto memory-port profilu zustavaji uvedene vyse; nejde o
+production-adapter, ACA, worker nebo AI/relay performance.
+
+WPF guard s diagnostikou na d82520d prosel celym Windows/Linux/MSRV/container
+CI. Puvodni15s timeout se zatim nepodarilo reprodukovat ani urcit jeho pricinu;
+nebyl proto zamaskovan prodlouzenim budgetu nebo odstraneny z evidence.
+Aktualni installer byl pouze sestaven, SHA256
+B0007D8A469FA38F4798295CC461EDBE4CBE1B702FCEB4D427D68C7C0042F467.
+Nebyl spusten ani instalovan.
+
+Novy native test s virtualnim Tokio clock overuje50min session rotation:
+capture zustava aktivni, novy stream zacina na durable confirmed cursoru,
+potvrzene audio se neopakuje a dalsi odlisne sample bytes se spravne dokonci.
+Test-util feature pouziva existujici locked Tokio1.54.1 pouze jako Windows
+dev-dependency; normalni installer graph ji neobsahuje. Proslo220 Windows
+workspace testu a strict fmt/Clippy. Toto neni realna50min/hodinova nahravka
+ani memory-growth measurement.
+
+Celkovy C01/C02 zustava castecnym dukazem, ne PASS kompletni migrace:
+signed-in traffic, mikrofon readiness, hodinovy capture/return-to-idle,
+physical focus/clipboard/paste, pristupnost/DPI, skutecny installer upgrade/
+rollback a private Azure/UAMI runtime jeste nebyly akceptovany. Oba reporty
+maji nadale whole_migration_acceptance=false. Zadny threshold se nesnizil.

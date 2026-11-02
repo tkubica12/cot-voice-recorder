@@ -20,6 +20,7 @@ struct Service {
     starts: Mutex<Vec<u64>>,
     sent: Mutex<Vec<Vec<u8>>>,
     batches: Mutex<Vec<Vec<u8>>>,
+    changed: Notify,
 }
 
 impl Service {
@@ -30,6 +31,7 @@ impl Service {
             starts: Mutex::new(Vec::new()),
             sent: Mutex::new(Vec::new()),
             batches: Mutex::new(Vec::new()),
+            changed: Notify::new(),
         })
     }
 }
@@ -73,6 +75,7 @@ impl AudioSender for Sender {
             first
         };
         self.service.sent.lock().unwrap()[self.index].extend_from_slice(pcm);
+        self.service.changed.notify_one();
         if provisional {
             self.events
                 .send(Event::Message(DictationMessage::Delta {
@@ -170,6 +173,7 @@ impl StreamingBackend for Arc<Service> {
         let index = self.connections.fetch_add(1, Ordering::AcqRel);
         self.starts.lock().unwrap().push(start);
         self.sent.lock().unwrap().push(Vec::new());
+        self.changed.notify_one();
         let (events, receiver) = mpsc::channel(64);
         Ok((
             Sender {
@@ -376,5 +380,63 @@ async fn batch_recovery_preserves_confirmed_context_and_dedupes_only_the_seam() 
     let state = session.snapshot().unwrap();
     assert_eq!(state.confirmed_bytes, 12800);
     assert!(state.used_fallback && state.used_streaming);
+    session.shutdown().await.unwrap();
+}
+
+async fn until(service: &Service, mut ready: impl FnMut() -> bool) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let changed = service.changed.notified();
+            if ready() {
+                return;
+            }
+            changed.await;
+        }
+    })
+    .await
+    .expect("Synthetic engine did not reach the explicit service boundary.");
+}
+
+#[tokio::test(start_paused = true)]
+async fn virtual_fifty_minute_rotation_continues_capture_from_the_confirmed_cursor() {
+    let directory = TemporaryRoot::new();
+    let (_store, journal) = journal(&directory);
+    let service = Service::new(Mode::Healthy);
+    let session = StreamingSession::start(journal, Arc::new(service.clone()), false).unwrap();
+    session.append(&[1; 6400]).unwrap();
+    until(&service, || {
+        service
+            .sent
+            .lock()
+            .unwrap()
+            .first()
+            .is_some_and(|pcm| pcm.len() == 6400)
+    })
+    .await;
+
+    tokio::time::advance(Duration::from_secs(50 * 60)).await;
+    until(&service, || service.starts.lock().unwrap().len() == 2).await;
+    let rotated = session.snapshot().unwrap();
+    assert!(!rotated.capture_complete);
+    assert_eq!(rotated.confirmed_bytes, 6400);
+    assert_eq!(*service.starts.lock().unwrap(), [0, 6400]);
+
+    session.append(&[2; 6400]).unwrap();
+    session.finish_capture().unwrap();
+    assert_eq!(
+        session
+            .wait_for_completion(Duration::from_secs(5), false)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("synthetic confirmed synthetic confirmed")
+    );
+    assert_eq!(
+        *service.sent.lock().unwrap(),
+        [vec![1; 6400], vec![2; 6400]]
+    );
+    let finished = session.snapshot().unwrap();
+    assert!(finished.capture_complete);
+    assert_eq!(finished.confirmed_bytes, 12800);
     session.shutdown().await.unwrap();
 }
