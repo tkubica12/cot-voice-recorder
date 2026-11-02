@@ -279,6 +279,11 @@ def measure(
                         "startup_ms": fixture.startup_ms,
                     }
                 )
+                print(
+                    f"{implementation} startup {trial + 1}/{trials}: "
+                    f"{fixture.startup_ms:.3f} ms; owned PID {fixture.process.pid}",
+                    flush=True,
+                )
     memory: dict[str, list[dict]] = {"csharp": [], "rust": []}
     for index in range(series):
         for implementation in (
@@ -302,6 +307,11 @@ def measure(
                     raise RuntimeError(
                         "Client memory corpus differs from startup corpus."
                     )
+                print(
+                    f"Sampling {implementation} series {index + 1}/{series}, "
+                    f"{samples} points, owned PID {fixture.process.pid}",
+                    flush=True,
+                )
                 subprocess.run(
                     [
                         "pwsh",
