@@ -664,10 +664,12 @@ unsafe extern "system" fn procedure(
         };
         update_viewport(window, |ui| {
             let font = crate::dpi::DpiFont::create(crate::dpi::window_dpi(window))?;
-            ui.scroll = i32::try_from(
-                (i64::from(ui.scroll) * i64::from(font.dpi) + i64::from(ui.font.dpi) / 2)
-                    / i64::from(ui.font.dpi),
-            ).map_err(|_| NativeError::Verification("Settings DPI scroll offset is outside supported bounds."))?;
+            let old_dpi = i64::from(ui.font.dpi);
+            let new_dpi = i64::from(font.dpi);
+            let scaled_scroll = (i64::from(ui.scroll) * new_dpi + old_dpi / 2) / old_dpi;
+            ui.scroll = i32::try_from(scaled_scroll).map_err(|_| {
+                NativeError::Verification("Settings DPI scroll offset is outside supported bounds.")
+            })?;
             font.apply_children(window)?;
             crate::icons::AppIcons::for_dpi(font.dpi)?.apply(window);
             ui.font = font;

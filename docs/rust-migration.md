@@ -2736,3 +2736,13 @@ release,7 actual platform/DPAPI/IPC/original-icon parity a6 hidden
 Settings/client lifecycle groups PASS. Novy source potrebuje vlastniCI.
 Real keyboard/screen-reader/monitor transitions a aktualni statisticky
 Windows profil nadale nejsou uzavrene; treti serie nebyla spustena.
+
+Prvni7a0bfd3 RustCI41529528682 narazilo na Ubuntu cargo-fmt zalomeni
+jedne DPI offset expression (nikoli runtime/geometry assertion).
+Expression je rozepsana na explicitni old/new DPI locals a checked
+conversion, se stejnou aritmetikou; local fmt/native74/Clippy PASS.
+Tento failedCI se nevydava za uspech; opravny source potrebuje vlastniCI.
+Build-only7a installer byl skutecne vytvoren bez spusteni:
+b3c0c122f74b2de474d5d12d5e5e163ec051b1d9ae1b374e9c99317ad66787ad,
+staged/release native
+feaec416a8a8a4e5d7a5ad1fa7de3e8705e3ea5943f88fc42fee3758f078fbbc.
