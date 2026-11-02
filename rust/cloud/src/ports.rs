@@ -14,6 +14,8 @@ pub struct MemoryBlobs {
     data: BlobData,
     modified: HashMap<(String, String), time::OffsetDateTime>,
     leases: HashMap<(String, String), MemoryBlobLease>,
+    #[cfg(test)]
+    fail_delete: Option<String>,
 }
 struct MemoryBlobLease {
     id: String,
@@ -25,6 +27,8 @@ impl Blobs {
             data: HashMap::new(),
             modified: HashMap::new(),
             leases: HashMap::new(),
+            #[cfg(test)]
+            fail_delete: None,
         })))
     }
     pub async fn put(
@@ -279,6 +283,13 @@ impl Blobs {
             .get_mut(&(container.into(), name.into()))
             .unwrap() = modified;
     }
+    #[cfg(test)]
+    pub(crate) async fn fail_delete_fixture(&self, name: &str) {
+        let Self::Memory(memory) = self else {
+            panic!("Synthetic memory adapter required");
+        };
+        memory.lock().await.fail_delete = Some(name.into());
+    }
 }
 pub struct BlobLease {
     blobs: Blobs,
@@ -339,6 +350,13 @@ impl BlobLease {
             Blobs::Memory(memory) => {
                 let mut memory = memory.lock().await;
                 let key = (self.container.clone(), self.name.clone());
+                #[cfg(test)]
+                if memory.fail_delete.as_deref() == Some(self.name.as_str()) {
+                    memory.fail_delete = None;
+                    return Err(StorageError::Failure(crate::problem::Problem::unavailable(
+                        "Synthetic object deletion failure.",
+                    )));
+                }
                 if !memory.leases.get(&key).is_some_and(|lease| {
                     lease.id == self.id && lease.expires > tokio::time::Instant::now()
                 }) {

@@ -365,6 +365,7 @@ impl Pipeline {
             format!("finalize/{id}.lock"),
         )
         .await?;
+        let mut canonical_lease = None;
         let result = async {
             let mut current = self.services.recording(id).await?;
             if current.state == RecordingState::Completed {
@@ -479,8 +480,18 @@ impl Pipeline {
             };
             let canonical = String::from_utf8(canonical)
                 .map_err(|_| StreamWorkError::Terminal("Canonical transcript is invalid UTF-8."))?;
+            canonical_lease = Some(
+                BlobLease::existing(
+                    self.services.blobs.clone(),
+                    self.services.config.transcript_container.clone(),
+                    body_path.clone(),
+                )
+                .await?,
+            );
+            let body_lease = canonical_lease.as_ref().ok_or_else(Problem::internal)?;
             check_stop(&stop)?;
             lease.renew().await?;
+            body_lease.renew().await?;
             let completed = now();
             let transcript = Transcript {
                 transcript_id: transcript_id.clone(),
@@ -534,6 +545,7 @@ impl Pipeline {
             let mut saved = false;
             for _ in 0..5 {
                 lease.renew().await?;
+                body_lease.renew().await?;
                 let mut current = self.services.recording(id).await?;
                 if current.state == RecordingState::Completed {
                     saved = true;
@@ -562,8 +574,18 @@ impl Pipeline {
             self.finish_delivery(id).await
         }
         .await;
+        let mut release_error = None;
+        if let Some(lease) = canonical_lease {
+            if let Err(error) = lease.release().await {
+                eprintln!("Canonical transcript lease release failed: {error}");
+                release_error = Some(error);
+            }
+        }
         if let Err(error) = lease.release().await {
             eprintln!("Finalizer lease release failed: {error}");
+            release_error = Some(error);
+        }
+        if let Some(error) = release_error {
             if result.is_ok() {
                 return Err(error.into());
             }

@@ -64,7 +64,7 @@ actual HTTP handlers, multipart/provider contracts, physical-call cancellation,
 ordered PCM relay, actual 15-second/30-second timeout boundaries, lease takeover/
 late-publication fencing, exact contiguous/legacy continuous model replay,
 receipt rotation and graceful producer/heartbeat shutdown.
-The current workspace has 205 passing tests, including 87 cloud library tests and
+The current workspace has 208 passing tests, including 90 cloud library tests and
 two CLI guards. Read-only resource probes and active-writer-safe cleanup use
 synthetic local fixtures.
 No Azure, paid model, production data or credentials are used. These are not
@@ -77,9 +77,8 @@ compiler. The installed compiler and CI verify the locked graph, not the MSRV
 itself. RSA key generation is a test-only dependency; no private key fixture is
 committed.
 
-The explicit MSRV CI job now checks all targets on Windows/Linux with Rust1.85
-in disposable runners; its result must be read before claiming minimum-compiler
-support. No compiler was installed on the user's machine. Supported preview/
+The explicit MSRV CI job has checked all targets on Windows/Linux with Rust1.85
+in disposable runners. No compiler was installed on the user's machine. Supported preview/
 upload overrides are wired through the services; incompatible retention, batch
 or PCM overrides fail explicitly instead of being silently ignored.
 
@@ -164,3 +163,7 @@ structured errors, lifecycle and audit/history shapes with the actual FastAPI
 factory. No real account, cloud, model, database or credentials are involved.
 This is a bounded contract corpus, not exhaustive Pydantic coercion/message-text
 or distributed-fault parity.
+
+Cleanup fault checks cover deletion failure and durable resumption: an expired
+body delete must not first discard its retry metadata; orphan plain bodies are
+retained while an active canonical publisher owns their lease.

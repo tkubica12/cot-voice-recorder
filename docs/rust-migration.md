@@ -960,3 +960,25 @@ novy MSRV check instaluje compiler pouze do disposable Windows/Linux CI runneru
 a kontroluje locked all-targets workspace. Jeho verdict jeste neni znam.
 Mereni kompletniho klienta proti feature-matched C# baseline a hodinovy capture
 test nebyly provedeny a drivejsi foundation cisla je nesmi nahrazovat.
+
+## Cleanup delete-failure a publisher fencing
+
+Prime fault injection odhalila chybne poradi expired-transcript cleanup:
+pri metadata delete pred selhavajicim Blob delete mohl zustat nedohledatelny
+plain-text orphan. Nyni cleanup pod Blob lease odstrani expired body pred
+conditional metadata; selhavajici delete ponecha metadata pro retry.
+Old unpublished plain canonical bodies maji vlastni orphan sweep po48h
+object retention, se second metadata check a active-publisher lease ochranou.
+
+Finalizer drzi lease i na canonical body mezi jeho ctenim a Table publikaci.
+Crash/cleanup tedy nemuze potichu potvrdit metadata k mezitim smazanemu body.
+Renew/release vsech owned resources probehne i po partial error; silent
+success-shaped fallback neni povolen.
+
+Tri dalsi testy overuji failed body delete + metadata retry, partial recording
+cleanup s durable tombstone/resume a old plain orphan versus active publisher.
+Proslo 208 workspace testu (90 cloud library +2 CLI), locked release/fmt/Clippy.
+MSRV1.85 all-targets checks prosly ve Windows i Linux CI na9619b20; jde o
+compiler validation, ne tvrzeni o real-world device/production akceptaci.
+Backend/container/Ubuntu CI tohoto commitu take prosly, Windows full conclusion
+se overuje zvlast. Zadna lokalni toolchain instalace se nekonala.

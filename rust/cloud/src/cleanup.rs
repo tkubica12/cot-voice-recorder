@@ -232,6 +232,14 @@ pub async fn run(services: &Services) -> Result<CleanupResult, StorageError> {
             Err(StorageError::Conflict) => continue,
             Err(error) => return Err(error),
         };
+        if let Some(lease) = &lease {
+            if let Err(error) = lease.delete().await {
+                if let Err(release) = release(lease).await {
+                    eprintln!("Expired transcript release failed: {release}");
+                }
+                return Err(error);
+            }
+        }
         let deleted = services
             .repository
             .delete(
@@ -243,9 +251,6 @@ pub async fn run(services: &Services) -> Result<CleanupResult, StorageError> {
             .await;
         match deleted {
             Ok(()) => {
-                if let Some(lease) = &lease {
-                    lease.delete().await?;
-                }
                 result.transcripts_deleted += 1;
             }
             Err(StorageError::NotFound | StorageError::Conflict) => {}
@@ -306,6 +311,39 @@ pub async fn run(services: &Services) -> Result<CleanupResult, StorageError> {
         };
         if expired {
             delete_blob(services, &services.config.transcript_container, &entry.name).await?;
+        }
+    }
+    for entry in services
+        .blobs
+        .list(&services.config.transcript_container, "")
+        .await?
+    {
+        if entry.modified_at >= cutoff || entry.name.contains('/') || !entry.name.ends_with(".txt")
+        {
+            continue;
+        }
+        let Some(id) = entry.name.strip_suffix(".txt") else {
+            continue;
+        };
+        let lease = match BlobLease::existing(
+            services.blobs.clone(),
+            services.config.transcript_container.clone(),
+            entry.name.clone(),
+        )
+        .await
+        {
+            Ok(lease) => lease,
+            Err(StorageError::Conflict | StorageError::NotFound) => continue,
+            Err(error) => return Err(error),
+        };
+        let metadata = services
+            .repository
+            .get(&services.config.transcripts_table, "transcript", id)
+            .await?;
+        if metadata.is_none() {
+            lease.delete().await?;
+        } else {
+            release(&lease).await?;
         }
     }
     for entity in services

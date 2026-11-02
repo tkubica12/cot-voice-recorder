@@ -272,3 +272,163 @@ async fn fresh_unpublished_audio_is_not_mistaken_for_an_orphan_and_failed_stream
             .is_ok()
     );
 }
+
+#[tokio::test]
+async fn expired_transcript_delete_failure_preserves_its_metadata_for_a_retry_instead_of_leaving_an_untracked_body()
+ {
+    let services = crate::services::tests::fixture();
+    let payload:crate::models::ArchiveDictation=serde_json::from_value(serde_json::json!({
+        "text":"synthetic final","raw_text":"synthetic raw","completed_at":crate::services::python_datetime(now(),true)
+    })).unwrap();
+    let mut transcript = services
+        .archive("0123456789abcdef0123456789abcdef", payload)
+        .await
+        .unwrap();
+    transcript.expires_at = now() - time::Duration::seconds(1);
+    services
+        .repository
+        .replace(
+            &services.config.transcripts_table,
+            transcript.entity().unwrap(),
+        )
+        .await
+        .unwrap();
+    services
+        .blobs
+        .fail_delete_fixture(&transcript.body_path)
+        .await;
+    assert!(run(&services).await.is_err());
+    assert!(
+        services
+            .repository
+            .get(
+                &services.config.transcripts_table,
+                "transcript",
+                &transcript.transcript_id
+            )
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        services
+            .blobs
+            .get(
+                &services.config.transcript_container,
+                &transcript.body_path,
+                4096
+            )
+            .await
+            .is_ok()
+    );
+    assert_eq!(run(&services).await.unwrap().transcripts_deleted, 1);
+    assert!(
+        services
+            .repository
+            .get(
+                &services.config.transcripts_table,
+                "transcript",
+                &transcript.transcript_id
+            )
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn partially_failed_recording_cleanup_remains_durably_discoverable_and_resumes_after_ownership_expires()
+ {
+    let services = crate::services::tests::fixture();
+    let id = recording(&services, "partial-cleanup").await;
+    let path = audio(&services, &id).await;
+    expired(&services, &id).await;
+    services.blobs.fail_delete_fixture(&path).await;
+    assert!(run(&services).await.is_err());
+    let mut record = services.recording(&id).await.unwrap();
+    assert_eq!(record.state, crate::domain::RecordingState::Failed);
+    assert!(
+        record
+            .stream_lease_id
+            .as_ref()
+            .unwrap()
+            .starts_with("cleanup-")
+    );
+    assert!(record.updated_at < now() - time::Duration::hours(48));
+    assert_eq!(services.chunks(&id).await.unwrap().len(), 1);
+    record.stream_lease_expires_at = Some(now() - time::Duration::seconds(1));
+    services.save_recording(&record).await.unwrap();
+    assert_eq!(run(&services).await.unwrap().recordings_deleted, 1);
+    assert_eq!(services.recording(&id).await.err().unwrap().status, 404);
+    assert!(services.chunks(&id).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn old_unpublished_plain_transcript_is_removed_only_when_no_metadata_or_active_publisher_owns_it()
+ {
+    let services = crate::services::tests::fixture();
+    for path in ["unpublished.txt", "active.txt", "fresh.txt"] {
+        services
+            .blobs
+            .put(
+                &services.config.transcript_container,
+                path,
+                b"synthetic body".to_vec(),
+                "text/plain",
+            )
+            .await
+            .unwrap();
+        if path != "fresh.txt" {
+            services
+                .blobs
+                .age_fixture(
+                    &services.config.transcript_container,
+                    path,
+                    now() - time::Duration::hours(49),
+                )
+                .await;
+        }
+    }
+    let publisher = BlobLease::existing(
+        services.blobs.clone(),
+        services.config.transcript_container.clone(),
+        "active.txt".into(),
+    )
+    .await
+    .unwrap();
+    run(&services).await.unwrap();
+    assert!(matches!(
+        services
+            .blobs
+            .get(
+                &services.config.transcript_container,
+                "unpublished.txt",
+                4096
+            )
+            .await,
+        Err(StorageError::NotFound)
+    ));
+    assert!(
+        services
+            .blobs
+            .get(&services.config.transcript_container, "active.txt", 4096)
+            .await
+            .is_ok()
+    );
+    assert!(
+        services
+            .blobs
+            .get(&services.config.transcript_container, "fresh.txt", 4096)
+            .await
+            .is_ok()
+    );
+    publisher.release().await.unwrap();
+    run(&services).await.unwrap();
+    assert!(matches!(
+        services
+            .blobs
+            .get(&services.config.transcript_container, "active.txt", 4096)
+            .await,
+        Err(StorageError::NotFound)
+    ));
+}
