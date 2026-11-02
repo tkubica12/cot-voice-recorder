@@ -30,7 +30,10 @@ use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForWindow, SetProcessDpiAwarenessContext,
 };
-use windows::Win32::UI::Input::KeyboardAndMouse::EnableWindow;
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    EnableWindow, GetKeyState, HOT_KEY_MODIFIERS, MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_WIN, VK_C,
+    VK_CONTROL, VK_F5, VK_LWIN, VK_MENU, VK_RETURN, VK_RWIN, VK_SHIFT, VK_SPACE,
+};
 use windows::Win32::UI::Shell::{
     NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIIF_INFO, NIIF_WARNING, NIM_ADD,
     NIM_DELETE, NIM_MODIFY, NIM_SETFOCUS, NIM_SETVERSION, NIN_BALLOONUSERCLICK, NIN_SELECT,
@@ -828,6 +831,56 @@ fn tray_activation(event: u32) -> bool {
     )
 }
 
+fn history_key_action(
+    history_focused: bool,
+    key: usize,
+    modifiers: HOT_KEY_MODIFIERS,
+) -> Option<usize> {
+    let unmodified = modifiers == HOT_KEY_MODIFIERS::default();
+    if key == VK_F5.0 as usize && unmodified {
+        return Some(REFRESH_HISTORY);
+    }
+    if history_focused
+        && ((key == VK_RETURN.0 as usize || key == VK_SPACE.0 as usize)
+            || (key == VK_C.0 as usize && modifiers == MOD_CONTROL))
+    {
+        return Some(COPY_SELECTED);
+    }
+    None
+}
+
+fn route_history_keys(hwnd: HWND, message: &MSG) -> Result<bool, NativeError> {
+    if message.message != WM_KEYDOWN
+        || (message.hwnd != hwnd && !unsafe { IsChild(hwnd, message.hwnd) }.as_bool())
+    {
+        return Ok(false);
+    }
+    let mut modifiers = HOT_KEY_MODIFIERS::default();
+    for (key, modifier) in [
+        (VK_CONTROL, MOD_CONTROL),
+        (VK_SHIFT, MOD_SHIFT),
+        (VK_MENU, MOD_ALT),
+        (VK_LWIN, MOD_WIN),
+        (VK_RWIN, MOD_WIN),
+    ] {
+        if unsafe { GetKeyState(key.0 as i32) } < 0 {
+            modifiers |= modifier;
+        }
+    }
+    let history_focused = unsafe { GetDlgCtrlID(message.hwnd) } == HISTORY_LIST as i32;
+    let Some(command) = history_key_action(history_focused, message.wParam.0, modifiers) else {
+        return Ok(false);
+    };
+    let button = api("Read keyboard action availability", unsafe {
+        GetDlgItem(Some(hwnd), command as i32)
+    })?;
+    if !unsafe { windows::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled(button) }.as_bool() {
+        return Ok(true);
+    }
+    client_command(hwnd, command)?;
+    Ok(true)
+}
+
 fn context_menu(hwnd: HWND) -> Result<(), NativeError> {
     let (connected, paused, can_copy) = CLIENT.with(|client| {
         client
@@ -1080,20 +1133,36 @@ pub(crate) fn notify(
     )
 }
 
+fn selected_history_entry<'a>(
+    entries: &'a [voiceprompt_client_protocol::history::HistoryEntry],
+    selected: Option<&str>,
+) -> Option<&'a voiceprompt_client_protocol::history::HistoryEntry> {
+    let selected = selected?;
+    entries.iter().find(|entry| entry.transcript_id == selected)
+}
+
 fn show_history_body(hwnd: HWND) -> Result<(), NativeError> {
     let selected = selected_id(hwnd)?;
     UI_HISTORY.with(|history| {
         let history = history.borrow();
-        let entry = history.as_ref().and_then(|entries| {
-            entries
-                .iter()
-                .find(|entry| Some(&entry.transcript_id) == selected.as_ref())
-        });
+        let entry = history
+            .as_ref()
+            .and_then(|entries| selected_history_entry(entries, selected.as_deref()));
         set_text(
             hwnd,
             HISTORY_BODY,
             entry.map_or("", |entry| entry.body.as_str()),
-        )
+        )?;
+        let original = api("Read original-copy control", unsafe {
+            GetDlgItem(Some(hwnd), COPY_ORIGINAL as i32)
+        })?;
+        unsafe {
+            let _ = EnableWindow(
+                original,
+                entry.is_some_and(|entry| entry.raw_body.is_some()),
+            );
+        }
+        Ok(())
     })
 }
 
@@ -1224,6 +1293,8 @@ fn refresh_client_ui(hwnd: HWND) -> Result<(), NativeError> {
             status.realtime, if shortcut_error { "Dictation shortcut unavailable. Choose an unused shortcut in Settings." } else { status.issue.unwrap_or("") },
         ))?;
         set_text(hwnd, PAUSE, if host.policy.paused() { "Resume auto-copy" } else { "Pause auto-copy" })?;
+        let selected = selected_id(hwnd)?;
+        let original_available = selected_history_entry(&status.history, selected.as_deref()).is_some_and(|entry| entry.raw_body.is_some());
         for id in [SIGN_IN, SIGN_OUT, COPY_LATEST, PAUSE, RECONNECT, COPY_SELECTED, COPY_ORIGINAL, RECOVER_SELECTED, DELETE_RECOVERY, OPEN_SETTINGS, REFRESH_HISTORY, CLEAR_HISTORY] {
             let control = api("GetDlgItem", unsafe { GetDlgItem(Some(hwnd), id as i32) })?;
             let enabled = if host.options.auth_only && !matches!(id, SIGN_IN | SIGN_OUT) {
@@ -1231,7 +1302,8 @@ fn refresh_client_ui(hwnd: HWND) -> Result<(), NativeError> {
             } else { match id {
                 SIGN_IN => status.auth != voiceprompt_client_protocol::state::AuthState::NotConfigured && !status.signing_in,
                 SIGN_OUT => status.auth == voiceprompt_client_protocol::state::AuthState::SignedIn || status.signing_in,
-                COPY_LATEST | COPY_SELECTED | COPY_ORIGINAL => !status.history.is_empty(),
+                COPY_LATEST | COPY_SELECTED => !status.history.is_empty(),
+                COPY_ORIGINAL => original_available,
                 REFRESH_HISTORY => !status.history_refreshing && status.auth == voiceprompt_client_protocol::state::AuthState::SignedIn,
                 CLEAR_HISTORY => !status.history_refreshing && !status.history.is_empty(),
                 RECOVER_SELECTED | DELETE_RECOVERY => !status.recovery.is_empty() && !matches!(status.dictation.stage,
@@ -1517,6 +1589,8 @@ fn dispatch(
                 }
             } else if id == HISTORY_LIST && notification == LBN_SELCHANGE as usize {
                 show_history_body(hwnd)?;
+            } else if id == HISTORY_LIST && notification == LBN_DBLCLK as usize {
+                client_command(hwnd, COPY_SELECTED)?;
             } else if notification == BN_CLICKED as usize {
                 client_command(hwnd, id)?;
             }
@@ -2065,6 +2139,7 @@ pub fn run_tray(options: TrayOptions) -> Result<(), NativeError> {
             break;
         }
         if crate::settings_ui::route(&message)
+            || route_history_keys(hwnd, &message)?
             || unsafe { IsDialogMessageW(hwnd, &message) }.as_bool()
         {
             continue;
@@ -2085,6 +2160,86 @@ pub fn run_tray(options: TrayOptions) -> Result<(), NativeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn original_copy_tracks_selected_row_presence_including_empty_original_like_wpf() {
+        let entries: Vec<_> = (0..2)
+            .map(|index| voiceprompt_client_protocol::history::HistoryEntry {
+                transcript_id: index.to_string(),
+                recording_id: "synthetic".into(),
+                preview: "Synthetic".into(),
+                body: "Synthetic final".into(),
+                raw_body: (index == 1).then(String::new),
+                refinement_fallback_blocks: 0,
+                completed_at: time::OffsetDateTime::UNIX_EPOCH,
+                cached_at: time::OffsetDateTime::UNIX_EPOCH,
+                character_count: "Synthetic final".len(),
+            })
+            .collect();
+        assert!(selected_history_entry(&entries, None).is_none());
+        assert!(selected_history_entry(&entries, Some("missing")).is_none());
+        assert!(
+            selected_history_entry(&entries, Some("0"))
+                .unwrap()
+                .raw_body
+                .is_none()
+        );
+        assert_eq!(
+            selected_history_entry(&entries, Some("1"))
+                .unwrap()
+                .raw_body
+                .as_deref(),
+            Some("")
+        );
+    }
+
+    #[test]
+    fn history_keyboard_actions_match_actual_wpf_without_touching_input_or_clipboard() {
+        let none = HOT_KEY_MODIFIERS::default();
+        for key in [VK_RETURN, VK_SPACE] {
+            assert_eq!(
+                history_key_action(true, key.0 as usize, none),
+                Some(COPY_SELECTED)
+            );
+            assert_eq!(history_key_action(false, key.0 as usize, none), None);
+            assert_eq!(
+                history_key_action(true, key.0 as usize, MOD_SHIFT),
+                Some(COPY_SELECTED)
+            );
+            assert_eq!(
+                history_key_action(true, key.0 as usize, MOD_CONTROL),
+                Some(COPY_SELECTED)
+            );
+        }
+        assert_eq!(
+            history_key_action(true, VK_C.0 as usize, MOD_CONTROL),
+            Some(COPY_SELECTED)
+        );
+        assert_eq!(
+            history_key_action(true, VK_C.0 as usize, MOD_CONTROL | MOD_SHIFT),
+            None
+        );
+        assert_eq!(
+            history_key_action(false, VK_C.0 as usize, MOD_CONTROL),
+            None
+        );
+        assert_eq!(history_key_action(true, VK_C.0 as usize, none), None);
+        for focused in [false, true] {
+            assert_eq!(
+                history_key_action(focused, VK_F5.0 as usize, none),
+                Some(REFRESH_HISTORY)
+            );
+            assert_eq!(history_key_action(focused, VK_F5.0 as usize, MOD_ALT), None);
+        }
+        assert_eq!(
+            history_key_action(
+                true,
+                windows::Win32::UI::Input::KeyboardAndMouse::VK_ESCAPE.0 as usize,
+                none
+            ),
+            None
+        );
+    }
 
     #[test]
     fn tray_matches_reference_menu_state_and_default_action_without_showing_ui() {

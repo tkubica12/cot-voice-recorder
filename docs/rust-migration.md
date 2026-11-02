@@ -32,10 +32,10 @@ znovu v odpovidajicim scope.
 | Audio jadro a C#/Python parity | Implementovano a overeno |
 | Zdroj externich crates | crates.io vyslovne schvalene jako projektova vyjimka |
 | Nativni Windows zaklad | Tray, izolovana instance a DPAPI implementovany; lokalni self-test a C# DPAPI parity prosly |
-| Mereni Windows klienta | Predchozi f572599 full-runtime signed-out30+30/3 paired301-point serie PASS: p95Rust496.905ms/meanprivate3.484MiB; original-icon/overlay build vyzaduje nove mereni |
+| Mereni Windows klienta | Post-icon/overlay7b4aff4 full-runtime signed-out30+30/3 paired301-point serie PASS: p95Rust455.182ms/meanprivate3.650MiB; source/scope se neprepisuje na pozdejsi input build ani signed-in/physical profile |
 | Microphone readiness | Jeden actual240ms probe a samostatne schvalena30+30 paired serie prosly; first-PCM p95Rust80.75% C#baseline, bez audio souboru/uploadu |
 | Engine longevity | Actual3600s synthetic PCM/real50min rotation,115200000 exact bytes; worst idle growth1.645MiB<10MiB, engine-only PASS |
-| CI nativniho inkrementu | 8cd3a26 original-icon Windows/Linux/MSRV1.85/container CI PASS; nove reactive-overlay CI zatim zbyva, nejde o real-world cutover |
+| CI nativniho inkrementu | 7b4aff4 original-icon/reactive-overlay Windows/Linux/MSRV1.85/container RustCI a C#WindowsCI PASS; nasledne observer/input inkrementy maji vlastni CI, nejde o real-world cutover |
 | OAuth/token-store/PubSub klient | Native flow implementovany; samostatny live Google auth-only/local-signout a assisted manual clipboard probe PASS, full signed-in backend/automatic dictation paste stale chybi |
 | Diktovani/recovery UI | Native microphone/hotkeys/overlay/paste controller, oba enginy, journal, polishing a outbox implementovany; real-world a rozsahlejsi fault/E2E akceptace zbyva |
 | History cache | JSON/retence/200 entries, atomicka persistence, native list/text a manual copy latest/selected/original implementovany; C# file parity overena |
@@ -2117,3 +2117,57 @@ a nejvyse jedno DesktopGuard Ctrl+V do vlastniho pole, bez retry/Enter/
 Save/jinych aplikaci/device/account/cloud portu. Stary clipboard se
 necte/neobnovuje a marker zustane. Observer success toto opravneni
 nenahrazuje a zadny drivejsi souhlas se nerecykluje.
+
+### History input parity: primy audit puvodnich WPF handleru
+
+Actual MainWindow.OnHistoryDoubleClick/OnHistoryKeyDown a F5 KeyBinding
+odhalily chybejici native wiring, nikoli novy volitelny shortcut.
+Native double-click/Enter/Space/Control-only C nad fokusovanym History
+nyni pouzivaji stejnou manual cached copy cestu; Enter/Space zachovaji
+puvodni WPF chovani i se Shift/Control. F5 je bez modifieru a respektuje
+disabled Refresh. Own-window/child check predchazi vsem key-state reads;
+Settings a cizi aplikace se neroutuji a nic se globalne neregistruje.
+Event se spotrebuje pred IsDialogMessage, aby Enter misto copy nemohl
+spustit jiny default button. Testy nevolaji input/clipboard API.
+
+Copy original availability se nyni meni s aktualne vybranym radkem,
+presne podle reference RawBody != null, ne podle nonempty History.
+Pritom explicitne prazdny original zustava odlisny od null; nic se
+nemeni na ulozenem JSON ani manual-copy/pause/auth privacy pravidlech.
+Selection/keyboard tests, native59 regular+7 ignored/startup7 a cela
+workspace252 regular/fmt/Clippy/release prosly. Neni to actual human
+keyboard/screen-reader/clipboard acceptance. Prave bezici performance
+comparison zustava frozen7b4aff4 post-overlay build; tyto budouci input
+zmeny se do jeho source/binary identity nepodsouvaji.
+
+### Post-icon/overlay signed-out performance: overeny frozen7b4aff4
+
+Nova full-runtime signed-out serie skutecne dobehla bez restartu trialu:
+30 alternating startu kazde implementace a3 paired301-point idle serie,
+tedy60 startu/1806 raw samples se stejnym200-entry synthetic corpusem.
+Puvodni cile NEZMENENY. Independent verification znovu spoctlo vsechny
+p95/mean/max a kazdou paired serii z raw dat, overilo presny corpus,
+vsechny11 C# bundle files/native binary SHA a6 own-PID sampler reportu.
+Actual serie mely299.982..300.002s pri requested1s intervalu.
+
+| Metrika | C# reference | Rust7b4aff4 | Scoped zaver |
+| --- | --- | --- | --- |
+| Startup p95 | 1340.6883ms | 455.1822ms | 33.9514% baseline, <=1s i <=70% PASS |
+| Mean private | 73.9107MiB | 3.6501MiB | Kazda ze3 paired serii <=50% baseline PASS |
+| Peak private | 85.2773MiB | 4.28125MiB | <=80MiB PASS |
+
+Report client-comparison-overlay-7b4aff4/measurements/full-client-signed-out-comparison.json
+SHA2562949d7070db3e26d836e1e435d5fdac264d9ac43d39c91600fb628d4a6954067.
+Independent-verification.json uchovava recomputed summary, actual durations,
+raw counts a vsechny process IDs. Collector exit0, vsechny measured own
+procesy skoncily a vsechny generated state roots byly odstraneny;
+frozen bundles a dukazy zustaly. Detach zde chranil bounded collector
+pred drive pozorovanym host/tool interruption, nejde o dalsi agent session.
+
+Toto je fresh regression original-icon/overlay buildu, nikoli odhad ani
+prejmenovani stareho f572599 reportu. Neslibuje OS cold-cache start,
+signed-in backend provoz, microphone/clipboard/paste, one-hour GUI capture,
+autostart/installation nebo cloud latency/billing. Pozdejsi history input
+commit ma vlastni binary identity; finalni aktualni full-feature profile
+a zbyvajici physical/accessibility/upgrade/private-Azure akceptace tim
+nejsou automaticky uzavrene. Cela migrace zustava nehotova.

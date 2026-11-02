@@ -159,6 +159,13 @@ controls provide keyboard dialog navigation, DPI-specific system fonts and
 per-monitor bounds. Human screen-reader/high-DPI acceptance remains pending.
 History supports manual cloud Refresh (no autocopy), Clear with confirmation and
 copy latest/selected/original; Recovery supports list/recover/explicit deletion.
+History double-click, Enter/Space and Ctrl+C now invoke the same cached selected
+copy as the actual WPF handlers; Enter/Space retain WPF's modifier behavior while
+Ctrl+C requires Control only. F5 refresh is unmodified and respects the disabled
+Refresh button. These are local owned-window messages, not new global hotkeys.
+Copy original follows the actual selected row's non-null `raw_body`, including
+an explicitly empty original, rather than merely the presence of any history.
+Mapping/selection tests do not claim a new physical clipboard or keyboard trial.
 
 The microphone adapter deliberately preserves the existing WinMM/WaveIn path:
 16 kHz mono PCM16, 40 ms buffers and a bounded 50-buffer disk-consumer queue.
