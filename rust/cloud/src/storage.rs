@@ -292,6 +292,29 @@ impl AzureStorage {
             Err(error) => Err(error),
         }
     }
+    pub async fn delete_leased_blob(
+        &self,
+        container: &str,
+        name: &str,
+        lease: &str,
+    ) -> Result<bool> {
+        if !valid_lease(lease) {
+            return Err(invalid());
+        }
+        match self
+            .request(
+                Method::DELETE,
+                Self::uri(&self.blob, &[container, name])?,
+                None,
+                &[("x-ms-lease-id", lease)],
+            )
+            .await
+        {
+            Ok(_) => Ok(true),
+            Err(StorageError::NotFound) => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
 
     pub async fn entity(&self, table: &str, partition: &str, row: &str) -> Result<Option<Entity>> {
         let uri = entity_uri(&self.table, table, partition, row)?;

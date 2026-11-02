@@ -33,14 +33,16 @@ Implemented:
   subsequent GET snapshot. These are not yet the complete running worker.
 - Leased continuous model processor with full durable replay after failure, exact
   sample/legacy-overlap handling, queue receipt heartbeat and joined shutdown.
-  A separate sequential queue loop, legacy pipeline and finalization are not wired.
+  A sequential queue loop and legacy/finalization processors now share the ports.
 - Python-profile full-casefold overlap stitching, deterministic UUID5 publication
   identities and separate exact-prompt recording refinement. Canonical Blob lease
-  acquire/renew/write/release primitives are present; finalizer wiring remains open.
+  acquire/renew/write/release primitives protect active writers. Finalization uses
+  a renewable lock and immutable first-writer canonical bodies, conditional
+  metadata, stable IDs and durable notification retries without extending expiry.
 
 Stored domain/entity codecs, strict wire defaults, content-digest/sample validation
 and conditional repository primitives now exist.
-Ordered worker replay, finalization, cleanup, container/ACA wiring and full external
+Cleanup, production bootstrap, container/ACA wiring and full external
 contracts remain unfinished. Blob enumeration and production bootstrap are not wired.
 Do not deploy the current library or run an alternate worker over existing data.
 

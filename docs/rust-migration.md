@@ -21,7 +21,7 @@ zustat u klasicke ACA; na ACA Express se v teto migraci neprechazi.
 | Diktovani/recovery UI | Native microphone/hotkeys/overlay/paste controller, oba enginy, journal, polishing a outbox implementovany; real-world a rozsahlejsi fault/E2E akceptace zbyva |
 | History cache | JSON/retence/200 entries, atomicka persistence, native list/text a manual copy latest/selected/original implementovany; C# file parity overena |
 | Settings a instalator | Vsechna C# JSON pole, nativni Settings/History/Recovery, DPI fonty, per-user autostart a kompatibilni IPC; installer sestaven, nebyl instalovan |
-| Rust cloud API, worker, cleanup | API/AI/PubSub/live relay a leased continuous processor implementovany; legacy pipeline/finalization, queue loop, cleanup, bootstrap a uplna akceptace zbyvaji |
+| Rust cloud API, worker, cleanup | API/AI/PubSub/live relay, continuous/legacy processors, canonical finalization a queue loop implementovany; cleanup, bootstrap/container a uplna akceptace zbyvaji |
 | Hosting | Klasicka ACA zustava: API, KEDA queue worker a hourly cleanup Job; Express byl uzivatelem zrusen |
 
 Nativni zaklad neni kompletni klient. Jeho rychlost a pamet nelze porovnat
@@ -830,3 +830,38 @@ normalization corpus. Existujici SDK entity a audit byte parity zustavaji passin
 CI junction-fixture opravy dabeff2 je potvrzene successful na Windows i Linux.
 Zdrojove canonical Blob fencing primitives nejsou vydavany za plnou distributed
 finalizer akceptaci; je treba je jeste napojit na legacy/finalize processor.
+
+## Legacy pipeline, finalization a sequential QueueWorker
+
+Rust chunked processor pouziva exact checksum, glossary hints, source-compatible
+batch AI a vlastni audio Blob lease. Text musi byt ulozen conditional CAS pred
+leased delete audia. Streaming recording nesmi spustit druhy legacy engine.
+Chyba inference ponechava accepted row a durable audio pro retry.
+
+Canonical finalization zachovava raw id.txt, transcript UUID5.txt, puvodni model/
+refinement flags, preview a prvni fixed completion/expiry. Finalizer drzi
+renewable lock v raw/finalize/id.lock. Canonical raw/final bytes jsou publish-once
+If-None-Match: i stale owner po ztrate lease nemuze prepsat uz vyhrane texty.
+Metadata vychazeji z persisted canonical body, ne z posledniho speculative
+model outputu. Crash po body PUT a pred metadata muze resume bez druheho model
+callu; jde o explicitni source mechanismus pro bezpecnejsi finalizaci, ne tvrzeni
+o kompletni distributed fault akceptaci.
+
+Dokonceny recording s neACKovanou PubSub notifikaci drzi durable retry. Retry
+ma stabilni event UUID5 a nepresouva completion/expiry. Ztratene doruceni se
+nezahazuje po vycerpani inference attempts; legacy i continuous cesta ackuji
+stejne pole stream_delivery_completed. Teprve notification ACK povoluje cleanup
+continuous source audio/raw attempt. Audit tim neni zmenen a nikdy nenotifikuje.
+
+QueueWorker dostava jeden message, rozlisuje continuous/legacy/finalize,
+klasifikuje terminal/transient/pending, respektuje configurable attempts/backoff,
+uklada rotated receipts a zije i po receive/renew/delete faults. SIGTERM watch
+je stop-responsive; CLI signal/bootstrap wiring jeste zbyva.
+
+Proslo 192 workspace testu (76 cloud), locked release/fmt/Clippy. Nove prime
+HTTP/memory pipeline/worker testy overuji full legacy queue->ASR->finalize,
+stitch/refine, missing-chunk grace, immutable-body crash resume, transient/exhausted
+work a permanent notification retry, vcetne zachovani continuous audia do ACK.
+Predchozi 6fcb639 ma potvrzene Windows/Linux Rust CI a backend CI.
+Cleanup/orphans/active-work fencing, production bootstrap, source-only ACA image
+wiring a uplna acceptance jsou stale aktivni casti celeho cile.

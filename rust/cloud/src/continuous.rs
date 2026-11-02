@@ -306,6 +306,16 @@ pub async fn transcribe_recording(
         return Err(stopping());
     }
     let owner = uuid()?.replace('-', "");
+    let record = match services.recording(&id).await {
+        Ok(record) => record,
+        Err(error) if error.status == 404 => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    if record.transcription_mode != "streaming" {
+        return Err(StreamWorkError::Terminal(
+            "Continuous work cannot run over a legacy recording.",
+        ));
+    }
     let leases = Arc::new(StreamLeases::new(services.clone()));
     if leases.claim(&id, &owner).await?.is_none() {
         return Ok(());

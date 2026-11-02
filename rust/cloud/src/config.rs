@@ -42,6 +42,14 @@ pub struct Config {
     pub recording_stream_heartbeat_seconds: f64,
     pub recording_stream_session_seconds: f64,
     pub queue_visibility_seconds: u32,
+    pub glossary_terms: String,
+    pub overlap_min_chars: usize,
+    pub chunk_grace_seconds: u32,
+    pub max_transcribe_attempts: u32,
+    pub max_refine_attempts: u32,
+    pub queue_retry_base_seconds: u32,
+    pub queue_receive_error_backoff_seconds: f64,
+    pub queue_receive_error_max_backoff_seconds: f64,
 }
 
 fn endpoint(value: &str, allow_loopback: bool) -> Result<Url, Problem> {
@@ -236,6 +244,37 @@ impl Config {
             queue_visibility_seconds: value("VR_QUEUE_VISIBILITY_SECONDS", "300")
                 .parse()
                 .map_err(|_| Problem::validation("Invalid queue visibility duration."))?,
+            glossary_terms: value(
+                "VR_GLOSSARY_TERMS",
+                "Microsoft, Azure, GitHub, SDK, API, AI, Container Apps, Managed Identity, Foundry, Copilot, Backend, Speech-to-text, MAI-Transcribe-2, GPT-5.6 Luna, GPT-6 Luna, REST API, Blob Storage, Kubernetes, Entra, OpenAI, FastAPI, Python, DevOps, Terraform, Azure OpenAI, Web PubSub, DNS, OIDC, JWT",
+            ),
+            overlap_min_chars: value("VR_OVERLAP_MIN_CHARS", "8")
+                .parse()
+                .map_err(|_| Problem::validation("Invalid minimum chunk overlap."))?,
+            chunk_grace_seconds: value("VR_CHUNK_GRACE_SECONDS", "900")
+                .parse()
+                .map_err(|_| Problem::validation("Invalid chunk grace duration."))?,
+            max_transcribe_attempts: value("VR_MAX_TRANSCRIBE_ATTEMPTS", "5")
+                .parse()
+                .map_err(|_| Problem::validation("Invalid transcription attempts."))?,
+            max_refine_attempts: value("VR_MAX_REFINE_ATTEMPTS", "5")
+                .parse()
+                .map_err(|_| Problem::validation("Invalid refinement attempts."))?,
+            queue_retry_base_seconds: value("VR_QUEUE_RETRY_BASE_SECONDS", "30")
+                .parse()
+                .map_err(|_| Problem::validation("Invalid queue retry base."))?,
+            queue_receive_error_backoff_seconds: value(
+                "VR_QUEUE_RECEIVE_ERROR_BACKOFF_SECONDS",
+                "2",
+            )
+            .parse()
+            .map_err(|_| Problem::validation("Invalid queue receive backoff."))?,
+            queue_receive_error_max_backoff_seconds: value(
+                "VR_QUEUE_RECEIVE_ERROR_MAX_BACKOFF_SECONDS",
+                "60",
+            )
+            .parse()
+            .map_err(|_| Problem::validation("Invalid queue receive backoff cap."))?,
         };
         for name in [
             &config.hub,
@@ -275,6 +314,13 @@ impl Config {
             || !(1..=604800).contains(&config.queue_visibility_seconds)
             || f64::from(config.queue_visibility_seconds)
                 <= config.recording_stream_heartbeat_seconds
+            || config.max_transcribe_attempts == 0
+            || config.max_refine_attempts == 0
+            || !config.queue_receive_error_backoff_seconds.is_finite()
+            || !config.queue_receive_error_max_backoff_seconds.is_finite()
+            || config.queue_receive_error_backoff_seconds <= 0.0
+            || config.queue_receive_error_max_backoff_seconds
+                < config.queue_receive_error_backoff_seconds
         {
             return Err(Problem::validation(
                 "Invalid transcription provider/style/timeout.",

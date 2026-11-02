@@ -285,6 +285,40 @@ impl BlobLease {
             .release_lease(&self.container, &self.name, &self.id)
             .await
     }
+    pub async fn delete(&self) -> Result<bool, StorageError> {
+        match &self.blobs {
+            Blobs::Azure(storage) => {
+                storage
+                    .delete_leased_blob(&self.container, &self.name, &self.id)
+                    .await
+            }
+            Blobs::Memory(memory) => {
+                let mut memory = memory.lock().await;
+                let key = (self.container.clone(), self.name.clone());
+                if !memory.leases.get(&key).is_some_and(|lease| {
+                    lease.id == self.id && lease.expires > tokio::time::Instant::now()
+                }) {
+                    return Err(StorageError::Conflict);
+                }
+                memory.leases.remove(&key);
+                Ok(memory.data.remove(&key).is_some())
+            }
+        }
+    }
+    pub async fn existing(
+        blobs: Blobs,
+        container: String,
+        name: String,
+    ) -> Result<Self, StorageError> {
+        let proposed = crate::services::uuid().map_err(StorageError::Failure)?;
+        let id = blobs.acquire_lease(&container, &name, &proposed).await?;
+        Ok(Self {
+            blobs,
+            container,
+            name,
+            id,
+        })
+    }
 }
 
 #[derive(Clone)]
@@ -519,6 +553,7 @@ mod queue_tests {
                 Err(StorageError::Conflict)
             ));
             assert!(matches!(first.release().await, Err(StorageError::Conflict)));
+            assert!(matches!(first.delete().await, Err(StorageError::Conflict)));
             successor.write(b"canonical".to_vec()).await.unwrap();
             assert_eq!(
                 blobs.get("transcripts", "fixture.txt", 128).await.unwrap(),
