@@ -172,6 +172,7 @@ def native_proof(stdout: bytes) -> dict:
         "expired_cleanup_respects_active_blob_lease",
         "continuous_single_stream_and_exact_samples",
         "audio_retained_until_durable_finalization",
+        "continuous_full_replay_after_failure",
     ]:
         if proof.get(field) is not True:
             raise ValueError(f"Native contract did not prove {field}.")
@@ -403,6 +404,7 @@ def run(oracle: Path, output: Path, revision: str) -> None:
             )
             samples = continuous["streamed_samples"]
             assert int(getattr(samples, "value", samples)) == 160320
+            assert continuous["stream_attempt"] == 2
             assert continuous.get("stream_lease_id") is None
             continuous_text = table.get_table_client("transcripts").get_entity(
                 "transcript",
@@ -449,6 +451,7 @@ def run(oracle: Path, output: Path, revision: str) -> None:
                 "actual_sdk_worker_transcript_retrieval": True,
                 "continuous_worker_single_stream_exact_samples": True,
                 "continuous_audio_retained_until_finalization": True,
+                "continuous_full_replay_after_failure": True,
                 "model_and_realtime_are_loopback_fixtures": True,
                 "synthetic_identity_requests": len(identity.resources),
                 "real_azure_resources": False,

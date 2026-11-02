@@ -304,59 +304,97 @@ async fn continuous_worker(storage: Arc<AzureStorage>) -> (String, String) {
         .collect();
     let expected = segments.concat();
     let model = tokio::spawn(async move {
-        let (stream, _) = tokio::time::timeout(Duration::from_secs(15), listener.accept())
-            .await
-            .unwrap()
-            .unwrap();
-        let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
-        socket
-            .send(Message::Text(r#"{"type":"session.created"}"#.into()))
-            .await
-            .unwrap();
-        socket.next().await.unwrap().unwrap();
-        socket
-            .send(Message::Text(r#"{"type":"session.updated"}"#.into()))
-            .await
-            .unwrap();
-        let mut captured = Vec::new();
-        let mut commits = 0;
-        while let Some(Ok(message)) = socket.next().await {
-            match message {
-                Message::Text(data) => {
-                    let event: serde_json::Value = serde_json::from_str(&data).unwrap();
-                    match event["type"].as_str().unwrap() {
-                        "input_audio_buffer.append" => {
-                            captured.extend(
-                                base64::engine::general_purpose::STANDARD
-                                    .decode(event["audio"].as_str().unwrap())
-                                    .unwrap(),
-                            );
-                            assert!(captured.len() <= expected.len());
+        for attempt in 0..2 {
+            let (stream, _) = tokio::time::timeout(Duration::from_secs(15), listener.accept())
+                .await
+                .unwrap()
+                .unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            socket
+                .send(Message::Text(r#"{"type":"session.created"}"#.into()))
+                .await
+                .unwrap();
+            socket.next().await.unwrap().unwrap();
+            socket
+                .send(Message::Text(r#"{"type":"session.updated"}"#.into()))
+                .await
+                .unwrap();
+            let mut captured = Vec::new();
+            let mut commits = 0;
+            let mut fault_sent = false;
+            while let Some(Ok(message)) = socket.next().await {
+                match message {
+                    Message::Text(data) => {
+                        let event: serde_json::Value = serde_json::from_str(&data).unwrap();
+                        match event["type"].as_str().unwrap() {
+                            "input_audio_buffer.append" => {
+                                captured.extend(
+                                    base64::engine::general_purpose::STANDARD
+                                        .decode(event["audio"].as_str().unwrap())
+                                        .unwrap(),
+                                );
+                                assert!(captured.len() <= expected.len());
+                                if attempt == 0 && !fault_sent {
+                                    fault_sent = true;
+                                    socket.send(Message::Text(r#"{"type":"error","message":"synthetic first-attempt failure"}"#.into())).await.unwrap();
+                                }
+                            }
+                            "input_audio_buffer.commit" => {
+                                commits += 1;
+                                socket.send(Message::Text(r#"{"type":"conversation.item.input_audio_transcription.completed","transcript":"synthetic Azure continuous final"}"#.into())).await.unwrap();
+                            }
+                            _ => panic!(
+                                "Continuous model request must not reset between durable segments."
+                            ),
                         }
-                        "input_audio_buffer.commit" => {
-                            commits += 1;
-                            socket.send(Message::Text(r#"{"type":"conversation.item.input_audio_transcription.completed","transcript":"synthetic Azure continuous final"}"#.into())).await.unwrap();
-                        }
-                        _ => panic!(
-                            "Continuous model request must not reset between durable segments."
-                        ),
                     }
+                    Message::Close(_) => break,
+                    _ => panic!("Unexpected continuous model frame."),
                 }
-                Message::Close(_) => break,
-                _ => panic!("Unexpected continuous model frame."),
+            }
+            if attempt == 0 {
+                assert!(captured.len() >= 640 && captured.len() < 320000);
+                assert_eq!(commits, 0);
+                assert_eq!(captured, expected[..captured.len()]);
+            } else {
+                assert_eq!(commits, 1);
+                assert_eq!(
+                    captured, expected,
+                    "The new leased stream must replay every sample from zero."
+                );
             }
         }
-        assert_eq!(commits, 1);
-        assert_eq!(
-            captured, expected,
-            "No missing, duplicated or inserted PCM samples."
-        );
     });
     let (_stop, stopping) = tokio::sync::watch::channel(false);
     assert!(worker.run_once(stopping.clone()).await.unwrap());
+    let failed = services.recording(&record.recording_id).await.unwrap();
+    assert!(!failed.stream_asr_ready && failed.stream_raw_path.is_none());
+    assert!(failed.stream_lease_id.is_none());
+    assert_eq!(failed.stream_error.as_deref(), Some("stream_failed"));
+    assert_eq!(failed.stream_attempt, 1);
+    for (path, pcm) in audio_paths.iter().zip(&segments) {
+        assert_eq!(
+            storage
+                .get_blob(&config.audio_container, path, 1024 * 1024)
+                .await
+                .unwrap(),
+            voiceprompt_core::wav::to_wav(pcm).unwrap()
+        );
+    }
+    services
+        .queue
+        .send(
+            json!({
+                "type":"stream", "recording_id":record.recording_id,
+            }),
+            0,
+        )
+        .await
+        .unwrap();
+    assert!(worker.run_once(stopping.clone()).await.unwrap());
     let ready = services.recording(&record.recording_id).await.unwrap();
     assert!(ready.stream_asr_ready);
-    assert_eq!(ready.stream_attempt, 1);
+    assert_eq!(ready.stream_attempt, 2);
     assert_eq!(ready.streamed_samples, 160320);
     assert!(ready.stream_lease_id.is_none());
     for (path, pcm) in audio_paths.iter().zip(&segments) {
@@ -708,6 +746,7 @@ async fn https_azure_contract() {
             "legacy_transcript_id":legacy_transcript_id,
             "continuous_single_stream_and_exact_samples":true,
             "audio_retained_until_durable_finalization":true,
+            "continuous_full_replay_after_failure":true,
             "continuous_recording_id":continuous_recording_id,
             "continuous_transcript_id":continuous_transcript_id,
             "real_azure_resources":false, "real_managed_identity":false,

@@ -32,6 +32,7 @@ class AzureRestFixtureTests(unittest.TestCase):
             "expired_cleanup_respects_active_blob_lease": True,
             "continuous_single_stream_and_exact_samples": True,
             "audio_retained_until_durable_finalization": True,
+            "continuous_full_replay_after_failure": True,
             "production_authorization_proven": False,
             "real_azure_resources": False,
             "real_managed_identity": False,
@@ -49,6 +50,7 @@ class AzureRestFixtureTests(unittest.TestCase):
             "real_managed_identity",
             "continuous_single_stream_and_exact_samples",
             "audio_retained_until_durable_finalization",
+            "continuous_full_replay_after_failure",
         ]:
             changed = dict(proof)
             changed[field] = not proof[field]

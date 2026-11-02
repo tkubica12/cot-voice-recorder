@@ -1801,3 +1801,25 @@ WAV v obou objektech a po ni vyzaduje NotFound na techze paths. Stored data
 layout se nemeni ani neprevadi na legacy naming; opraven byl jen testovaci
 predpoklad. Ctyri existing continuous regressions a strict Clippy/fmt prosly;
 cely composed scenario stale ceka na successful actual rerun.
+
+12b825a actual HTTPS storage continuous rerun prosel v
+[backend-ci41433417086](https://github.com/tkubica12/cot-voice-recorder/actions/runs/41433417086).
+Jeden leased model stream zpracoval exact160320 samples ze dvou ulozenych
+contiguous segmentu s jedinym final commit; audio bylo overene byte-exact
+po ASR-ready a gone az po durable finalization/delivery. Azure SDK overil
+persisted160320 cursor, completed+delivery metadata, actual transcript body
+a48h dates. Report azure-continuous-12b825a/azure-rest-contract.json SHA256
+316f9c0e21f1d8215460f91581fdedd794eb49568f493b2aa95d4047b4fcd0a6.
+Tls/version checks, loopback-only fake model/PubSub a real-IAM=false limity
+zustaly stejne; owned emulator/identity/privatekey cleanup je potvrzeny.
+
+Posledni navazujici fault case vyzaduje take actual-storage replay po
+synthetic model error hned po prvnim packetu. Pred novym pokusem musi byt
+ASR-ready=false, zadny raw-result pointer, uvolneny puvodni recording lease
+a obe exact audio Blob casti zachovane. Novy leased stream musi znovu
+odeslat kompletni audio od nuly, ne partial cursor nebo novy model per
+segment; az druhy pokus smi potvrdit final text. Explicitni duplicitni wake
+nahrazuje pouze cekani testu na retry delay, nemeni produkcni backoff.
+SDK vyzaduje stream_attempt=2; zadny timer, retry limit ani safety invariant
+se nesnizil. Compile/Clippy/fmt,4 existing continuous regressions a5local
+typed-proof/TLS/MI guards prosly; actual fault run jeste ceka na CI.
