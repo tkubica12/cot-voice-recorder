@@ -167,6 +167,17 @@ performance acceptance. The collector refuses normal application binary names,
 personal environment configuration and overwritten/partial report publication.
 See `scripts\measure_backend.py` and the [acceptance plan](../../docs/rust-migration.md).
 
+The opt-in `storage::azurite_tests::https_azure_contract` is also wired into
+`backend-ci` with an immutable official Azurite image. It exercises the actual
+REST adapters over verified local HTTPS, real Table ETags/Blob leases/Queue
+receipts, and bidirectional current Azure SDK payloads. Storage API-version
+checks remain enabled. Identity, certificate and data are explicit ephemeral
+fixtures; no real Azure resources, account data or credentials are used.
+Azurite's basic OAuth mode does **not** prove token signatures, permissions,
+managed identity or private-endpoint deployment. The normal binary/config has
+no emulator/shared-key fallback. Ordinary tests keep this scenario ignored;
+the bounded Linux runner is `scripts\test_azure_rest.py`.
+
 The loopback-only server uses real RS256 verification against an in-memory
 generated-key local JWKS. The probe compares live Rust HTTP status/headers,
 structured errors, lifecycle and audit/history shapes with the actual FastAPI

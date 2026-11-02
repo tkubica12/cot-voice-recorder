@@ -1652,3 +1652,36 @@ nepouzivaji keyboard,clipboard nebo zarizeni.235 regularnich Windows Rust
 testu a strict fmt/Clippy proslo; tri vyrazne oznacene long/physical fixtures
 zustaly ignored. To je konkretni automaticky DPI dukaz, ne tvrzeni o realnem
 screen-readeru nebo vsech monitorech/keyboard cestach.
+
+## Ephemeral HTTPS Azurite adapter contract
+
+Zbyvajici cloud-side kontrakt se rozsiruje o skutecky emulovany Blob/Queue/
+Table service, ne druhou implementaci REST odpovedi v nasem mocku. Ignored
+Rust test pouziva real AzureStorage a ManagedIdentity HTTP adapter s explicitni
+loopback-only identity fixture a HTTPS endpoints. Public self-signed fixture
+certificate je trusted pouze v konkretnim test clientu; zadne globalni trust/
+security zmeny, invalid-cert acceptance nebo plaintext Storage endpoint.
+
+Existujici oficialni Azurite image3.35.0 byl overen z MCR a je pinned na
+amd64sha256:dae2a5f96553962901304b94e72ef87e299d0825e4b679673bcc527a25076fe4.
+Fixture nepouziva loose mode ani skipApiVersionCheck. Certifikaty/tokeny jsou
+ephemeral synthetic, Docker porty publikovane pouze127.0.0.1. Admin setup
+pouziva existujici verejny Azurite dev account z reference; Rust data-plane
+requests nesou synthetic token pres actual injected MI adapter.
+Azurite OAuth basic overuje issuer/audience/expiry, NE signature/permissions;
+test tedy nesmi tvrdit real UAMI/IAM nebo private Azure akceptaci.
+Viz [oficialni OAuth/HTTPS pravidla emulaturu](https://learn.microsoft.com/azure/storage/common/storage-install-azurite#oauth-configuration).
+
+Scenar overuje read-only resource probes, actual Table CAS/ownETag a typed
+Int64 s aktualnim Azure SDK v obou smerech, Blob create-if-absent/lease
+renew/release/takeover/stale-owner fencing a Queue receipt rotation,
+visibility/redelivery i UTF8/base64 SDK interop. Produkcni auth/storage
+konfigurace ani behavior se zatim nemeni, neni pridan shared-key fallback.
+
+Trio local certificate/identity/endpoint guards, strict Rust Clippy/fmt a
+osm existing native Storage tests prosly. Lokalni Docker daemon zustava
+nedostupny; actual emulator run je teprve zapojeny do existing backend-ci,
+kde uz existuje Docker a approved locked Python graph. Success report se
+publikuje az po stopped owned container/identity a smazani ephemeral private
+key. Artifact allowlist nikdy neuploaduje key nebo cely temporary root.
+Do prvniho skutecneho successful CI behu tento emulator contract neni PASS.

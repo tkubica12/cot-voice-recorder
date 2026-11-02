@@ -750,6 +750,10 @@ fn decode_queue(data: &[u8]) -> Result<Vec<QueueMessage>> {
 }
 
 #[cfg(test)]
+#[path = "storage_azurite_tests.rs"]
+mod azurite_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     #[test]

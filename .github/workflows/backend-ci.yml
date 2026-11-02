@@ -8,6 +8,8 @@ on:
       - "scripts/backend_fixture.py"
       - "scripts/measure_backend.py"
       - "scripts/tests/test_backend_measurement_fixture.py"
+      - "scripts/test_azure_rest.py"
+      - "scripts/tests/test_azure_rest_fixture.py"
       - ".github/workflows/backend-ci.yml"
   pull_request:
     paths:
@@ -16,6 +18,8 @@ on:
       - "scripts/backend_fixture.py"
       - "scripts/measure_backend.py"
       - "scripts/tests/test_backend_measurement_fixture.py"
+      - "scripts/test_azure_rest.py"
+      - "scripts/tests/test_azure_rest_fixture.py"
       - ".github/workflows/backend-ci.yml"
   workflow_dispatch: {}
 
@@ -100,3 +104,36 @@ jobs:
           name: backend-protocol-performance
           path: ${{ runner.temp }}/backend-protocol-performance.json
           if-no-files-found: error
+
+      - name: HTTPS emulator fixture guards, no Azure or personal credentials
+        run: |
+          uv run --locked ruff check --config pyproject.toml --ignore E402 ../scripts/test_azure_rest.py ../scripts/tests/test_azure_rest_fixture.py
+          uv run --locked ruff format --check --config pyproject.toml ../scripts/test_azure_rest.py ../scripts/tests/test_azure_rest_fixture.py
+          uv run --locked python ../scripts/tests/test_azure_rest_fixture.py
+
+      - name: Build exact Rust cloud libtest fixture for actual Azure REST contracts
+        working-directory: .
+        shell: bash
+        run: |
+          cargo test --manifest-path rust/Cargo.toml -p voiceprompt-cloud --lib --release --no-run --offline --locked --message-format json > "$RUNNER_TEMP/azure-fixture-build.jsonl"
+          python -c "import json,os,pathlib; rows=[json.loads(line) for line in pathlib.Path(os.environ['RUNNER_TEMP'],'azure-fixture-build.jsonl').read_text().splitlines()]; paths=[row['executable'] for row in rows if row.get('reason')=='compiler-artifact' and row.get('executable')]; assert len(paths)==1; pathlib.Path(os.environ['RUNNER_TEMP'],'azure-fixture-path.txt').write_text(paths[0])"
+
+      - name: Actual Rust REST and Azure SDK against verified HTTPS OAuth Azurite
+        timeout-minutes: 10
+        run: |
+          mkdir "$RUNNER_TEMP/azure-rest-contract"
+          uv run --locked python ../scripts/test_azure_rest.py --oracle "$(cat "$RUNNER_TEMP/azure-fixture-path.txt")" --output-directory "$RUNNER_TEMP/azure-rest-contract" --source-revision "$GITHUB_SHA"
+
+      - name: Preserve bounded emulator proof or explicit failure, never ephemeral private keys
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: azure-rest-contract
+          path: |
+            ${{ runner.temp }}/azure-rest-contract/azure-rest-contract.json
+            ${{ runner.temp }}/azure-rest-contract/failure.json
+            ${{ runner.temp }}/azure-rest-contract/cleanup-failure.json
+            ${{ runner.temp }}/azure-rest-contract/native-stdout.txt
+            ${{ runner.temp }}/azure-rest-contract/native-stderr.txt
+            ${{ runner.temp }}/azure-rest-contract/emulator-log.txt
+          if-no-files-found: warn
