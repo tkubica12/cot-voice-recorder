@@ -80,6 +80,7 @@ pub(crate) enum ClientCommand {
     DeleteRecovery(String),
     SaveSettings(AppSettings),
     RefreshHistory,
+    RefreshRecovery,
     ClearHistory,
 }
 
@@ -757,6 +758,16 @@ async fn run_client(
                                 Ok(Ok(entries)) => status.send_modify(|status| status.recovery = Arc::new(entries)),
                                 result => { eprintln!("Recovery deletion failed: {result:?}"); issue(&status, "Recovery entry could not be deleted. No active journal is removed."); }
                             }
+                        }
+                    }
+                    ClientCommand::RefreshRecovery => {
+                        if let Some(recovery) = recovery_store.clone() {
+                            match tokio::task::spawn_blocking(move || recovery.list()).await {
+                                Ok(Ok(entries)) => status.send_modify(|status| status.recovery = Arc::new(entries)),
+                                result => { eprintln!("Manual Recovery refresh failed: {result:?}"); issue(&status, "Recovery could not be refreshed. Saved files are retained."); }
+                            }
+                        } else {
+                            issue(&status, "Recovery is unavailable. Reopen the client to retry its storage.");
                         }
                     }
                             ClientCommand::SaveSettings(next) => {

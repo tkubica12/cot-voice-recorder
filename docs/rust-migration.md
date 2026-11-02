@@ -2293,3 +2293,46 @@ accepted counts0/1/2/3/4 i partial release se rozlisuji a cleanup muze
 poslat jen V-up/Control-up, nikdy dalsi V-down/Enter nebo nekonecny retry.
 Zadne nativni clipboard/sensor/SendInput volani v techto testech neni.
 Dosavadni case evidence se temito novymi reason fields zpetne nedoplnuje.
+
+### Responsive main UI: functional/reference-layout inkrement
+
+Actual WPF720x540/min560x420 a History/Recovery sections nahrazuji
+native570x730 all-controls canvas bez minimum/viewport handling.
+Nativni taby oddeluji dve sekce, action rows se zalomi v min sirce a
+History ma original list-oriented default; explicitni Show selected text
+zachovava drivejsi read-only body view, neodstranuje ji z klienta.
+Recovery ma original vysvetleni48h/256MiB/no-autopaste a explicitni
+manual read-only Refresh (zaznamy se tim nemazou ani neslouci).
+Stored formats, auth, pause/manual copy a dictation/recovery invariants
+se nemeni. Clipboard controls zustanou disabled pri NoPorts fixture.
+
+Nova physical-disabled actual full-client preview vytvori vsechny
+skutecne komponenty nad vlastnimi synthetic settings/history/IPC,
+bez credential discovery/ports. Default i minimum jsou bounded180s,
+normalne se uzaviraji a kontroluji byte-exact unchanged files/no-token.
+Pure geometry testy pokryvaji4 viewporty pri96/120/144/192/288DPI,
+vsechny rects uvnitr a zalomeni footers bez overlap.
+
+Actual CUI zjistilo, ze accessible tab selection muze zmenit TC state
+bez TCN_SELCHANGE. UI ted reaguje i na zmenenou own native selection/
+checkbox state v existujicim bounded UI ticku, nezavisle na status
+channel changes. Prime CUI Replay nad FRESH compiled graph pak
+overilo History -> Recovery -> History i read-only text toggle.
+Drive pouzity cached native test binary bez teto opravy se nevydava
+za corrected-source dukaz; nova fixture executable se zjistuje z
+Cargo compiler-artifact, ne odhadem nejcerstvejsiho filename.
+
+Default actual144DPI client1058x754 a reference-minimum818x574
+(outer1080x810 a840x630) maji vsechny akce ve viewportu; u minHistory
+je Clear History na druhem radku, Recovery help/list/3 akce se vejdou.
+Byl proveden pouze indexed section/toggle navigation a read-only
+Recovery Refresh, nikoli copy/paste/keyboard/Google/device/save.
+Own preview data a dukazy jsou v native-main-layout-a75013b-current
+a native-main-minimum-a75013b; UI/ready/closed source je odvozen ze
+skutecneho klienta, nejde o staticky screenshot mock.
+
+Tento inkrement je funkcni/layout/accessibility-state proof, NE plna
+vizualni shoda: classic native buttons/system fonts, raw timestamp row
+a multi-line status stale potrebuji puvodni WPF header/logo/palette/
+font/row styling a actual reference srovnani. Zadna predchozi performance
+cisla se na tyto dalsi zmeny neprepisuji a cela UI/migrace neni uzavrena.

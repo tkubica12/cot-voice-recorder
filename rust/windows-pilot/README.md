@@ -198,6 +198,25 @@ Copy original follows the actual selected row's non-null `raw_body`, including
 an explicitly empty original, rather than merely the presence of any history.
 Mapping/selection tests do not claim a new physical clipboard or keyboard trial.
 
+The main History/Recovery sections now adapt to the original 720x540-DIP window
+and 560x420 minimum instead of a fixed 570x730 all-controls canvas. Action rows
+wrap at the minimum width. History initially shows the original list-oriented
+view; **Show selected text** retains the migration client's read-only body view
+without forcing both panes into a small viewport. Recovery has its own explanatory
+text, list and explicit read-only Refresh. Native accessible selection/toggle state
+is observed even when an automation client changes it without a notification.
+Clipboard controls are disabled when the fixture's physical port is disabled.
+
+Two ignored actual full-client visual fixtures,
+`platform::tests::manual_native_client_visual_preview` and
+`platform::tests::manual_native_client_minimum_visual_preview`, require fresh
+explicitly marked signed-out synthetic roots and close after 180 seconds.
+They never discover credentials or enable microphone, shortcuts, clipboard,
+autostart or networking. Their immutable ready/closed files include actual
+viewport, disabled capabilities and byte-exact settings/history checks.
+Only safe section/toggle navigation is used for visual checks; actual keyboard,
+screen-reader, monitor-switch and original-theme acceptance remain separate.
+
 The microphone adapter deliberately preserves the existing WinMM/WaveIn path:
 16 kHz mono PCM16, 40 ms buffers and a bounded 50-buffer disk-consumer queue.
 WinMM is legacy; WASAPI is Microsoft's recommendation for new designs, but changing

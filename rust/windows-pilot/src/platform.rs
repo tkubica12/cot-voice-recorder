@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::error::Error;
 use std::ffi::{OsStr, c_void};
 use std::fmt;
@@ -27,8 +27,9 @@ use windows::Win32::Storage::FileSystem::{
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::CreateMutexW;
+use windows::Win32::UI::Controls as controls;
 use windows::Win32::UI::HiDpi::{
-    DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForWindow, SetProcessDpiAwarenessContext,
+    DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     EnableWindow, GetKeyState, HOT_KEY_MODIFIERS, MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_WIN, VK_C,
@@ -50,6 +51,8 @@ const TRAY_KEY_SELECT: u32 = NIN_SELECT | NINF_KEY;
 const ACTIVATE_MESSAGE: u32 = WM_APP + 2;
 const QUIT_MESSAGE: u32 = WM_APP + 3;
 const FIXTURE_READY_MESSAGE: u32 = WM_APP + 4;
+#[cfg(test)]
+const UI_PREVIEW_MESSAGE: u32 = WM_APP + 5;
 const EXIT_TIMER: usize = 1;
 const MENU_OPEN: usize = 1001;
 const MENU_EXIT: usize = 1002;
@@ -70,6 +73,10 @@ const DELETE_RECOVERY: usize = 1042;
 const OPEN_SETTINGS: usize = 1044;
 const REFRESH_HISTORY: usize = 1045;
 const CLEAR_HISTORY: usize = 1046;
+const MAIN_TABS: usize = 1050;
+const SHOW_HISTORY_TEXT: usize = 1051;
+const RECOVERY_HELP: usize = 1052;
+const REFRESH_RECOVERY: usize = 1053;
 const INSTANCE_TIMER: usize = 3;
 
 thread_local! {
@@ -81,6 +88,12 @@ thread_local! {
     static CLIENT_TICK: RefCell<u32> = const { RefCell::new(100) };
     static COMPATIBLE_INSTANCE: RefCell<Option<crate::CompatibleInstance>> = const { RefCell::new(None) };
     static MAIN_FONT: RefCell<Option<crate::dpi::DpiFont>> = const { RefCell::new(None) };
+    static MAIN_LAYOUT_READY: Cell<bool> = const { Cell::new(false) };
+    static MAIN_SECTION_STATE: Cell<Option<(isize, bool)>> = const { Cell::new(None) };
+    #[cfg(test)]
+    static UI_PREVIEW_ROOT: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+    #[cfg(test)]
+    static UI_PREVIEW_MINIMUM: Cell<bool> = const { Cell::new(false) };
     static UI_HISTORY: RefCell<Option<std::sync::Arc<Vec<voiceprompt_client_protocol::history::HistoryEntry>>>> =
         const { RefCell::new(None) };
     static UI_RECOVERY: RefCell<Option<std::sync::Arc<Vec<crate::NativeRecoveryInfo>>>> =
@@ -655,6 +668,8 @@ struct OwnedWindow(HWND);
 struct MainFontLifetime;
 impl Drop for MainFontLifetime {
     fn drop(&mut self) {
+        MAIN_LAYOUT_READY.with(|ready| ready.set(false));
+        MAIN_SECTION_STATE.with(|state| state.set(None));
         let font = MAIN_FONT.with(|slot| slot.borrow_mut().take());
         drop(font);
     }
@@ -998,6 +1013,7 @@ fn client_command(hwnd: HWND, command: usize) -> Result<(), NativeError> {
         PAUSE => ClientCommand::TogglePause,
         RECONNECT => ClientCommand::Reconnect,
         REFRESH_HISTORY => ClientCommand::RefreshHistory,
+        REFRESH_RECOVERY => ClientCommand::RefreshRecovery,
         CLEAR_HISTORY => {
             if unsafe {
                 MessageBoxW(
@@ -1156,10 +1172,14 @@ fn show_history_body(hwnd: HWND) -> Result<(), NativeError> {
         let original = api("Read original-copy control", unsafe {
             GetDlgItem(Some(hwnd), COPY_ORIGINAL as i32)
         })?;
+        let latest = api("Read manual-copy availability", unsafe {
+            GetDlgItem(Some(hwnd), COPY_LATEST as i32)
+        })?;
         unsafe {
             let _ = EnableWindow(
                 original,
-                entry.is_some_and(|entry| entry.raw_body.is_some()),
+                windows::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled(latest).as_bool()
+                    && entry.is_some_and(|entry| entry.raw_body.is_some()),
             );
         }
         Ok(())
@@ -1261,6 +1281,11 @@ fn refresh_client_ui(hwnd: HWND) -> Result<(), NativeError> {
             }
             Ok::<_, NativeError>(())
         })?;
+        if MAIN_LAYOUT_READY.with(Cell::get)
+            && MAIN_SECTION_STATE.with(Cell::get) != Some(section_state(hwnd)?)
+        {
+            relayout(hwnd)?;
+        }
         if !host.status.has_changed().map_err(|_| {
             NativeError::Verification("The client status channel stopped.")
         })? && UI_HISTORY.with(|history| history.borrow().is_some()) {
@@ -1295,15 +1320,15 @@ fn refresh_client_ui(hwnd: HWND) -> Result<(), NativeError> {
         set_text(hwnd, PAUSE, if host.policy.paused() { "Resume auto-copy" } else { "Pause auto-copy" })?;
         let selected = selected_id(hwnd)?;
         let original_available = selected_history_entry(&status.history, selected.as_deref()).is_some_and(|entry| entry.raw_body.is_some());
-        for id in [SIGN_IN, SIGN_OUT, COPY_LATEST, PAUSE, RECONNECT, COPY_SELECTED, COPY_ORIGINAL, RECOVER_SELECTED, DELETE_RECOVERY, OPEN_SETTINGS, REFRESH_HISTORY, CLEAR_HISTORY] {
+        for id in [SIGN_IN, SIGN_OUT, COPY_LATEST, PAUSE, RECONNECT, COPY_SELECTED, COPY_ORIGINAL, RECOVER_SELECTED, REFRESH_RECOVERY, DELETE_RECOVERY, OPEN_SETTINGS, REFRESH_HISTORY, CLEAR_HISTORY] {
             let control = api("GetDlgItem", unsafe { GetDlgItem(Some(hwnd), id as i32) })?;
             let enabled = if host.options.auth_only && !matches!(id, SIGN_IN | SIGN_OUT) {
                 false
             } else { match id {
                 SIGN_IN => status.auth != voiceprompt_client_protocol::state::AuthState::NotConfigured && !status.signing_in,
                 SIGN_OUT => status.auth == voiceprompt_client_protocol::state::AuthState::SignedIn || status.signing_in,
-                COPY_LATEST | COPY_SELECTED => !status.history.is_empty(),
-                COPY_ORIGINAL => original_available,
+                COPY_LATEST | COPY_SELECTED => host.clipboard_enabled && !status.history.is_empty(),
+                COPY_ORIGINAL => host.clipboard_enabled && original_available,
                 REFRESH_HISTORY => !status.history_refreshing && status.auth == voiceprompt_client_protocol::state::AuthState::SignedIn,
                 CLEAR_HISTORY => !status.history_refreshing && !status.history.is_empty(),
                 RECOVER_SELECTED | DELETE_RECOVERY => !status.recovery.is_empty() && !matches!(status.dictation.stage,
@@ -1337,84 +1362,192 @@ fn refresh_client_ui(hwnd: HWND) -> Result<(), NativeError> {
 }
 
 fn layout(hwnd: HWND, width: i32, height: i32) -> Result<(), NativeError> {
-    let dpi = unsafe { GetDpiForWindow(hwnd) }.max(96) as i32;
-    let scale = |value: i32| value * dpi / 96;
-    let left = scale(16);
-    let content = (width - left * 2).max(1);
-    for (id, x, y, w, h) in [
-        (STATUS_CONTROL, left, scale(12), content, scale(92)),
-        (SIGN_IN, left, scale(112), scale(80), scale(28)),
-        (SIGN_OUT, scale(102), scale(112), scale(80), scale(28)),
-        (COPY_LATEST, scale(188), scale(112), scale(94), scale(28)),
-        (PAUSE, scale(288), scale(112), scale(130), scale(28)),
-        (RECONNECT, scale(424), scale(112), scale(90), scale(28)),
-        (HISTORY_LIST, left, scale(152), content, scale(128)),
-        (
-            HISTORY_BODY,
-            left,
-            scale(292),
-            content,
-            (height - scale(510)).max(1),
-        ),
-        (
+    if !MAIN_LAYOUT_READY.with(Cell::get) || width == 0 || height == 0 {
+        return Ok(());
+    }
+    let positions =
+        crate::main_layout::MainLayout::calculate(width, height, crate::dpi::window_dpi(hwnd))
+            .map_err(NativeError::Verification)?;
+    let (page, showing_text) = section_state(hwnd)?;
+    let mut items = vec![
+        (STATUS_CONTROL, positions.status),
+        (MAIN_TABS, positions.tabs),
+        (SHOW_HISTORY_TEXT, positions.text_toggle),
+        (HISTORY_LIST, positions.history),
+        (HISTORY_BODY, positions.history),
+        (RECOVERY_HELP, positions.recovery_help),
+        (RECOVERY_LIST, positions.recovery),
+    ];
+    items.extend(
+        [SIGN_IN, SIGN_OUT, PAUSE, RECONNECT, OPEN_SETTINGS]
+            .into_iter()
+            .zip(positions.toolbar),
+    );
+    items.extend(
+        [
             COPY_SELECTED,
-            left,
-            (height - scale(208)).max(scale(310)),
-            scale(130),
-            scale(28),
-        ),
-        (
-            REFRESH_HISTORY,
-            scale(154),
-            height - scale(42),
-            scale(130),
-            scale(28),
-        ),
-        (
-            CLEAR_HISTORY,
-            scale(292),
-            height - scale(42),
-            scale(130),
-            scale(28),
-        ),
-        (
+            COPY_LATEST,
             COPY_ORIGINAL,
-            scale(154),
-            (height - scale(208)).max(scale(310)),
-            scale(130),
-            scale(28),
+            REFRESH_HISTORY,
+            CLEAR_HISTORY,
+        ]
+        .into_iter()
+        .zip(positions.history_actions),
+    );
+    items.extend(
+        [RECOVER_SELECTED, REFRESH_RECOVERY, DELETE_RECOVERY]
+            .into_iter()
+            .zip(positions.recovery_actions),
+    );
+    for (id, bounds) in items {
+        let child = api("GetDlgItem", unsafe { GetDlgItem(Some(hwnd), id as i32) })?;
+        api("Position adaptive native control", unsafe {
+            MoveWindow(child, bounds.x, bounds.y, bounds.width, bounds.height, true)
+        })?;
+        let visible = match id {
+            HISTORY_LIST => page == 0 && !showing_text,
+            HISTORY_BODY => page == 0 && showing_text,
+            SHOW_HISTORY_TEXT | COPY_SELECTED | COPY_LATEST | COPY_ORIGINAL | REFRESH_HISTORY
+            | CLEAR_HISTORY => page == 0,
+            RECOVERY_HELP | RECOVERY_LIST | RECOVER_SELECTED | REFRESH_RECOVERY
+            | DELETE_RECOVERY => page == 1,
+            _ => true,
+        };
+        unsafe {
+            let _ = ShowWindow(child, if visible { SW_SHOWNOACTIVATE } else { SW_HIDE });
+        }
+    }
+    MAIN_SECTION_STATE.with(|state| state.set(Some((page, showing_text))));
+    Ok(())
+}
+
+fn section_state(hwnd: HWND) -> Result<(isize, bool), NativeError> {
+    let tabs = api("Read native sections", unsafe {
+        GetDlgItem(Some(hwnd), MAIN_TABS as i32)
+    })?;
+    let page = unsafe { SendMessageW(tabs, controls::TCM_GETCURSEL, None, None) }.0;
+    if !matches!(page, 0 | 1) {
+        return Err(NativeError::Verification(
+            "No native History/Recovery section is selected.",
+        ));
+    }
+    let text_view = api("Read selected-text view toggle", unsafe {
+        GetDlgItem(Some(hwnd), SHOW_HISTORY_TEXT as i32)
+    })?;
+    let showing_text = unsafe { SendMessageW(text_view, BM_GETCHECK, None, None) }.0
+        == controls::BST_CHECKED.0 as isize;
+    Ok((page, showing_text))
+}
+
+fn relayout(hwnd: HWND) -> Result<(), NativeError> {
+    let mut bounds = RECT::default();
+    api("Read native client viewport", unsafe {
+        GetClientRect(hwnd, &mut bounds)
+    })?;
+    layout(hwnd, bounds.right - bounds.left, bounds.bottom - bounds.top)
+}
+
+fn create_sections(hwnd: HWND, instance: HINSTANCE) -> Result<(), NativeError> {
+    for (id, class, caption, style) in [
+        (
+            SHOW_HISTORY_TEXT,
+            w!("BUTTON"),
+            w!("Show selected text"),
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | WINDOW_STYLE(BS_AUTOCHECKBOX as u32),
         ),
         (
-            RECOVERY_LIST,
-            left,
-            (height - scale(166)).max(scale(310)),
-            content,
-            scale(82),
+            RECOVERY_HELP,
+            w!("STATIC"),
+            w!(
+                "Interrupted dictations are encrypted for this Windows user and retained for 48 hours (256 MiB limit). Recover finishes into History; it never pastes automatically. Use the original account and backend."
+            ),
+            WS_CHILD,
         ),
         (
-            RECOVER_SELECTED,
-            left,
-            (height - scale(76)).max(scale(400)),
-            scale(130),
-            scale(28),
-        ),
-        (
-            DELETE_RECOVERY,
-            scale(154),
-            (height - scale(76)).max(scale(400)),
-            scale(130),
-            scale(28),
-        ),
-        (
-            OPEN_SETTINGS,
-            left,
-            height - scale(42),
-            scale(130),
-            scale(28),
+            MAIN_TABS,
+            controls::WC_TABCONTROLW,
+            w!("Sections"),
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP,
         ),
     ] {
-        let child = api("GetDlgItem", unsafe { GetDlgItem(Some(hwnd), id as i32) })?;
-        api("MoveWindow", unsafe { MoveWindow(child, x, y, w, h, true) })?;
+        api("Create native History/Recovery sections", unsafe {
+            CreateWindowExW(
+                WINDOW_EX_STYLE::default(),
+                class,
+                caption,
+                style,
+                0,
+                0,
+                1,
+                1,
+                Some(hwnd),
+                Some(HMENU(id as *mut c_void)),
+                Some(instance),
+                None,
+            )
+        })?;
+    }
+    let tabs = api("Read section selector", unsafe {
+        GetDlgItem(Some(hwnd), MAIN_TABS as i32)
+    })?;
+    for (index, label) in ["History", "Recovery"].into_iter().enumerate() {
+        let mut text: Vec<_> = label.encode_utf16().chain([0]).collect();
+        let item = controls::TCITEMW {
+            mask: controls::TCIF_TEXT,
+            pszText: windows::core::PWSTR(text.as_mut_ptr()),
+            ..Default::default()
+        };
+        if unsafe {
+            SendMessageW(
+                tabs,
+                controls::TCM_INSERTITEMW,
+                Some(WPARAM(index)),
+                Some(LPARAM((&item as *const controls::TCITEMW) as isize)),
+            )
+        }
+        .0 == -1
+        {
+            return Err(NativeError::Verification(
+                "Could not insert a native section.",
+            ));
+        }
+    }
+    let mut previous = HWND_TOP;
+    for id in [
+        MAIN_TABS,
+        SHOW_HISTORY_TEXT,
+        HISTORY_LIST,
+        HISTORY_BODY,
+        COPY_SELECTED,
+        COPY_LATEST,
+        COPY_ORIGINAL,
+        REFRESH_HISTORY,
+        CLEAR_HISTORY,
+        RECOVERY_LIST,
+        RECOVER_SELECTED,
+        REFRESH_RECOVERY,
+        DELETE_RECOVERY,
+        SIGN_IN,
+        SIGN_OUT,
+        PAUSE,
+        RECONNECT,
+        OPEN_SETTINGS,
+    ] {
+        let child = api("Read native keyboard-order control", unsafe {
+            GetDlgItem(Some(hwnd), id as i32)
+        })?;
+        api("Apply native keyboard navigation order", unsafe {
+            SetWindowPos(
+                child,
+                Some(previous),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            )
+        })?;
+        previous = child;
     }
     Ok(())
 }
@@ -1438,6 +1571,56 @@ fn dispatch(
     lparam: LPARAM,
 ) -> Result<LRESULT, NativeError> {
     match message {
+        #[cfg(test)]
+        UI_PREVIEW_MESSAGE => {
+            let root = UI_PREVIEW_ROOT
+                .with(|slot| slot.borrow().clone())
+                .ok_or(NativeError::Verification("No owned visual fixture root."))?;
+            let count = CLIENT.with(|slot| {
+                let slot = slot.borrow();
+                let host = slot
+                    .as_ref()
+                    .ok_or(NativeError::Verification("No client for visual fixture."))?;
+                if !host.options.fixture_runtime
+                    || host.clipboard_enabled
+                    || host.options.installed
+                    || host.options.oauth_config.is_some()
+                    || host.status.borrow().auth
+                        != voiceprompt_client_protocol::state::AuthState::NotConfigured
+                {
+                    return Err(NativeError::Verification(
+                        "Visual fixture enabled a forbidden capability.",
+                    ));
+                }
+                Ok(host.status.borrow().history.len())
+            })?;
+            let foreground = unsafe { GetForegroundWindow() };
+            api("Name isolated native client preview", unsafe {
+                SetWindowTextW(hwnd, w!("Isolated Rust client preview - no physical ports"))
+            })?;
+            unsafe {
+                let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            }
+            if unsafe { GetForegroundWindow() } != foreground {
+                return Err(NativeError::Verification(
+                    "Read-only preview activated the window.",
+                ));
+            }
+            let mut bounds = RECT::default();
+            api("Read visual client viewport", unsafe {
+                GetClientRect(hwnd, &mut bounds)
+            })?;
+            let data = serde_json::to_vec(&serde_json::json!({"scope":"native-full-client-ui-preview","pid":std::process::id(),
+                "window":hwnd.0 as usize,"history_count":count,"physical_ports":false,"auth":"not_configured","dpi":crate::dpi::window_dpi(hwnd),
+                "client_width":bounds.right-bounds.left,"client_height":bounds.bottom-bounds.top,"foreground_unchanged":true}))
+                .map_err(|_|NativeError::Verification("Encode visual client readiness failed."))?;
+            atomic_write(
+                &root.join("ui-preview-ready.json"),
+                &data,
+                WriteMode::CreateNew,
+            )?;
+            Ok(LRESULT(0))
+        }
         FIXTURE_READY_MESSAGE => {
             if let Some((path, data)) = FIXTURE_READY.with(|slot| slot.borrow_mut().take()) {
                 atomic_write(&path, &data, WriteMode::CreateNew)?;
@@ -1488,6 +1671,7 @@ fn dispatch(
                 (COPY_ORIGINAL, w!("Copy original")),
                 (RECOVER_SELECTED, w!("Recover selected")),
                 (DELETE_RECOVERY, w!("Delete recovery")),
+                (REFRESH_RECOVERY, w!("Refresh")),
                 (OPEN_SETTINGS, w!("Settings")),
                 (REFRESH_HISTORY, w!("Refresh History")),
                 (CLEAR_HISTORY, w!("Clear History")),
@@ -1572,6 +1756,13 @@ fn dispatch(
                     );
                 }
             }
+            create_sections(hwnd, instance)?;
+            #[cfg(test)]
+            if UI_PREVIEW_ROOT.with(|slot| slot.borrow().is_some()) {
+                api("Queue isolated native client preview", unsafe {
+                    PostMessageW(Some(hwnd), UI_PREVIEW_MESSAGE, WPARAM(0), LPARAM(0))
+                })?;
+            }
             Ok(LRESULT(0))
         }
         WM_SIZE => {
@@ -1580,6 +1771,36 @@ fn dispatch(
             layout(hwnd, width, height)?;
             Ok(LRESULT(0))
         }
+        WM_GETMINMAXINFO => {
+            if lparam.0 == 0 {
+                return Err(NativeError::Verification(
+                    "Missing native minimum-size information.",
+                ));
+            }
+            let mut limits = unsafe { std::ptr::read_unaligned(lparam.0 as *const MINMAXINFO) };
+            let dpi = crate::dpi::window_dpi(hwnd) as i32;
+            limits.ptMinTrackSize = POINT {
+                x: 560 * dpi / 96,
+                y: 420 * dpi / 96,
+            };
+            unsafe {
+                std::ptr::write_unaligned(lparam.0 as *mut MINMAXINFO, limits);
+            }
+            Ok(LRESULT(0))
+        }
+        WM_NOTIFY => {
+            if lparam.0 == 0 {
+                return Err(NativeError::Verification(
+                    "Missing native section notification.",
+                ));
+            }
+            let header = unsafe { std::ptr::read_unaligned(lparam.0 as *const controls::NMHDR) };
+            if header.idFrom == MAIN_TABS && header.code == controls::TCN_SELCHANGE {
+                relayout(hwnd)?;
+                return Ok(LRESULT(0));
+            }
+            Ok(unsafe { DefWindowProcW(hwnd, message, wparam, lparam) })
+        }
         WM_COMMAND => {
             let id = wparam.0 & 0xffff;
             let notification = (wparam.0 >> 16) & 0xffff;
@@ -1587,6 +1808,8 @@ fn dispatch(
                 unsafe {
                     let _ = ShowWindow(hwnd, SW_HIDE);
                 }
+            } else if id == SHOW_HISTORY_TEXT && notification == BN_CLICKED as usize {
+                relayout(hwnd)?;
             } else if id == HISTORY_LIST && notification == LBN_SELCHANGE as usize {
                 show_history_body(hwnd)?;
             } else if id == HISTORY_LIST && notification == LBN_DBLCLK as usize {
@@ -1926,6 +2149,16 @@ pub fn run_tray(options: TrayOptions) -> Result<(), NativeError> {
     api("SetProcessDpiAwarenessContext", unsafe {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)
     })?;
+    api(
+        "Initialize native tab controls",
+        unsafe {
+            controls::InitCommonControlsEx(&controls::INITCOMMONCONTROLSEX {
+                dwSize: size_of::<controls::INITCOMMONCONTROLSEX>() as u32,
+                dwICC: controls::ICC_TAB_CLASSES,
+            })
+        }
+        .ok(),
+    )?;
     let instance = HINSTANCE(
         api("GetModuleHandleW", unsafe {
             GetModuleHandleW(PCWSTR::null())
@@ -1965,8 +2198,8 @@ pub fn run_tray(options: TrayOptions) -> Result<(), NativeError> {
             WS_OVERLAPPEDWINDOW,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
-            570,
-            730,
+            720,
+            540,
             None,
             None,
             Some(instance),
@@ -1978,17 +2211,38 @@ pub fn run_tray(options: TrayOptions) -> Result<(), NativeError> {
     icons.apply(hwnd);
     update_main_font(hwnd)?;
     let dpi = crate::dpi::window_dpi(hwnd) as i32;
+    let mut work_area = RECT::default();
+    api("Read initial native work area", unsafe {
+        SystemParametersInfoW(
+            SPI_GETWORKAREA,
+            0,
+            Some((&mut work_area as *mut RECT).cast()),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS::default(),
+        )
+    })?;
+    #[cfg(test)]
+    let desired = if UI_PREVIEW_MINIMUM.with(Cell::get) {
+        (560, 420)
+    } else {
+        (720, 540)
+    };
+    #[cfg(not(test))]
+    let desired = (720, 540);
+    let width = (desired.0 * dpi / 96).min(work_area.right - work_area.left);
+    let height = (desired.1 * dpi / 96).min(work_area.bottom - work_area.top);
     api("Size native client for initial DPI", unsafe {
         SetWindowPos(
             hwnd,
             None,
-            0,
-            0,
-            570 * dpi / 96,
-            730 * dpi / 96,
-            SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+            work_area.left + (work_area.right - work_area.left - width) / 2,
+            work_area.top + (work_area.bottom - work_area.top - height) / 2,
+            width,
+            height,
+            SWP_NOZORDER | SWP_NOACTIVATE,
         )
     })?;
+    MAIN_LAYOUT_READY.with(|ready| ready.set(true));
+    relayout(hwnd)?;
     if installed && unsafe { SetTimer(Some(hwnd), INSTANCE_TIMER, 100, None) } == 0 {
         return Err(NativeError::Api(
             "Set compatible instance timer",
@@ -2160,6 +2414,79 @@ pub fn run_tray(options: TrayOptions) -> Result<(), NativeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "Bounded actual full-client visual fixture, physical/account ports disabled. Launch through UI tools in an explicitly marked signed-out synthetic root."]
+    fn manual_native_client_visual_preview() {
+        run_native_client_preview(false);
+    }
+
+    #[test]
+    #[ignore = "Bounded minimum-reference-size full-client visual fixture, physical/account ports disabled. Launch through UI tools in a fresh marked synthetic root."]
+    fn manual_native_client_minimum_visual_preview() {
+        run_native_client_preview(true);
+    }
+
+    fn run_native_client_preview(minimum: bool) {
+        let root = std::env::current_dir().unwrap();
+        crate::fixtures::validate_scope(&root, None, crate::fixtures::SCOPE).unwrap();
+        let marker: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(root.join("migration-fixture.json")).unwrap())
+                .unwrap();
+        let key = marker["instance_key"].as_str().unwrap().to_owned();
+        for name in [
+            "ui-preview-ready.json",
+            "ui-preview-closed.json",
+            "ui-host-ready.json",
+        ] {
+            assert!(
+                !root.join(name).exists(),
+                "A visual client fixture root cannot be reused."
+            );
+        }
+        let before_settings = std::fs::read(root.join("settings.json")).unwrap();
+        let before_history = std::fs::read(root.join("history.json")).unwrap();
+        UI_PREVIEW_MINIMUM.with(|value| value.set(minimum));
+        UI_PREVIEW_ROOT.with(|slot| *slot.borrow_mut() = Some(root.clone()));
+        run_tray(TrayOptions {
+            instance_key: key,
+            ready_file: None,
+            fixture_ready_file: Some(root.join("ui-host-ready.json")),
+            run_for_seconds: Some(180),
+            self_test: false,
+            client: Some(ClientOptions {
+                state_directory: root.clone(),
+                oauth_config: None,
+                clipboard_enabled: false,
+                installed: false,
+                fixture_runtime: true,
+                auth_only: false,
+            }),
+        })
+        .unwrap();
+        UI_PREVIEW_ROOT.with(|slot| *slot.borrow_mut() = None);
+        UI_PREVIEW_MINIMUM.with(|value| value.set(false));
+        assert_eq!(
+            std::fs::read(root.join("settings.json")).unwrap(),
+            before_settings
+        );
+        assert_eq!(
+            std::fs::read(root.join("history.json")).unwrap(),
+            before_history
+        );
+        assert!(!root.join("tokens.bin").exists());
+        atomic_write(
+            &root.join("ui-preview-closed.json"),
+            serde_json::json!({
+                "scope":"native-full-client-ui-preview","pid":std::process::id(),"closed":true,
+                "physical_ports":false,"settings_history_unchanged":true,"token_cache_absent":true,
+            })
+            .to_string()
+            .as_bytes(),
+            WriteMode::CreateNew,
+        )
+        .unwrap();
+    }
 
     #[test]
     fn original_copy_tracks_selected_row_presence_including_empty_original_like_wpf() {

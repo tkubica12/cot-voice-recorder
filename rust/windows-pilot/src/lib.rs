@@ -67,6 +67,8 @@ mod dictation_ui;
 #[cfg(windows)]
 mod hotkeys;
 #[cfg(windows)]
+mod main_layout;
+#[cfg(windows)]
 mod microphone;
 #[cfg(windows)]
 mod settings_ui;
