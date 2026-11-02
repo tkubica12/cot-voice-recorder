@@ -122,6 +122,7 @@ class FixtureProcess:
         )
         environment["VOICEPROMPT_GOOGLE_DESKTOP_CLIENT"] = str(forbidden_oauth)
         environment["VOICEPROMPT_FIXTURE_PROGRESS"] = "1" if diagnostics else "0"
+        environment["DOTNET_DISABLE_GUI_ERRORS"] = "1"
         started = time.perf_counter()
         try:
             self.process = subprocess.Popen(

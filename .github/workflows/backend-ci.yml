@@ -5,11 +5,17 @@ on:
     paths:
       - "backend/**"
       - "rust/cloud/**"
+      - "scripts/backend_fixture.py"
+      - "scripts/measure_backend.py"
+      - "scripts/tests/test_backend_measurement_fixture.py"
       - ".github/workflows/backend-ci.yml"
   pull_request:
     paths:
       - "backend/**"
       - "rust/cloud/**"
+      - "scripts/backend_fixture.py"
+      - "scripts/measure_backend.py"
+      - "scripts/tests/test_backend_measurement_fixture.py"
       - ".github/workflows/backend-ci.yml"
   workflow_dispatch: {}
 
@@ -76,3 +82,21 @@ jobs:
 
       - name: Real signed-token Rust HTTP versus current FastAPI contract
         run: uv run --locked python ../rust/cloud/tests/test_http_parity.py --oracle ../rust/target/release/examples/cloud_contract
+
+      - name: Protocol measurement safeguards and actual authenticated factories
+        run: |
+          uv run --locked ruff check --config pyproject.toml --ignore E402 ../scripts/backend_fixture.py ../scripts/measure_backend.py ../scripts/tests/test_backend_measurement_fixture.py
+          uv run --locked ruff format --check --config pyproject.toml ../scripts/backend_fixture.py ../scripts/measure_backend.py ../scripts/tests/test_backend_measurement_fixture.py
+          uv run --locked python ../scripts/tests/test_backend_measurement_fixture.py --rust ../rust/target/release/examples/cloud_contract
+
+      - name: Controlled Linux in-memory protocol profile, not deployed cloud acceptance
+        timeout-minutes: 10
+        run: |
+          uv run --locked python ../scripts/measure_backend.py --rust ../rust/target/release/examples/cloud_contract --output "$RUNNER_TEMP/backend-protocol-performance.json" --source-revision "$GITHUB_SHA"
+
+      - name: Preserve every protocol measurement sample and scoped verdict
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-protocol-performance
+          path: ${{ runner.temp }}/backend-protocol-performance.json
+          if-no-files-found: error

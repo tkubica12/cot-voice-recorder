@@ -157,6 +157,16 @@ cargo build --manifest-path rust\Cargo.toml --offline --locked --release -p voic
 backend\.venv\Scripts\python.exe rust\cloud\tests\test_http_parity.py --oracle rust\target\release\examples\cloud_contract.exe
 ```
 
+`backend-ci` also records a Linux **authenticated in-memory protocol** performance
+profile using this HTTP example and the actual FastAPI/Uvicorn factory. Both use
+real synthetic RS256/JWKS verification and the same recording/upload/audit workload.
+The artifact includes all30 starts per implementation, three load series, RSS
+observations and per-operation p95 thresholds. AI, realtime, workers, Azure and
+production/container limits are explicitly excluded: this is not full backend
+performance acceptance. The collector refuses normal application binary names,
+personal environment configuration and overwritten/partial report publication.
+See `scripts\measure_backend.py` and the [acceptance plan](../../docs/rust-migration.md).
+
 The loopback-only server uses real RS256 verification against an in-memory
 generated-key local JWKS. The probe compares live Rust HTTP status/headers,
 structured errors, lifecycle and audit/history shapes with the actual FastAPI

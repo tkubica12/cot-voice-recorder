@@ -1115,3 +1115,33 @@ actual full-client fixture guard testy prosly.
 Kontrolovane signed-out mereni frozen631c11f stale bezi: vsech30+30 startu
 a prvni paired301-point memory serie jsou sebrany. Partial data nejsou finalni
 C02 verdict; zbyvajici serie, CI pricina a ostatni acceptance brany trvaji.
+
+## Linux authenticated protocol performance fixture
+
+Novy kontrolovany profil spousti actual FastAPI factory pres Uvicorn a actual
+Axum router pres existing cloud_contract example. Obe strany pouzivaji real
+RS256/JWKS verifier se stejnou generovanou autoritou, nikoli StaticTokenVerifier.
+No-token, forged signature a validne podepsany token s nepovolenym e-mailem
+musi byt odmitnuty.
+Pouzivaji se vyhradne loopback endpoints, memory data ports a identicke vstupy;
+model/refinement/realtime endpoints jsou na obou stranach explicitne unavailable.
+Nespousti se worker, cleanup, Azure probes, managed identity ani placeny model.
+Normalni aplikacni EXE nejsou pripustnym fixture binary.
+
+scripts/measure_backend.py meri30 alternating startu az po HTTP readiness a3
+paired serie po100 flows/700 operacich. Create/get/upload/complete/archive/
+get-transcript/list overuji i skuteckou ulozenou odpoved a fixed48h audit.
+RSS se cte pouze z vlastnich Linux PID po kazde serii; jde o kratke post-load
+pozorovani, nikoli petiminutovy idle nebo hodinovy test. Meri se vsechny serie/
+operace;50% RSS/start a110% API prahy se nesnizuji. Nezmeneny source/binary/lock
+bundle, presne pocty vzorku, nearest-rank p95 a atomic no-overwrite publikace
+jsou kontrolovany. Kazdy raw sample je v CI artifactu.
+
+Pet local safeguards/actual HTTP factory testu je zapojeno do backend-ci,
+ktery zachovava approved locked Python feed. Linux collector se teprve provede
+v tomto disposable runneru; lokalni Docker daemon ani Linux host neni dostupny.
+Ani uspesny profile verdict neprokazuje plneho production API RSS/readiness,
+ACA0.5vCPU limity, private Azure latenci, worker nebo AI/relay. Proto ma vysledek
+scope authenticated-in-memory-http-no-ai-realtime a whole_migration_acceptance=false.
+Neni to feature-matched kompletni cloud C01/C02 ani nahrazeni jejich dosud
+chybejicich mereni a lidskych hranic.
