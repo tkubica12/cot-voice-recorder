@@ -1909,3 +1909,24 @@ Client protocol suites71 cases a workspace Clippy/fmt prosly. Aktualni
 per-user installer byl pouze znovu SESTAVEN (ne spusten/instalovan),
 SHA256aea9b71afbc76cc8271dc815945525f1e4f41baeee173465ccf218a811442d6e.
 Obsah stale pouze explicitni native EXE+icon, zadny OAuth config/secrets.
+
+b27bba6 full Windows/Linux/MSRV/container RustCI41436867879 nasledne PASS.
+0b7d992 callback privacy RustCI41438922788 jeste bezi.
+
+Nejmensi dalsi physical port case byl konkretne predan koordinatorovi k
+NOVEMU souhlasu: jeden fixed-marker clipboard overwrite a jedine automatic
+Ctrl+V pres skutecny DesktopGuard do vlastniho prazdneho test edit pole.
+Uzivatel by osobne klikl Run once a1s nemenil fokus/klavesy; control
+vlastniho PID/window/edit focusu, modifiers a clipboard sequence predchazi
+copy/paste, pri selhani zadny retry. Stary clipboard se necte/nezalohuje/
+neobnovuje, nebezi microphone/hotkeys/account/backend a neni Enter/Save.
+Dosavadni Google, mic ani manual-paste souhlasy to NEPOKRYVAJI.
+
+Zatim pouze compiled opt-in ignored test-only fixture, ne provedena akce.
+Vyzaduje fresh explicit current-root marker a exclusive result pred
+vytvorenim okna; opakovany root se odmitne, normalni installer jej
+neobsahuje. Native49 regular +7 startup tests a workspaceClippy/fmt
+prosly,4 native manual/long fixtures zustaly ignored. Novy ownership/
+exclusive-result guard nepouziva real clipboard ani UI. Skutecny manual
+test se do ziskani presneho souhlasu NESPOUSTI; neprokazuje hold/toggle/
+whole-controller hour nebo celou physical akceptaci.

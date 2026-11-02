@@ -24,7 +24,11 @@ pub fn validate_auth(root: &Path, key: Option<&str>) -> Result<(), NativeError> 
     Ok(())
 }
 
-fn validate_scope(root: &Path, key: Option<&str>, scope: &str) -> Result<(), NativeError> {
+pub(crate) fn validate_scope(
+    root: &Path,
+    key: Option<&str>,
+    scope: &str,
+) -> Result<(), NativeError> {
     if !root.is_absolute() || !root.is_dir() {
         return Err(NativeError::InvalidArgument(
             "Fixture state must be an explicit existing absolute directory.",

@@ -108,6 +108,20 @@ in-memory bearer vending. It does **not** call Google's token-revocation API.
 Do not claim remote revocation, production-backend acceptance or automatic
 dictation acceptance from this deliberately narrower test.
 
+The separately ignored libtest
+`desktop::manual_tests::manual_native_guarded_paste_once` is **not** authorized
+by the Google fixture, ordinary CI, or a previous manual clipboard test. It
+needs a new, explicit one-overwrite/one-automatic-Ctrl+V permission and a fresh
+current directory marked with scope `single-native-guarded-paste-fixture`.
+No window is created without that ownership marker; an existing result rejects
+reuse. The user must personally click **Run once**, then leave focus and keys
+alone for one second. Only the test's own initially blank field can be targeted.
+It waits 500 ms, checks focus/modifiers/clipboard sequence, publishes only the
+fixed synthetic marker, and invokes the actual `DesktopGuard` once without
+Enter, Save, retries, microphone, global hotkeys, accounts or backend access.
+The old clipboard is never read, backed up or restored. The normal installer
+does not contain this test-only code.
+
 Clipboard writes use immediate `CF_UNICODETEXT` publication from moveable global
 memory, transferring ownership only after successful `SetClipboardData`.
 Bounded retries apply only to a busy clipboard. Pause, suspended/sign-out state

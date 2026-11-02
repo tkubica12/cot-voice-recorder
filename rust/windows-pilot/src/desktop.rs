@@ -135,6 +135,10 @@ fn paste_inputs() -> [INPUT; 4] {
 }
 
 #[cfg(test)]
+#[path = "desktop_manual_tests.rs"]
+mod manual_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     #[test]
