@@ -15,8 +15,10 @@ zustat u klasicke ACA; na ACA Express se v teto migraci neprechazi.
 | Audio jadro a C#/Python parity | Implementovano a overeno |
 | Zdroj externich crates | crates.io vyslovne schvalene jako projektova vyjimka |
 | Nativni Windows zaklad | Tray, izolovana instance a DPAPI implementovany; lokalni self-test a C# DPAPI parity prosly |
-| Mereni nativniho zakladu | Dokonceno: 30 startu a 301 vzorku za pet minut; vysledky nize |
-| CI nativniho inkrementu | Windows i Linux prosly na commitu `4b040a8` |
+| Mereni Windows klienta | Full-runtime signed-out30+30 startu a3 paired301-point idle serie overeny; current p95Rust496.905ms a meanprivate3.484MiB, vsechny scoped cile PASS |
+| Microphone readiness | Jeden actual240ms probe a samostatne schvalena30+30 paired serie prosly; first-PCM p95Rust80.75% C#baseline, bez audio souboru/uploadu |
+| Engine longevity | Actual3600s synthetic PCM/real50min rotation,115200000 exact bytes; worst idle growth1.645MiB<10MiB, engine-only PASS |
+| CI nativniho inkrementu | Current Windows/Linux, MSRV1.85, non-root container a pure telemetry guards prosly; nejde o schvaleni real-world cutoveru |
 | OAuth/token-store/PubSub klient | Native sign-in/out, realtime/history/clipboard a explicit installed-mode wiring implementovany; skutecny Google/clipboard E2E zbyva |
 | Diktovani/recovery UI | Native microphone/hotkeys/overlay/paste controller, oba enginy, journal, polishing a outbox implementovany; real-world a rozsahlejsi fault/E2E akceptace zbyva |
 | History cache | JSON/retence/200 entries, atomicka persistence, native list/text a manual copy latest/selected/original implementovany; C# file parity overena |
@@ -24,8 +26,9 @@ zustat u klasicke ACA; na ACA Express se v teto migraci neprechazi.
 | Rust cloud API, worker, cleanup | API/AI/PubSub/live relay, processors/finalization/queue loop, cleanup, bootstrap/CLI a source-only image wiring implementovany; image CI proslo, uplna akceptace zbyva |
 | Hosting | Klasicka ACA zustava: API, KEDA queue worker a hourly cleanup Job; Express byl uzivatelem zrusen |
 
-Nativni zaklad neni kompletni klient. Jeho rychlost a pamet nelze porovnat
-s plnohodnotnym C# klientem jako dukaz hotove migrace.
+Puvodni foundation mereni neprokazuje kompletniho klienta a nelze je pouzit
+jako nahradu nyni explicitne vymezeneho full-runtime signed-out profilu.
+Ani jeho PASS sam o sobe neprokazuje full signed-in/physical/cloud akceptaci.
 
 Windows je silnejsi kandidat. Jednorazovy snimek beziciho procesu z 1. listopadu
 2026 ukazal priblizne 163 MiB working setu a 201 MiB private bytes. Neni to
@@ -1559,3 +1562,93 @@ Tento druhy konkretni souhlas je spotrebovany. Serie nemeri jine vstupy,
 hotkey/focus/paste ani full-client-hour/network chovani. Proto zustava
 whole_migration_acceptance=false; dalsi fyzicke scenare nelze automaticky
 zopakovat nebo pripojit k drivejsimu mikrofonimu opravneni.
+
+## Aktualni full-runtime signed-out client recheck
+
+Corrected readable-readiness collector0740c18 dokoncil nad frozen runtimef572599
+vsech30+30 startu,3 paired serie po301 idle samples a stejnych200 history
+entries. Nezavisle bylo overeno vsech1806 sample values, presne casy/PID/
+scope/image i cely C#managed/NAudio/icon bundle a identicky corpus.
+
+| Full-runtime signed-out profil | C# | Rust |
+| --- | --- | --- |
+| Process -> readable ready, p95 | 2543.1742ms | 496.9050ms |
+| Mean private, MiB | 94.846 | 3.484 |
+| Peak private, MiB | 107.148 | 4.297 |
+
+Paired mean private ratiosRust/C# jsou3.8734%,3.4789%,3.6725%; kazda serie
+splnila puvodni50% cil a80MiB maximum. Startup splnil<=1s i<=70%baseline.
+Artifact client-comparison-readable-0740c18/full-client-signed-out-comparison.json
+SHA2567668994d5c818e086d49d6d6acace3716d48db883c07cb67292f16801cddd886.
+Jde o sdileny uzivatelem schvaleny stroj, nikoli exkluzivni idle OS nebo cold
+cache. Native client sam v tomto profilu microphone/clipboard/network nepouzival;
+samostatne schvalene kratke physical count-only probes probehly na hostu az
+po dokonceni startup trials. Vsechny raw vzorky vcetne techto host podminek
+zustaly zachovane, zadna serie/outlier se nevyloucila. Full migration accepted
+status je stale false a signed-in/cloud/full-controller-hour nebyl domyslen.
+
+## Jediny povoleny manual clipboard UI workflow
+
+Po samostatnem souhlasu uzivatele byla spustena explicit-root/IPC izolovana
+Rust aplikace bez OAuth, dictation shortcuts nebo autostartu. Owned process
+image/argumenty byly overene; zadna osobni cache/history/token se nepouzila.
+Computer Use provedl jednu manual Copy latest akci nad presnym synthetic
+markerem. Pred paste se overoval POUZE clipboard-owner PID/sequence, ne obsah:
+owner byl vlastniPID30728/sequence197. Stary clipboard se necetl/zaloha/
+restore neprovadely a dalsi clipboard overwrite se nezadal.
+
+Dva keyboard-dispatch pokusy server odmitl jako no_viable_candidate, aktualni
+pole bylo nadale prazdne; shell/SendInput/WM_PASTE workaround se nepouzil.
+Uzivatel pak na konkretni handoff provedl jednoCtrl+V do vlastniho neulozeneho
+Settings Backend URL pole. Agent read-only accessibility tree overil Value
+presne "VoicePrompt synthetic clipboard test 2026" a Settings zavrel bez Save.
+Persistovana synthetic settings/history zustaly byte/hash-exact a token cache
+nevznikla. Test nic neposilal, nepouzil Enter, microphone/hotkeys ani cloud.
+
+Vysledek je passed_with_manual_paste_assistance. Prokazuje native History/
+manual-copy/clipboard a skutecny standard paste do vlastniho UI, nikoli
+automaticky dictation paste/focus-guard nebo podporu bezpecneho foreground
+dispatch na tomto hostu. Scope/souhlas je spotrebovany; dalsi copy/paste se
+neprovadi a podle schvaleneho dusledku zustava marker v clipboardu bez restore.
+Own fixture ma600s bounded lifetime; po skryti okna se overi jeho skutecny exit.
+
+Owned UI process30728 nasledne skutecne skoncil na svem bounded limitu;
+matching frozen executable uz nebezi a agent nepouzil force-kill ani neukoncil
+osobni aplikaci. Explicitni synthetic input/result soubory zustaly v session
+artifacts jako evidence, nikoli user data/autostart/installed konfigurace.
+
+Code checkpoint cc3367b ma successful vsechny Rust Windows/Linux, obeMSRV1.85
+a non-root container jobs i pure physical-telemetry guard:
+[rust-ci41417561087](https://github.com/tkubica12/cot-voice-recorder/actions/runs/41417561087).
+First-PCM instrumentation07ac31e ma navic successful standalone Windows CI.
+Aktualni runtime se proti poslednimu frozen client/engine mereni menil jen
+v explicitne ignored manual telemetry probe; normalni installed/client logika
+se temi physical testy ani collector zmenami nemenila.
+
+## Zbyvajici real-world hranice po techto dukazech
+
+Implementace Windows/cloud je source-only propojena a povolene bounded
+synthetic/reference/physical checks uvedene vyse jsou skutecne provedene.
+To stale neni vyrok "vse perfektne otestovano" nebo produkcni cutover.
+Zbyva live Google sign-in/out a signed-in client traffic, full GUI/controller
+hodinovy lifecycle, actual automatic hold/toggle dictation focus-guard/paste
+chovani a screen-reader/multi-DPI/keyboard akceptace. Dosavadni manual paste
+potreboval lidskou asistenci, proto nezastira safe keyboard-dispatch limit hostu.
+Actual per-user installer upgrade/rollback ani real private Azure/UAMI runtime/
+distributed fault/cutover nebyly povolene/provedene; zadna resource/access/
+topology/deploy nebo placena AI zmena se neudelala.
+
+Tento pocitac je uzivatelem schvaleny a dalsi profil se nevyzaduje. Dalsi
+fyzicke/account/install/cloud akce ovsem nelze pripojit ke spotrebovanym
+jednorazovym mikrofon/clipboard souhlasum. Pokracovani v techto branach
+vyzaduje konkretni samostatny scenar a odpovidajici opravneni/prostredi,
+nikoli dalsi odhad nebo preznaceni partial evidence jako kompletniho PASS.
+
+Dve dalsi non-physical native DPI regressions pouzivaji pouze vlastni hidden
+STATIC/EDIT/BUTTON controls: exact96->144->192->96 layout roundtrip, actual
+system-message font heights a WM_GETFONT bindings, suggested bounds bez
+zobrazeni/aktivace. Nemeni OS scale, nepresouvaji viditelne user windows a
+nepouzivaji keyboard,clipboard nebo zarizeni.235 regularnich Windows Rust
+testu a strict fmt/Clippy proslo; tri vyrazne oznacene long/physical fixtures
+zustaly ignored. To je konkretni automaticky DPI dukaz, ne tvrzeni o realnem
+screen-readeru nebo vsech monitorech/keyboard cestach.

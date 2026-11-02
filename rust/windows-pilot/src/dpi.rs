@@ -8,6 +8,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SendMessageW, SetWindowPos, WM_SETFONT,
 };
 
+#[cfg(test)]
+#[path = "dpi_tests.rs"]
+mod tests;
+
 pub(crate) struct DpiFont {
     handle: HFONT,
     pub dpi: u32,
