@@ -1411,3 +1411,27 @@ Rozsireny actual v4 file-lock test nejprve prokaze viditelnou chybu, pak
 same-cursor retry, nasledne samostatny crash/reopen retry; pending audio
 zustava zachovane v kazde fazi. Vsech devet native store testu a strict
 Clippy/fmt proslo. Prave bezici25f0e21 frozen hour retry se nemeni.
+
+## Preruseni hostu a restart-resilient acceptance
+
+Po resume08:24 nebyla predchozi tool session dostupna a owned native28640
+ani collector uz nebezely. Posledni minute checkpoint mel1560s/49920000 PCM
+bytes; nevznikl capture sampler report, engine completion ani after-idle.
+Exact zdroj ukonceni nelze z techto dat prokazat. Run25f0e21 je proto
+incomplete_interrupted, nikoli novy engine PASS/FAIL; originalni explicitni
+state a interruption.json zustaly v session artifacts zachovane.
+
+Sourcef572599 uz ma successful Windows/Linux/MSRV/container CI vcetne
+linear release, same-cursor/crash retry, short collector smoke a accelerated
+volume validation. Aktualni release fixture byl znovu frozen,3s smoke a oba
+failure/pipe guards prosly. Nova bounded shell chain durable-acceptance-f572599
+je explicitne detached, protoze musi prezit prave pozorovany zanik app/tool
+procesu; nejde o nekonecnou sluzbu, novou session nebo scheduled automatizaci.
+Provadi real hour301/3601/301 a jen po uspechu nove signed-out30+30/3x301
+porovnani f572599 bundle. Dva profily jsou sekvencni, ne soubezne; nepridavaji
+physical/auth/clipboard/Azure ani installed vstup.
+
+Dosavadni nekompletni hour runs se neprepisuji ani nevykazuji jako uspech.
+Vysledky nove chain se overi z raw evidence a skuteckych procesnich identit,
+nikoli z pouheho faktu, ze command byl odstartovan. Celkovy migracni accepted
+status zustava false, dokud nejsou dokonceny zbyle povolene i lidske brany.
