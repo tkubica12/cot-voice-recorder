@@ -176,9 +176,12 @@ fn read_target(
     Ok(target.to_owned())
 }
 
-fn reply(stream: &mut TcpStream, status: &str, body: &str) -> Result<(), LoopbackError> {
+fn reply(stream: &mut TcpStream, status: &str, body: &'static str) -> Result<(), LoopbackError> {
+    let body = format!(
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>VoicePrompt authorization callback</title></head><body><p>{body}</p></body></html>"
+    );
     let response = format!(
-        "HTTP/1.1 {status}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n{body}",
+        "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: default-src 'none'; frame-ancestors 'none'\r\nX-Content-Type-Options: nosniff\r\n\r\n{body}",
         body.len()
     );
     stream

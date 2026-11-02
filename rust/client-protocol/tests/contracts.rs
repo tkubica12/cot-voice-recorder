@@ -240,7 +240,31 @@ fn loopback_keeps_its_port_and_validates_before_success_reply() {
         let result =
             listener.wait_for_code("expected", Duration::from_secs(5), &AtomicBool::new(false));
         assert_eq!(result.is_ok(), valid);
-        assert!(client.join().unwrap().contains(status));
+        let response = client.join().unwrap();
+        assert!(response.contains(status));
+        assert!(response.contains("Content-Type: text/html; charset=utf-8\r\n"));
+        assert!(response.contains("Cache-Control: no-store\r\n"));
+        assert!(response.contains("Referrer-Policy: no-referrer\r\n"));
+        assert!(
+            response.contains(
+                "Content-Security-Policy: default-src 'none'; frame-ancestors 'none'\r\n"
+            )
+        );
+        let (headers, page) = response.split_once("\r\n\r\n").unwrap();
+        let length: usize = headers
+            .lines()
+            .find_map(|line| line.strip_prefix("Content-Length: "))
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert_eq!(length, page.len());
+        assert!(page.contains("<title>VoicePrompt authorization callback</title>"));
+        for secret in ["synthetic-code", state, "code=", "state="] {
+            assert!(
+                !page.contains(secret),
+                "The callback page must not echo query material."
+            );
+        }
     }
     let listener = LoopbackListener::bind().unwrap();
     assert!(matches!(

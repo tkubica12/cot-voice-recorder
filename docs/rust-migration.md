@@ -1864,3 +1864,48 @@ backend/device-free composition/rejected commands a joined local sign-out
 shutdown nad pouze syntetickou DPAPIcache. Manual microphone/engine-hour/
 Azurite cases zustaly v obycejnem behu ignored; zadny live login se v
 unit testech nespustil.
+
+Jeden samostatne schvaleny b27bba6 live Google scenar potom skutecne PASS:
+user osobne dokoncil browser account/consent a potvrdil "Prihlaseno".
+Own native PID10868/root+IPC/window byly nezavisle overene proti frozen
+binary SHA256b233961943ed7453ae65c6bc692a7a24817cb9acb2537d0312726fea659a96d9;
+UI preslo SignedOut -> SignedIn -> SignedOut. Google callback/token exchange,
+actual DPAPI readback ID+refresh tokenu a dostupny ID bearer prosly; po
+jedinem UI Sign out byla owncache odstranena a bearer vendovani vratilo
+None. Backend/realtime/device/outbox composition nevznikla a Google revoke
+request nebyl poslan. Osobni cache/history/recovery nebyly cteny ani meneny.
+
+App a quit helper skoncily vlastnim normalnim izolovanym IPC, reportclosed
+je true, own settings zustaly byte-exact a zadny own tokens/history/recovery
+soubor nezustal. Exit code UI-shell-launched procesu nebyl pozorovan a
+neodhaduje se. Native safe report google-auth-b27bba6/state/auth-fixture-result.json
+SHA256f733e694c0101e02e23d6e97bbb90a72f68783b44a2b1ebe9b23edae989456fc.
+Opravneni je SPOTREBOVANE, bez implicitniho dalsiho live Google pokusu.
+8b638d5 full RustCI41434473213 take nasledne PASS; b27bba6
+RustCI41436867879 jeste bezi. Tento PASS nezastupuje production backend,
+remote revocation, actual refresh lifecycle ani plnou physical dictation/
+installation/cloud akceptaci; whole_migration_acceptance zustava false.
+
+Navazujici signed-out/physical-disabled native Settings kontrola overila
+actual accessible role/name/value pro5 edit fields a5 checkboxes,
+otevreni/Cancel bez ulozeni a unchanged synthetic settings. Jeden posted
+Tab backend oznacil done, ale AX tree neukazal pozorovatelnou zmenu focusu;
+proto se to NEOZNACUJE za keyboard navigation ani screen-reader PASS.
+Owned PID35220 skoncil pri180s boundu, zadny token nevznikl a clipboard/
+microphone/hotkey/paste akce nebyly provedeny. Duvod chybejici focus
+telemetrie se nezamenuje za prokazany application bug.
+
+Live flow soucasne odhalil privacy nedostatek prezentace callback odpovedi:
+text/plain stranka dovolovala browseru pouzit callback URL jako window
+title. Nasledna oprava vraci pouze staticke HTML s neutralnim titulkem,
+no-referrer, strict no-resource/frame CSP a nosniff; no-store zustava.
+Query material se nevklada do HTML a message/status/state/PKCE/deadline
+semantika zustava. Actual TCP valid/wrong-state regression nejprve RED,
+pak GREEN s exact byte length/title/headers/no-query-reflection.
+Novy real Google login se kvuli oprave neopakoval; zmena nema tvrdit
+odstraneni callback query z adresniho radku/browser history.
+
+Client protocol suites71 cases a workspace Clippy/fmt prosly. Aktualni
+per-user installer byl pouze znovu SESTAVEN (ne spusten/instalovan),
+SHA256aea9b71afbc76cc8271dc815945525f1e4f41baeee173465ccf218a811442d6e.
+Obsah stale pouze explicitni native EXE+icon, zadny OAuth config/secrets.
