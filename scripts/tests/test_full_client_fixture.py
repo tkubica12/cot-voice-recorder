@@ -29,7 +29,9 @@ class ClientFixtureTests(unittest.TestCase):
                 ) as directory,
             ):
                 root = Path(directory)
-                with FixtureProcess(binary, implementation, root, 5) as fixture:
+                with FixtureProcess(
+                    binary, implementation, root, 5, diagnostics=True
+                ) as fixture:
                     recovery = (
                         "dictation-recovery"
                         if implementation == "csharp"

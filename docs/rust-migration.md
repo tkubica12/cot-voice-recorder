@@ -1101,3 +1101,17 @@ Tento profil nemeri signed-in networking, fyzicky mikrofon, clipboard/paste,
 registry autostart, installed upgrade, cold OS cache ani hodinovou nahravku.
 whole_migration_acceptance zustava false i pri uspesnem profilu. Puvodni
 foundation mereni se nadale nesmi pouzit jako nahrada kompletniho klienta.
+
+## Fixture CI diagnostika
+
+Windows guard na631c11f prekrocil15s WPF startup budget, zatimco native,
+Linux, oba MSRV a container jobs prosly; samostatny Windows build CI je successful.
+Timeout se neprodluzuje bez zjistene priciny. C# fixture ma opt-in vlastni
+phase-progress soubor u synthetic ready markeru; guard ho pri selhani spolu
+se stderr zachova ve vystupu testu. Produkcni startup ani measurement default
+diagnostiku nezapinaji. Lokalni aktualni C# build ma0 warnings/errors a oba
+actual full-client fixture guard testy prosly.
+
+Kontrolovane signed-out mereni frozen631c11f stale bezi: vsech30+30 startu
+a prvni paired301-point memory serie jsou sebrany. Partial data nejsou finalni
+C02 verdict; zbyvajici serie, CI pricina a ostatni acceptance brany trvaji.

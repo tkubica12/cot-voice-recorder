@@ -8,6 +8,17 @@ namespace VoicePrompt.App.Services;
 internal sealed record SignedOutFixture(string Root, string Ready, string Key, int Seconds)
 {
     internal const string Scope = "full-client-signed-out-fixture";
+    private bool _progressStarted;
+
+    internal void TraceProgress(string phase)
+    {
+        if (Environment.GetEnvironmentVariable("VOICEPROMPT_FIXTURE_PROGRESS") != "1") return;
+        using var output = new FileStream(Ready + ".progress",
+            _progressStarted ? FileMode.Append : FileMode.CreateNew, FileAccess.Write, FileShare.Read);
+        _progressStarted = true;
+        using var writer = new StreamWriter(output);
+        writer.WriteLine($"{DateTimeOffset.UtcNow:O} {phase}");
+    }
 
     internal static string InstanceName(string key)
     {

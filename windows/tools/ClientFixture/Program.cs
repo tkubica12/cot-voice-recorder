@@ -12,8 +12,11 @@ internal static class Program
             {
                 var fixture = SignedOutFixture.Create(args[1], args[2], args[3],
                     int.Parse(args[4], System.Globalization.CultureInfo.InvariantCulture));
+                fixture.TraceProgress("validated");
                 var app = new VoicePrompt.App.App(fixture);
+                fixture.TraceProgress("application-constructed");
                 app.InitializeComponent();
+                fixture.TraceProgress("resources-initialized");
                 return app.Run();
             }
             if (args.Length == 2 && args[0] == "--client-fixture-quit")

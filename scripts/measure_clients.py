@@ -65,6 +65,7 @@ class FixtureProcess:
         parent: Path,
         history_count: int,
         epoch: datetime | None = None,
+        diagnostics: bool = False,
     ) -> None:
         if os.name != "nt":
             raise RuntimeError("Client comparison requires Windows.")
@@ -120,6 +121,7 @@ class FixtureProcess:
             encoding="utf-8",
         )
         environment["VOICEPROMPT_GOOGLE_DESKTOP_CLIENT"] = str(forbidden_oauth)
+        environment["VOICEPROMPT_FIXTURE_PROGRESS"] = "1" if diagnostics else "0"
         started = time.perf_counter()
         try:
             self.process = subprocess.Popen(
@@ -157,16 +159,23 @@ class FixtureProcess:
                 raise RuntimeError(
                     f"Readiness did not match the actual full-client fixture: {self.marker}"
                 )
-        except BaseException:
+        except BaseException as error:
             if hasattr(self, "process"):
-                self.kill_owned()
+                output, failure = self.kill_owned()
+                if output or failure:
+                    error.add_note(f"Fixture output: {output!r}; stderr: {failure!r}")
+            progress = Path(str(ready) + ".progress")
+            if progress.exists():
+                error.add_note(
+                    "C# fixture progress:\n" + progress.read_text(encoding="utf-8")
+                )
             self.directory.cleanup()
             raise
 
-    def kill_owned(self) -> None:
+    def kill_owned(self) -> tuple[bytes, bytes]:
         if self.process.poll() is None:
             self.process.kill()
-        self.process.communicate(timeout=10)
+        return self.process.communicate(timeout=10)
 
     def close(self) -> None:
         try:

@@ -32,6 +32,7 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        _fixture?.TraceProgress("startup");
 
         var quitRequested = e.Args.Any(a =>
             a.Equals("--quit", StringComparison.OrdinalIgnoreCase)
@@ -39,6 +40,7 @@ public partial class App : Application
 
         _instance = SingleInstanceGuard.Acquire(_fixture is null
             ? SingleInstanceGuard.DefaultName : SignedOutFixture.InstanceName(_fixture.Key));
+        _fixture?.TraceProgress("instance-acquired");
         if (!_instance.IsPrimary)
         {
             if (_fixture is not null) throw new InvalidOperationException("Isolated fixture instance already exists.");
@@ -78,9 +80,11 @@ public partial class App : Application
             _host?.Log.Error($"fatal: {(args.ExceptionObject as Exception)?.GetType().Name ?? "unknown"}");
 
         _tray = new TrayIconHost(TrayIconHost.LoadAppIcon());
+        _fixture?.TraceProgress("tray-created");
         _host = _fixture is null ? AppHost.Create(_tray)
             : AppHost.CreateSignedOutFixture(_fixture.Root, _tray, new SignedOutFixture.ForbiddenClipboard());
         if (_fixture is not null) SignedOutFixture.ValidateHost(_host);
+        _fixture?.TraceProgress("host-created");
 
         _tray.SetPausedChecked(_host.Settings.NotificationsPaused);
         _tray.Open += () => Dispatcher.BeginInvoke(ShowMainWindow);
@@ -95,6 +99,7 @@ public partial class App : Application
         SystemEvents.PowerModeChanged += OnPowerModeChanged;
         SystemEvents.SessionEnding += OnSessionEnding;
         SystemEvents.SessionSwitch += OnSessionSwitch;
+        _fixture?.TraceProgress("system-events-subscribed");
 
         _host.Realtime.StateChanged += state =>
             Dispatcher.BeginInvoke(() => _tray?.SetStatusText(state.ToString()));
@@ -106,7 +111,9 @@ public partial class App : Application
         _tray.SetStatusText(_host.OAuthConfigured ? "Starting" : "Not configured");
 
         _host.Start();
+        _fixture?.TraceProgress("host-started");
         _dictation = new DictationController(_host, _tray, Dispatcher);
+        _fixture?.TraceProgress("dictation-created");
         try
         {
             _host.Recovery.Cleanup();
@@ -123,6 +130,7 @@ public partial class App : Application
         try
         {
             _dictation.Configure();
+            _fixture?.TraceProgress("dictation-configured");
         }
         catch (Exception ex)
         {
@@ -144,7 +152,11 @@ public partial class App : Application
             _fixtureTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(_fixture.Seconds) };
             _fixtureTimer.Tick += (_, _) => ExitApplication();
             _fixtureTimer.Start();
-            Dispatcher.BeginInvoke(() => _fixture.Publish(_host.History.All().Count), DispatcherPriority.ApplicationIdle);
+            Dispatcher.BeginInvoke(() =>
+            {
+                _fixture.TraceProgress("dispatcher-ready");
+                _fixture.Publish(_host.History.All().Count);
+            }, DispatcherPriority.ApplicationIdle);
         }
     }
 
