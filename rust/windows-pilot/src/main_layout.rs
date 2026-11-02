@@ -7,6 +7,7 @@ pub(crate) struct Bounds {
 }
 
 pub(crate) const SECTION_ITEM_HEIGHT_DIP: i32 = 30;
+pub(crate) const RECOVERY_ROW_HEIGHT_DIP: i32 = 90;
 
 pub(crate) struct MainLayout {
     pub logo: Bounds,
@@ -19,10 +20,12 @@ pub(crate) struct MainLayout {
     pub tabs: Bounds,
     pub text_toggle: Bounds,
     pub history: Bounds,
+    pub empty_history: Bounds,
     pub history_actions: [Bounds; 5],
     pub recovery_help: Bounds,
     pub recovery: Bounds,
     pub recovery_actions: [Bounds; 3],
+    pub recovery_status: Bounds,
 }
 
 fn flow<const N: usize>(
@@ -71,10 +74,11 @@ impl MainLayout {
             item.x += margin;
             item.y += height - margin - footer_height;
         }
-        let (mut recovery_actions, recovery_footer_height) = flow([130, 96, 130], content, scale);
+        let recovery_status_height = if height >= scale(400) { scale(24) } else { 0 };
+        let (mut recovery_actions, recovery_footer_height) = flow([144, 96, 130], content, scale);
         for item in &mut recovery_actions {
             item.x += margin;
-            item.y += height - margin - recovery_footer_height;
+            item.y += height - margin - recovery_footer_height - recovery_status_height;
         }
         let top = scale(219);
         let recovery_top = top + scale(56);
@@ -91,6 +95,30 @@ impl MainLayout {
             width: status_labels[index].width,
             height: scale(19),
         });
+        let history = Bounds {
+            x: margin,
+            y: top,
+            width: content,
+            height: height - margin - footer_height - scale(12) - top,
+        };
+        let hint_height = scale(40).min(history.height);
+        let last_action = recovery_actions[2];
+        let recovery_status = if recovery_status_height > 0 {
+            Bounds {
+                x: margin,
+                y: height - margin - scale(18),
+                width: content,
+                height: scale(18),
+            }
+        } else {
+            let x = last_action.x + last_action.width + scale(8);
+            Bounds {
+                x,
+                y: last_action.y,
+                width: width - margin - x,
+                height: scale(30),
+            }
+        };
         Ok(Self {
             logo: Bounds {
                 x: margin,
@@ -131,11 +159,12 @@ impl MainLayout {
                 width: scale(130),
                 height: scale(30),
             },
-            history: Bounds {
-                x: margin,
-                y: top,
-                width: content,
-                height: height - margin - footer_height - scale(12) - top,
+            history,
+            empty_history: Bounds {
+                x: history.x + scale(4),
+                y: history.y + (history.height - hint_height) / 2,
+                width: history.width - scale(8),
+                height: hint_height,
             },
             history_actions,
             recovery_help: Bounds {
@@ -148,9 +177,15 @@ impl MainLayout {
                 x: margin,
                 y: recovery_top,
                 width: content,
-                height: height - margin - recovery_footer_height - scale(12) - recovery_top,
+                height: height
+                    - margin
+                    - recovery_footer_height
+                    - recovery_status_height
+                    - scale(12)
+                    - recovery_top,
             },
             recovery_actions,
+            recovery_status,
         })
     }
 }
@@ -186,8 +221,10 @@ mod tests {
                     layout.tabs,
                     layout.text_toggle,
                     layout.history,
+                    layout.empty_history,
                     layout.recovery_help,
                     layout.recovery,
+                    layout.recovery_status,
                 ]
                 .into_iter()
                 .chain(layout.toolbar)
@@ -209,6 +246,11 @@ mod tests {
                 );
                 assert!(layout.recovery_help.y + layout.recovery_help.height < layout.recovery.y);
                 assert!(layout.recovery.y + layout.recovery.height < layout.recovery_actions[0].y);
+                let last = layout.recovery_actions[2];
+                assert!(
+                    layout.recovery_status.y >= last.y + last.height
+                        || layout.recovery_status.x > last.x + last.width
+                );
             }
         }
     }

@@ -26,7 +26,9 @@ use windows::Win32::Storage::FileSystem::{
     MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW, MoveFileW,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::System::SystemServices::{SS_ENDELLIPSIS, SS_ICON, SS_REALSIZECONTROL};
+use windows::Win32::System::SystemServices::{
+    SS_CENTER, SS_ENDELLIPSIS, SS_ICON, SS_REALSIZECONTROL,
+};
 use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::Controls as controls;
 use windows::Win32::UI::HiDpi::{
@@ -87,6 +89,8 @@ const CACHE_LABEL: usize = 1064;
 const CONNECTION_VALUE: usize = 1065;
 const ACCOUNT_VALUE: usize = 1066;
 const CACHE_VALUE: usize = 1067;
+const HISTORY_EMPTY: usize = 1068;
+const RECOVERY_STATUS: usize = 1069;
 const SECTION_PAINT_SUBCLASS: usize = 0x5650;
 const INSTANCE_TIMER: usize = 3;
 
@@ -102,6 +106,8 @@ thread_local! {
     static MAIN_LAYOUT_READY: Cell<bool> = const { Cell::new(false) };
     static MAIN_SECTION_STATE: Cell<Option<(isize, bool)>> = const { Cell::new(None) };
     static MAIN_HOVER: Cell<Option<(HWND, i32, i32)>> = const { Cell::new(None) };
+    static MAIN_VIEW_CHANGED: Cell<bool> = const { Cell::new(false) };
+    static RECOVERY_COMPACT_FOOTER: Cell<bool> = const { Cell::new(false) };
     #[cfg(test)]
     static UI_PREVIEW_ROOT: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
     #[cfg(test)]
@@ -683,6 +689,8 @@ impl Drop for MainFontLifetime {
         MAIN_LAYOUT_READY.with(|ready| ready.set(false));
         MAIN_SECTION_STATE.with(|state| state.set(None));
         MAIN_HOVER.with(|state| state.set(None));
+        MAIN_VIEW_CHANGED.with(|state| state.set(false));
+        RECOVERY_COMPACT_FOOTER.with(|state| state.set(false));
         let font = MAIN_FONT.with(|slot| slot.borrow_mut().take());
         drop(font);
     }
@@ -1300,9 +1308,10 @@ fn refresh_client_ui(hwnd: HWND) -> Result<(), NativeError> {
             relayout(hwnd)?;
         }
         refresh_hover(hwnd);
+        let view_changed = MAIN_VIEW_CHANGED.with(|changed| changed.replace(false));
         if !host.status.has_changed().map_err(|_| {
             NativeError::Verification("The client status channel stopped.")
-        })? && UI_HISTORY.with(|history| history.borrow().is_some()) {
+        })? && !view_changed && UI_HISTORY.with(|history| history.borrow().is_some()) {
             return Ok(());
         }
         let status = host.status.borrow_and_update().clone();
@@ -1314,9 +1323,7 @@ fn refresh_client_ui(hwnd: HWND) -> Result<(), NativeError> {
             let list = api("GetDlgItem (recovery)", unsafe { GetDlgItem(Some(hwnd), RECOVERY_LIST as i32) })?;
             unsafe { let _ = SendMessageW(list, LB_RESETCONTENT, None, None); }
             for entry in status.recovery.iter() {
-                let label = format!("{} | {} | {} bytes | {} pending{}{}",
-                    entry.id, entry.language, entry.captured_bytes, entry.pending_chunks,
-                    if entry.audit_pending { " | audit pending" } else { "" }, entry.error.unwrap_or(""));
+                let label = crate::main_presentation::recovery_lines(entry, false)?.join(". ");
                 let text = wide(OsStr::new(&label))?;
                 if unsafe { SendMessageW(list, LB_ADDSTRING, None, Some(LPARAM(text.as_ptr() as isize))) }.0 < 0 {
                     return Err(NativeError::Verification("Recovery list could not accept an entry."));
@@ -1337,13 +1344,9 @@ fn refresh_client_ui(hwnd: HWND) -> Result<(), NativeError> {
             voiceprompt_client_protocol::websocket::RealtimeState::SignInRequired => "Sign-in required",
             voiceprompt_client_protocol::websocket::RealtimeState::NotConfigured => "Not configured",
         })?;
-        set_text(hwnd, ACCOUNT_VALUE, if status.signing_in { "Signing in..." } else { match status.auth {
-            voiceprompt_client_protocol::state::AuthState::NotConfigured => "Not configured",
-            voiceprompt_client_protocol::state::AuthState::SignedOut => "Signed out",
-            voiceprompt_client_protocol::state::AuthState::SignedIn => "Signed in",
-            voiceprompt_client_protocol::state::AuthState::SignInNeeded => "Sign-in required",
-        }})?;
+        set_text(hwnd, ACCOUNT_VALUE, status.account_label())?;
         set_text(hwnd, CACHE_VALUE, &status.history.len().to_string())?;
+        set_text(hwnd, RECOVERY_STATUS, &crate::main_presentation::recovery_status(&status, RECOVERY_COMPACT_FOOTER.with(Cell::get)))?;
         set_text(hwnd, PAUSE, if host.policy.paused() { "Resume auto-copy" } else { "Pause auto-copy" })?;
         let selected = selected_id(hwnd)?;
         let original_available = selected_history_entry(&status.history, selected.as_deref()).is_some_and(|entry| entry.raw_body.is_some());
@@ -1352,8 +1355,8 @@ fn refresh_client_ui(hwnd: HWND) -> Result<(), NativeError> {
             let enabled = if host.options.auth_only && !matches!(id, SIGN_IN | SIGN_OUT) {
                 false
             } else { match id {
-                SIGN_IN => status.auth != voiceprompt_client_protocol::state::AuthState::NotConfigured && !status.signing_in,
-                SIGN_OUT => status.auth == voiceprompt_client_protocol::state::AuthState::SignedIn || status.signing_in,
+                SIGN_IN => status.can_sign_in(),
+                SIGN_OUT => status.can_sign_out(),
                 COPY_LATEST | COPY_SELECTED => host.clipboard_enabled && !status.history.is_empty(),
                 COPY_ORIGINAL => host.clipboard_enabled && original_available,
                 REFRESH_HISTORY => !status.history_refreshing && status.auth == voiceprompt_client_protocol::state::AuthState::SignedIn,
@@ -1385,6 +1388,18 @@ fn refresh_client_ui(hwnd: HWND) -> Result<(), NativeError> {
             unsafe { let _ = SendMessageW(list, LB_SETCURSEL, Some(WPARAM(selected)), None); }
             show_history_body(hwnd)?;
         }
+        let (page, showing_text) = section_state(hwnd)?;
+        let history_empty = UI_HISTORY.with(|history|
+            history.borrow().as_ref().is_none_or(|entries| entries.is_empty()));
+        let empty = page == 0 && !showing_text && history_empty;
+        let hint = api("Read empty History hint", unsafe {
+            GetDlgItem(Some(hwnd), HISTORY_EMPTY as i32)
+        })?;
+        unsafe { let _ = ShowWindow(hint, if empty { SW_SHOWNOACTIVATE } else { SW_HIDE }); }
+        let list = api("Read populated History list", unsafe {
+            GetDlgItem(Some(hwnd), HISTORY_LIST as i32)
+        })?;
+        unsafe { let _ = ShowWindow(list, if page == 0 && !showing_text && !history_empty { SW_SHOWNOACTIVATE } else { SW_HIDE }); }
         Ok(())
     })
 }
@@ -1405,8 +1420,10 @@ fn layout(hwnd: HWND, width: i32, height: i32) -> Result<(), NativeError> {
         (SHOW_HISTORY_TEXT, positions.text_toggle),
         (HISTORY_LIST, positions.history),
         (HISTORY_BODY, positions.history),
+        (HISTORY_EMPTY, positions.empty_history),
         (RECOVERY_HELP, positions.recovery_help),
         (RECOVERY_LIST, positions.recovery),
+        (RECOVERY_STATUS, positions.recovery_status),
     ];
     items.extend(
         [CONNECTION_LABEL, ACCOUNT_LABEL, CACHE_LABEL]
@@ -1457,18 +1474,81 @@ fn layout(hwnd: HWND, width: i32, height: i32) -> Result<(), NativeError> {
             )
         })?;
         let visible = match id {
-            HISTORY_LIST => page == 0 && !showing_text,
+            HISTORY_LIST => {
+                page == 0
+                    && !showing_text
+                    && UI_HISTORY.with(|history| {
+                        history
+                            .borrow()
+                            .as_ref()
+                            .is_some_and(|entries| !entries.is_empty())
+                    })
+            }
             HISTORY_BODY => page == 0 && showing_text,
+            HISTORY_EMPTY => {
+                page == 0
+                    && !showing_text
+                    && UI_HISTORY.with(|history| {
+                        history
+                            .borrow()
+                            .as_ref()
+                            .is_none_or(|entries| entries.is_empty())
+                    })
+            }
             SHOW_HISTORY_TEXT | COPY_SELECTED | COPY_LATEST | COPY_ORIGINAL | REFRESH_HISTORY
             | CLEAR_HISTORY => page == 0,
             RECOVERY_HELP | RECOVERY_LIST | RECOVER_SELECTED | REFRESH_RECOVERY
-            | DELETE_RECOVERY => page == 1,
+            | RECOVERY_STATUS | DELETE_RECOVERY => page == 1,
             _ => true,
         };
         unsafe {
             let _ = ShowWindow(child, if visible { SW_SHOWNOACTIVATE } else { SW_HIDE });
         }
     }
+    let recovery = api("Read responsive recovery row height", unsafe {
+        GetDlgItem(Some(hwnd), RECOVERY_LIST as i32)
+    })?;
+    let dpi = crate::dpi::window_dpi(hwnd) as i32;
+    let full = (crate::main_layout::RECOVERY_ROW_HEIGHT_DIP * dpi + 48) / 96;
+    let inset = (dpi + 48) / 96;
+    let row_height = if positions.recovery.height - inset * 2 >= full {
+        full
+    } else {
+        (46 * dpi + 48) / 96
+    };
+    let previous_height =
+        unsafe { SendMessageW(recovery, LB_GETITEMHEIGHT, Some(WPARAM(0)), None) }.0;
+    if previous_height != row_height as isize
+        && unsafe {
+            SendMessageW(
+                recovery,
+                LB_SETITEMHEIGHT,
+                Some(WPARAM(0)),
+                Some(LPARAM(row_height as isize)),
+            )
+        }
+        .0 == -1
+    {
+        return Err(NativeError::Verification(
+            "Could not size responsive Recovery rows.",
+        ));
+    }
+    if previous_height != row_height as isize {
+        let selected = unsafe { SendMessageW(recovery, LB_GETCURSEL, None, None) }.0;
+        if selected >= 0 {
+            unsafe {
+                let _ = SendMessageW(
+                    recovery,
+                    LB_SETCURSEL,
+                    Some(WPARAM(selected as usize)),
+                    None,
+                );
+            }
+        }
+    }
+    RECOVERY_COMPACT_FOOTER
+        .with(|compact| compact.set(positions.recovery_status.width < positions.recovery.width));
+    MAIN_VIEW_CHANGED.with(|changed| changed.set(true));
     MAIN_SECTION_STATE.with(|state| state.set(Some((page, showing_text))));
     if !unsafe { windows::Win32::Graphics::Gdi::InvalidateRect(Some(hwnd), None, true) }.as_bool() {
         return Err(NativeError::Api(
@@ -1559,6 +1639,18 @@ fn create_sections(hwnd: HWND, instance: HINSTANCE) -> Result<(), NativeError> {
             WS_CHILD,
         ),
         (
+            HISTORY_EMPTY,
+            w!("STATIC"),
+            w!("No transcripts cached yet.\r\nCompleted transcripts appear here for 48 hours."),
+            WS_CHILD | WINDOW_STYLE(SS_CENTER.0),
+        ),
+        (
+            RECOVERY_STATUS,
+            w!("STATIC"),
+            w!("No unfinished dictations."),
+            WS_CHILD,
+        ),
+        (
             MAIN_TABS,
             controls::WC_TABCONTROLW,
             w!("Sections"),
@@ -1627,6 +1719,7 @@ fn create_sections(hwnd: HWND, instance: HINSTANCE) -> Result<(), NativeError> {
     for id in [
         MAIN_TABS,
         SHOW_HISTORY_TEXT,
+        HISTORY_EMPTY,
         HISTORY_LIST,
         HISTORY_BODY,
         COPY_SELECTED,
@@ -1779,10 +1872,17 @@ fn update_main_font(hwnd: HWND) -> Result<(), NativeError> {
                 .apply(api("Read recovery explanation", unsafe {
                     GetDlgItem(Some(hwnd), RECOVERY_HELP as i32)
                 })?);
+            for id in [HISTORY_EMPTY, RECOVERY_STATUS] {
+                theme
+                    .section_caption
+                    .apply(api("Read section caption", unsafe {
+                        GetDlgItem(Some(hwnd), id as i32)
+                    })?);
+            }
             theme.strong.apply(api("Read recovery list font", unsafe {
                 GetDlgItem(Some(hwnd), RECOVERY_LIST as i32)
             })?);
-            for id in [CONNECTION_VALUE, ACCOUNT_VALUE, CACHE_VALUE] {
+            for id in [CONNECTION_VALUE, ACCOUNT_VALUE] {
                 theme
                     .strong
                     .apply(api("Read original status value", unsafe {
@@ -1931,8 +2031,8 @@ fn dispatch(
                 (RECONNECT, w!("Reconnect")),
                 (COPY_SELECTED, w!("Copy selected")),
                 (COPY_ORIGINAL, w!("Copy original")),
-                (RECOVER_SELECTED, w!("Recover selected")),
-                (DELETE_RECOVERY, w!("Delete recovery")),
+                (RECOVER_SELECTED, w!("Recover to History")),
+                (DELETE_RECOVERY, w!("Discard selected")),
                 (REFRESH_RECOVERY, w!("Refresh")),
                 (OPEN_SETTINGS, w!("Settings")),
                 (REFRESH_HISTORY, w!("Refresh")),
@@ -1995,7 +2095,12 @@ fn dispatch(
                         | WS_VISIBLE
                         | WS_TABSTOP
                         | WS_VSCROLL
-                        | WINDOW_STYLE(LBS_NOTIFY as u32),
+                        | WINDOW_STYLE(
+                            (LBS_NOTIFY
+                                | LBS_OWNERDRAWFIXED
+                                | LBS_HASSTRINGS
+                                | LBS_NOINTEGRALHEIGHT) as u32,
+                        ),
                 ),
             ] {
                 let control = api("CreateWindowExW (history)", unsafe {
@@ -2097,8 +2202,13 @@ fn dispatch(
             }
             let mut item =
                 unsafe { std::ptr::read_unaligned(lparam.0 as *const controls::MEASUREITEMSTRUCT) };
-            if item.CtlID == HISTORY_LIST as u32 {
-                item.itemHeight = (47 * crate::dpi::window_dpi(hwnd) + 48) / 96;
+            if matches!(item.CtlID as usize, HISTORY_LIST | RECOVERY_LIST) {
+                let height = if item.CtlID == HISTORY_LIST as u32 {
+                    47
+                } else {
+                    crate::main_layout::RECOVERY_ROW_HEIGHT_DIP
+                };
+                item.itemHeight = (height as u32 * crate::dpi::window_dpi(hwnd) + 48) / 96;
                 unsafe {
                     std::ptr::write_unaligned(lparam.0 as *mut controls::MEASUREITEMSTRUCT, item);
                 }
@@ -2169,6 +2279,27 @@ fn dispatch(
                     })?;
                     return Ok(true);
                 }
+                if item.CtlType == controls::ODT_LISTBOX && item.CtlID == RECOVERY_LIST as u32 {
+                    UI_RECOVERY.with(|recovery| {
+                        if let Some(entry) = recovery
+                            .borrow()
+                            .as_ref()
+                            .and_then(|entries| entries.get(item.itemID as usize))
+                        {
+                            let compact = item.rcItem.bottom - item.rcItem.top
+                                < (crate::main_layout::RECOVERY_ROW_HEIGHT_DIP * theme.dpi as i32
+                                    + 48)
+                                    / 96;
+                            theme.recovery_row(
+                                &item,
+                                &crate::main_presentation::recovery_lines(entry, compact)?,
+                                compact,
+                            )?;
+                        }
+                        Ok::<_, NativeError>(())
+                    })?;
+                    return Ok(true);
+                }
                 Ok::<_, NativeError>(false)
             })?;
             if handled {
@@ -2191,6 +2322,8 @@ fn dispatch(
                                 | ACCOUNT_LABEL
                                 | CACHE_LABEL
                                 | RECOVERY_HELP
+                                | HISTORY_EMPTY
+                                | RECOVERY_STATUS
                         ),
                         matches!(
                             id,

@@ -212,9 +212,19 @@ clipboard, capture, hotkeys and installed-state discovery, and check unchanged
 synthetic settings/history and absence of tokens on normal exit. The C# fixture's
 `--client-visual-fixture` uses the actual original `MainWindow`, PNG and ICO, not a
 recreated reference. Actual default/minimum native previews have been compared
-with it at 144 DPI. Extra main quick actions, separate Settings, optional text
-view, some native control metrics, and unfinished Recovery/account presentation
-remain explicit differences; this is not full visual or migration acceptance.
+with it at 144 DPI. Recovery now shows local time, pending sealed chunks, language
+and audit state; short viewports use two compact lines without hiding those
+fields. Its footer distinguishes recovery from live dictation and never promises
+automatic paste. Empty History has the original retention hint. Account email
+and state are published together after persistence, through a nonblocking display
+snapshot; reading the header cannot block behind browser login or a network/cache
+operation. The snapshot is display metadata, not signature verification or a
+replacement for the authenticated bearer path. Sign-in/out availability matches
+the current account state, including clearing a rejected saved grant.
+
+Extra main quick actions, separate Settings, optional text view and some native
+control metrics remain explicit differences; this is not full visual, live-account,
+human keyboard/screen-reader or migration acceptance.
 Frozen post-overlay performance evidence belongs to its original binary and
 does not measure this later main-window styling.
 

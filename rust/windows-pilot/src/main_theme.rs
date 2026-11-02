@@ -317,13 +317,7 @@ impl MainTheme {
         )
     }
 
-    pub fn history_row(
-        &self,
-        item: &DRAWITEMSTRUCT,
-        preview: &str,
-        metadata: &str,
-    ) -> Result<(), NativeError> {
-        let _saved = SavedDc::new(item.hDC)?;
+    fn row_background(&self, item: &DRAWITEMSTRUCT) -> Result<(), NativeError> {
         let selected = item.itemState.0 & ODS_SELECTED.0 != 0;
         self.fill(
             item.hDC,
@@ -352,6 +346,18 @@ impl MainTheme {
                 &self.accent,
             )?;
         }
+        Ok(())
+    }
+
+    pub fn history_row(
+        &self,
+        item: &DRAWITEMSTRUCT,
+        preview: &str,
+        metadata: &str,
+    ) -> Result<(), NativeError> {
+        let _saved = SavedDc::new(item.hDC)?;
+        self.row_background(item)?;
+        let selected = item.itemState.0 & ODS_SELECTED.0 != 0;
         let left = item.rcItem.left + self.scale(if selected { 11 } else { 8 });
         let right = item.rcItem.right - self.scale(8);
         let top = item.rcItem.top + self.scale(6);
@@ -385,6 +391,39 @@ impl MainTheme {
             GRAY,
             DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX,
         )
+    }
+
+    pub fn recovery_row(
+        &self,
+        item: &DRAWITEMSTRUCT,
+        lines: &[String],
+        compact: bool,
+    ) -> Result<(), NativeError> {
+        let _saved = SavedDc::new(item.hDC)?;
+        self.row_background(item)?;
+        let selected = item.itemState.0 & ODS_SELECTED.0 != 0;
+        let left = item.rcItem.left + self.scale(if selected { 11 } else { 8 });
+        for (index, line) in lines.iter().enumerate() {
+            let top = item.rcItem.top + self.scale(6 + index as i32 * 19);
+            self.text(
+                item.hDC,
+                if compact && index > 0 {
+                    &self.section_caption
+                } else {
+                    &self.strong
+                },
+                line,
+                RECT {
+                    left,
+                    top,
+                    right: item.rcItem.right - self.scale(8),
+                    bottom: top + self.scale(19),
+                },
+                if compact && index > 0 { GRAY } else { INK },
+                DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX,
+            )?;
+        }
+        Ok(())
     }
 }
 

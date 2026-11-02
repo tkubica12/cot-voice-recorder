@@ -163,7 +163,7 @@ impl SettingsUi {
             ),
             (
                 AUTO_START,
-                "Start at Windows sign-in (isolated Rust pilot)",
+                "Start automatically at Windows sign-in",
                 w!("BUTTON"),
                 BS_AUTOCHECKBOX as u32,
                 88,
@@ -277,7 +277,7 @@ impl SettingsUi {
             }
         }
         let hint = encoded(
-            "Apply while idle. Backend changes reconnect the isolated client.\r\nNo configuration or credentials are included in the public installer.",
+            "Apply while idle. Backend changes reconnect VoicePrompt.\r\nNo configuration or credentials are included in the public installer.",
         );
         native("Create Settings guidance", unsafe {
             CreateWindowExW(

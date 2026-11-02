@@ -71,6 +71,7 @@ async fn delayed_refresh_cannot_publish_signed_in_or_vend_old_bearer_after_signo
         tokens: StdMutex::new(Some(CachedTokens {
             refresh_token: Some("fixture-refresh".into()),
             id_token: Some(token()),
+            email: Some("synthetic@example.invalid".into()),
             ..Default::default()
         })),
         save_started: tokio::sync::Notify::new(),
@@ -92,12 +93,21 @@ async fn delayed_refresh_cannot_publish_signed_in_or_vend_old_bearer_after_signo
             _ = store.save_started.notified() => {}
         }
     }).await.unwrap();
+    assert_eq!(
+        auth.display_identity(),
+        (
+            AuthState::SignedIn,
+            Some("synthetic@example.invalid".into())
+        ),
+        "Display reads must remain available while session persistence holds the lock."
+    );
     store.release();
     tokio::time::timeout(Duration::from_secs(5), auth.sign_out())
         .await
         .unwrap()
         .unwrap();
     assert_eq!(*auth.status().borrow(), AuthState::SignedOut);
+    assert_eq!(auth.display_identity(), (AuthState::SignedOut, None));
     let bearer = tokio::time::timeout(Duration::from_secs(5), refresh)
         .await
         .unwrap()

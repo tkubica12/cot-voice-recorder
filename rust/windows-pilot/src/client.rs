@@ -38,6 +38,7 @@ pub struct ClientOptions {
 #[derive(Clone)]
 pub(crate) struct ClientStatus {
     pub auth: AuthState,
+    pub account_email: Option<String>,
     pub realtime: RealtimeState,
     pub signing_in: bool,
     pub signing_out: bool,
@@ -54,6 +55,7 @@ impl Default for ClientStatus {
     fn default() -> Self {
         Self {
             auth: AuthState::NotConfigured,
+            account_email: None,
             realtime: RealtimeState::Stopped,
             signing_in: false,
             signing_out: false,
@@ -65,6 +67,43 @@ impl Default for ClientStatus {
             history_refreshing: false,
             runtime_ready: false,
         }
+    }
+}
+
+impl ClientStatus {
+    pub(crate) fn set_identity(&mut self, identity: (AuthState, Option<String>)) {
+        self.auth = identity.0;
+        self.account_email = if identity.0 == AuthState::SignedIn {
+            identity.1
+        } else {
+            None
+        };
+    }
+
+    pub(crate) fn account_label(&self) -> &str {
+        if self.signing_out {
+            "Signing out..."
+        } else if self.signing_in {
+            "Signing in..."
+        } else {
+            match self.auth {
+                AuthState::NotConfigured => "Not configured",
+                AuthState::SignedOut => "Signed out",
+                AuthState::SignedIn => self.account_email.as_deref().unwrap_or("Signed in"),
+                AuthState::SignInNeeded => "Sign in required",
+            }
+        }
+    }
+
+    pub(crate) fn can_sign_in(&self) -> bool {
+        !matches!(self.auth, AuthState::NotConfigured | AuthState::SignedIn)
+            && !self.signing_in
+            && !self.signing_out
+    }
+
+    pub(crate) fn can_sign_out(&self) -> bool {
+        (matches!(self.auth, AuthState::SignedIn | AuthState::SignInNeeded) || self.signing_in)
+            && !self.signing_out
     }
 }
 
@@ -333,7 +372,7 @@ impl ClientHost {
                     };
                     if thread_options.auth_only {
                         status_sender.send_modify(|status| {
-                            status.auth = *auth.status().borrow();
+                            status.set_identity(auth.display_identity());
                             status.settings = Arc::new(settings);
                             status.runtime_ready = true;
                         });
@@ -387,7 +426,7 @@ impl ClientHost {
                             )
                         })?;
                         status_sender.send_modify(|status| {
-                            status.auth = *auth.status().borrow();
+                            status.set_identity(auth.display_identity());
                             status.history = Arc::new(entries);
                             status.settings = Arc::new(settings.clone());
                         });
@@ -621,9 +660,11 @@ async fn run_client(
         tokio::select! {
             _ = stop.changed() => if *stop.borrow_and_update() { break; },
             _ = auth_state.changed() => {
-                let current = *auth_state.borrow_and_update();
+                auth_state.borrow_and_update();
+                let identity = auth.display_identity();
+                let current = identity.0;
                 policy.set_active(!suspended && !sign_out_requested && current == AuthState::SignedIn);
-                status.send_modify(|status| status.auth = current);
+                status.send_modify(|status| status.set_identity(identity));
             }
             _ = realtime_state.changed() => {
                 let current = *realtime_state.borrow_and_update();
@@ -903,6 +944,39 @@ async fn run_client(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn account_display_and_actions_match_auth_state_and_never_retain_signed_out_email() {
+        let mut status = ClientStatus::default();
+        for (state, label, sign_in, sign_out) in [
+            (AuthState::NotConfigured, "Not configured", false, false),
+            (AuthState::SignedOut, "Signed out", true, false),
+            (
+                AuthState::SignedIn,
+                "synthetic@example.invalid",
+                false,
+                true,
+            ),
+            (AuthState::SignInNeeded, "Sign in required", true, true),
+        ] {
+            status.set_identity((state, Some("synthetic@example.invalid".into())));
+            assert_eq!(status.account_label(), label);
+            assert_eq!(status.can_sign_in(), sign_in);
+            assert_eq!(status.can_sign_out(), sign_out);
+            assert_eq!(status.account_email.is_some(), state == AuthState::SignedIn);
+        }
+        status.set_identity((AuthState::SignedIn, None));
+        assert_eq!(status.account_label(), "Signed in");
+        status.set_identity((AuthState::SignedOut, None));
+        status.signing_in = true;
+        assert_eq!(status.account_label(), "Signing in...");
+        assert!(!status.can_sign_in());
+        assert!(status.can_sign_out());
+        status.signing_out = true;
+        assert_eq!(status.account_label(), "Signing out...");
+        assert!(!status.can_sign_in());
+        assert!(!status.can_sign_out());
+    }
 
     #[tokio::test]
     async fn cancelled_clipboard_requests_cannot_later_touch_the_clipboard() {

@@ -169,6 +169,54 @@ fn original_segoe_font_roles_palette_and_selected_rasters_match_at_each_dpi() {
 }
 
 #[test]
+fn full_and_compact_recovery_rows_keep_all_lines_inside_the_selected_surface() {
+    for dpi in [96, 144, 192, 288] {
+        let theme = MainTheme::new(dpi).unwrap();
+        for (compact, height, lines) in [
+            (
+                false,
+                crate::main_layout::RECOVERY_ROW_HEIGHT_DIP,
+                vec![
+                    "Synthetic date".into(),
+                    "2 chunks pending".into(),
+                    "Language: cs".into(),
+                    "Cloud audit upload pending: True".into(),
+                ],
+            ),
+            (
+                true,
+                46,
+                vec![
+                    "Synthetic date; Language: cs".into(),
+                    "2 chunks pending; Audit pending: True".into(),
+                ],
+            ),
+        ] {
+            assert!(6 + lines.len() as i32 * 19 <= height);
+            let canvas = Canvas::new(theme.scale(320), theme.scale(height));
+            let item = DRAWITEMSTRUCT {
+                hDC: canvas.dc,
+                rcItem: RECT {
+                    left: 0,
+                    top: 0,
+                    right: theme.scale(320),
+                    bottom: theme.scale(height),
+                },
+                itemState: ODS_SELECTED,
+                ..Default::default()
+            };
+            theme.recovery_row(&item, &lines, compact).unwrap();
+            assert_eq!(canvas.pixel(theme.scale(1), theme.scale(4)), ACCENT);
+            assert_eq!(canvas.pixel(theme.scale(300), theme.scale(3)), SURFACE);
+            assert_eq!(
+                canvas.pixel(theme.scale(200), theme.scale(height) - 1),
+                ACCENT
+            );
+        }
+    }
+}
+
+#[test]
 #[ignore = "Separate synthetic graphics-only process avoids concurrent GDI counts. No window, cursor query, input, clipboard, account or device."]
 fn synthetic_main_theme_cycles_release_fonts_brushes_pens_and_bitmaps() {
     let handles = || {

@@ -2,6 +2,39 @@ use super::*;
 use crate::recovery_store::tests::TemporaryRoot;
 use voiceprompt_client_protocol::recovery::AudioCheckpoint;
 
+#[test]
+fn recovery_view_origin_survives_progress_and_resets_for_a_new_live_generation() {
+    let (sender, receiver) = watch::channel(ClientStatus::default());
+    sender.send_modify(|status| {
+        status.dictation.generation = 10;
+        status.dictation.recovering = true;
+    });
+    update(
+        &sender,
+        10,
+        DictationMode::Toggle,
+        DictationStage::Finishing,
+        String::new(),
+    );
+    assert!(receiver.borrow().dictation.recovering);
+    update(
+        &sender,
+        10,
+        DictationMode::Toggle,
+        DictationStage::Saved,
+        "Synthetic recovered text".into(),
+    );
+    assert!(receiver.borrow().dictation.recovering);
+    update(
+        &sender,
+        11,
+        DictationMode::Hold,
+        DictationStage::Recording,
+        String::new(),
+    );
+    assert!(!receiver.borrow().dictation.recovering);
+}
+
 fn buffers() -> Option<mpsc::Receiver<CaptureBuffer>> {
     let (sender, receiver) = mpsc::channel(2);
     sender.try_send(CaptureBuffer(vec![1, 0, 2, 0])).unwrap();

@@ -46,6 +46,7 @@ pub struct DictationView {
     pub preview: String,
     pub recording_started: Option<Instant>,
     pub issue: Option<&'static str>,
+    pub recovering: bool,
 }
 
 impl Default for DictationView {
@@ -57,6 +58,7 @@ impl Default for DictationView {
             preview: String::new(),
             recording_started: None,
             issue: None,
+            recovering: false,
         }
     }
 }
@@ -186,6 +188,7 @@ fn update(
         } else {
             None
         };
+        let recovering = same_generation && previous.recovering;
         status.dictation = DictationView {
             generation,
             mode,
@@ -194,6 +197,7 @@ fn update(
             recording_started: recording_started
                 .or_else(|| (stage == DictationStage::Recording).then(Instant::now)),
             issue,
+            recovering,
         }
     });
 }
@@ -368,13 +372,15 @@ impl DictationHost {
                 _ => continue,
             };
             self.policy.set_dictation_busy(true);
-            update(
-                &self.status,
-                generation,
-                mode,
-                DictationStage::Starting,
-                String::new(),
-            );
+            self.status.send_modify(|status| {
+                status.dictation = DictationView {
+                    generation,
+                    mode,
+                    stage: DictationStage::Starting,
+                    recovering: recovering.is_some(),
+                    ..Default::default()
+                };
+            });
             let mut auth = self.api.auth_state();
             let initialized = load_session(&self, recovering.as_deref()).await;
             let (session, id, context) = match initialized {

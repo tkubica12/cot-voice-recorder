@@ -62,6 +62,7 @@ pub struct AuthRuntime<P: TokenPersistence> {
     store: Arc<P>,
     session: Arc<Mutex<AuthSession>>,
     status: watch::Sender<AuthState>,
+    identity: watch::Sender<(AuthState, Option<String>)>,
     active_sign_in: Mutex<Option<Arc<AtomicBool>>>,
 }
 
@@ -105,18 +106,25 @@ impl<P: TokenPersistence> AuthRuntime<P> {
             .map_err(AuthRuntimeError::Storage)?;
         let session = AuthSession::new(config.is_some(), tokens);
         let (status, _) = watch::channel(session.state());
+        let (identity, _) = watch::channel((session.state(), session.email()));
         Ok(Self {
             config,
             client,
             store,
             session: Arc::new(Mutex::new(session)),
             status,
+            identity,
             active_sign_in: Mutex::new(None),
         })
     }
 
     pub fn status(&self) -> watch::Receiver<AuthState> {
         self.status.subscribe()
+    }
+
+    // Display metadata must not wait behind a browser/network/cache operation holding session.
+    pub fn display_identity(&self) -> (AuthState, Option<String>) {
+        self.identity.borrow().clone()
     }
 
     pub async fn current_email(&self) -> Option<String> {
@@ -160,9 +168,11 @@ impl<P: TokenPersistence> AuthRuntime<P> {
             .map_err(AuthRuntimeError::Network)?;
         let store = self.store.clone();
         let status = self.status.clone();
+        let identity = self.identity.clone();
         let result = tokio::task::spawn_blocking(move || {
             let mut session = session;
             let result = session.apply_refresh(response, |tokens| store.save(tokens));
+            identity.send_replace((session.state(), session.email()));
             status.send_replace(session.state());
             result
         })
@@ -217,9 +227,11 @@ impl<P: TokenPersistence> AuthRuntime<P> {
             .map_err(AuthRuntimeError::Network)?;
         let store = self.store.clone();
         let status = self.status.clone();
+        let identity = self.identity.clone();
         let result = tokio::task::spawn_blocking(move || {
             let mut session = session;
             let result = session.accept_sign_in(response, |tokens| store.save(tokens));
+            identity.send_replace((session.state(), session.email()));
             status.send_replace(session.state());
             result
         })
@@ -233,9 +245,11 @@ impl<P: TokenPersistence> AuthRuntime<P> {
         let session = self.session.clone().lock_owned().await;
         let store = self.store.clone();
         let status = self.status.clone();
+        let identity = self.identity.clone();
         let result = tokio::task::spawn_blocking(move || {
             let mut session = session;
             let result = session.sign_out(|| store.clear());
+            identity.send_replace((session.state(), session.email()));
             status.send_replace(session.state());
             result
         })

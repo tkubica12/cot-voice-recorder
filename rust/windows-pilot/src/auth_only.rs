@@ -121,7 +121,8 @@ pub(crate) async fn run(
             biased;
             _ = stop.changed() => break,
             _ = state.changed() => {
-                status.send_modify(|value| value.auth = *state.borrow_and_update());
+                state.borrow_and_update();
+                status.send_modify(|value| value.set_identity(auth.display_identity()));
             }
             Some(result) = tasks.join_next() => {
                 match result {

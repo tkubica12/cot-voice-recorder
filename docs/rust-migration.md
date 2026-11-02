@@ -2405,3 +2405,70 @@ Current release znovu sestaven,7 actual C#/Rust platform/DPAPI/IPC/
 original-PE-icon parity groups PASS, reference build zero warnings.
 Zadny clipboard/input/device/account/cloud port ani dalsi physical
 guarded-paste case se v tomto inkrementu nespustil.
+
+### Recovery/account presentation a neblokujici auth display
+
+Navazujici inkrement doplnuje puvodni Recovery obsah: local updated time,
+sealed pending chunks/tail vysvetleni, language a Cloud audit upload pending
+True/False. Pouziva skutecny NativeRecoveryInfo ze skutecneho encrypted store,
+ne staticky screenshot mock. Normalni radek ma4 linky/original selected
+styling; maly viewport dve kompaktni linky se stejnym datum/language/pending/
+audit obsahem, plny text zustava v accessible row name. Neudeluje to
+Recovery automaticky paste. Samostatny footer rozlisuje recovering/no-paste,
+complete-to-History, stopped/retained a failed; jeho compact verze se
+prizpusobi geometrii pri resize. Recovery origin je explicitni view flag,
+zachovany behem progress a resetovany pri nove live generation. UI labels
+jsou puvodni Recover to History/Refresh/Discard selected.
+
+Empty History ma puvodni48h hint. Actual image kontrola odhalila, ze
+prvni implementace mela text jen v AX tree, ale opaque empty ListBox ho
+prekryval. Empty list je ted skryty pouze pri empty/hint surface a vraci
+se pri nove historii; nejde o pouhy accessibility-proxy PASS. Actual min
+Recovery navic odhalilo1pixel presah compact row a offscreen selected
+row po resize; compact46DIP se do actual70px144DPI viewportu vejde,
+zmena item height zachova/revealuje selection a neprovadi se zbytecne
+pri kazdem layout. Prilis dlouhy compact footer je nyni strucny.
+Predchozi cases bez techto oprav zustavaji zachovane jako failed visual
+evidence, nikoli corrected-source PASS.
+
+Fresh normal/min actual cases native-recovery-detail-f93003c-b a
+native-recovery-minimum-f93003c-b pouzily frozen
+cc41381de045bf31e5595250ea97ab6cbd138c27845db92d6d469b5e1d481921,
+PID54668/31764. Skutecny CLI journal vytvoril pouze synthetic zero PCM
+legacy+audit fixtures v oddelenych root/IPC; mikrofon nebyl otevren.
+Actual image/AX prokazaly viditelny empty hint,4-line normal a2-line
+min Recovery, selected row, visible compact footer a scroll/select
+auditTrue -> auditFalse. Nebyl stisknut Recover, Refresh, Discard,
+Copy, Save ani Sign in. Normalni bound exit, unchanged settings/history,
+noToken a nezavisle byte-exact SHA vsech encrypted Recovery files;
+closed c7ca07d7afe1f42b1a4c759020dd3923b701700cb2620eeaaf4a4e689bc08831
+a 121d21a64fd00211d9d9c623ba0acad8291e54a8e64210c61637c987f66f49c8.
+
+Header ted umi puvodni account email a spravne sign-in/out actions,
+vcetne SignInNeeded local clear a busy states. AuthRuntime publikuje
+state+display email jako jeden snapshot po persistence, jeste pred
+state notification. Jeho UI cteni je synchronni/neblokujici: browser/
+network/cache session lock ho nesmi zastavit ani zablokovat Sign out
+command loop. Prime controlled blocking-store race overuje dostupny
+display pri drzenem session lock a odstraneni emailu po sign-out.
+JWT decode zustava jen display/scheduling, ne signature verification;
+backend Google bearer ani jeho revocation/cancellation invariants
+se nemeni. Auth-only report nadale neuklada account/email/token content.
+Zadny novy skutecny login nebyl spusten; live SignedIn UI neni z teto
+synthetic coverage vyvozena. Settings uz nelze mylne oznacovat jako
+isolated pilot ani v installed rezimu; popis je neutralni pro oba.
+
+Cela workspace264 regular tests,71 native, Clippy/current release,
+7 actual C#/Rust platform/DPAPI/IPC/original-icon parity groups PASS.
+Separate1000 no-window GDI cycles znovu4->4 (0.86s). Predchozi f93003c
+RustCI41505134591 vcetneWindows/Linux/MSRV1.85/container a WindowsCI
+41505134887 PASS; tento dalsi inkrement potrebuje vlastni CI/current
+performance dukaz. Whole visual/human/controller/install/privateAzure
+acceptance se stale neuzavira a zadny drivejsi physical consent
+se nerecykluje.
+
+Sestaven byl take current build-only Inno installer, nikdy nespusten/
+instalovan:976cd0a39e70fce2f70ca4b405d2d56e3dcbf74266481134d6768db38e68ef86.
+Staged VoicePrompt.exe byte-exact odpovida release
+b2b867991907059b55364a4b4338ecda111162d698c14302f15b7d37b4d04d18.
+Dalsich6 existing isolated native Settings/client lifecycle groups PASS.
