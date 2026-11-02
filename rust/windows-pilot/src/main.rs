@@ -1,12 +1,13 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 #[cfg(windows)]
+mod startup;
+
+#[cfg(windows)]
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     use std::io::{Read, Write};
     use std::path::PathBuf;
-    use voiceprompt_windows_pilot::{
-        ClientOptions, TrayOptions, protect, request_quit, run_tray, unprotect,
-    };
+    use voiceprompt_windows_pilot::{protect, request_quit, run_tray, unprotect};
 
     let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
     if args.len() == 2
@@ -262,94 +263,49 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         std::io::stdout().lock().write_all(&output)?;
         return Ok(());
     }
-    let mut options = TrayOptions {
-        instance_key: "interactive".into(),
-        ready_file: None,
-        run_for_seconds: None,
-        self_test: false,
-        client: None,
-    };
-    let mut state_directory = None;
-    let mut oauth_config = None;
-    let mut installed = std::env::current_exe()?
+    let executable = std::env::current_exe()?;
+    let packaged = executable
         .file_name()
-        .is_some_and(|name| name == "VoicePrompt.exe");
-    let mut quit = false;
-    let mut position = 0;
-    while position < args.len() {
-        match args[position].to_str() {
-            Some("--self-test") => options.self_test = true,
-            Some("--quit") => quit = true,
-            Some("--installed") => installed = true,
-            Some("--instance-key" | "--ready-file" | "--run-for-seconds" | "--state-directory" | "--oauth-config") => {
-                let option = args[position].to_str().ok_or("Invalid option encoding.")?;
-                position += 1;
-                let value = args.get(position).ok_or("Missing option value.")?;
-                match option {
-                    "--instance-key" => options.instance_key = value.to_str().ok_or("Instance key must be ASCII.")?.into(),
-                    "--ready-file" => options.ready_file = Some(PathBuf::from(value)),
-                    "--run-for-seconds" => options.run_for_seconds = Some(value.to_str().ok_or("Invalid duration encoding.")?.parse()?),
-                    "--state-directory" => state_directory = Some(PathBuf::from(value)),
-                    "--oauth-config" => oauth_config = Some(PathBuf::from(value)),
-                    _ => unreachable!(),
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("VoicePrompt.exe"));
+    match startup::parse(&args, packaged)? {
+        startup::Startup::Installed { quit } => {
+            if quit {
+                let instance = voiceprompt_windows_pilot::CompatibleInstance::acquire(
+                    "VoicePrompt.SingleInstance",
+                )?;
+                if !instance.primary {
+                    instance.request_quit()?;
+                    instance.wait_for_exit(std::time::Duration::from_secs(20))?;
                 }
-                if installed {
-                    if options.self_test || options.ready_file.is_some() || state_directory.is_some() || oauth_config.is_some() {
-                        return Err("Installed mode cannot be combined with fixture/benchmark/explicit-state startup.".into());
+                return Ok(());
+            }
+            let local = std::env::var_os("LOCALAPPDATA").ok_or("LOCALAPPDATA is unavailable.")?;
+            let path = PathBuf::from(local).join("VoicePrompt");
+            std::fs::create_dir_all(&path)?;
+            let mut oauth_config =
+                std::env::var_os("VOICEPROMPT_GOOGLE_DESKTOP_CLIENT").map(PathBuf::from);
+            if oauth_config.is_none() {
+                let beside = executable
+                    .parent()
+                    .ok_or("Missing executable directory.")?
+                    .join("google-desktop-client.json");
+                for candidate in [path.join("google-desktop-client.json"), beside] {
+                    if candidate.try_exists()? {
+                        oauth_config = Some(candidate);
+                        break;
                     }
-                    if quit {
-                        let instance = voiceprompt_windows_pilot::CompatibleInstance::acquire("VoicePrompt.SingleInstance")?;
-                        if !instance.primary {
-                            instance.request_quit()?;
-                            instance.wait_for_exit(std::time::Duration::from_secs(20))?;
-                        }
-                        return Ok(());
-                    }
-                    let local = std::env::var_os("LOCALAPPDATA").ok_or("LOCALAPPDATA is unavailable.")?;
-                    let path = PathBuf::from(local).join("VoicePrompt");
-                    std::fs::create_dir_all(&path)?;
-                    let configured = std::env::var_os("VOICEPROMPT_GOOGLE_DESKTOP_CLIENT").map(PathBuf::from);
-                    let beside = std::env::current_exe()?.parent().ok_or("Missing executable directory.")?.join("google-desktop-client.json");
-                    if let Some(configured) = configured { oauth_config = Some(configured); }
-                    else {
-                        for candidate in [path.join("google-desktop-client.json"), beside] {
-                            if candidate.try_exists()? { oauth_config = Some(candidate); break; }
-                        }
-                    }
-                    state_directory = Some(path);
                 }
             }
-            _ => return Err("Usage: VoicePromptRustPilot [--self-test] [--instance-key key] [--ready-file path] [--run-for-seconds 1-3600] [--state-directory absolute-path [--oauth-config path]] | --quit --instance-key key | explicit-path cache/history/settings fixture commands".into()),
+            run_tray(startup::installed_options(path, oauth_config))?;
         }
-        position += 1;
-    }
-    if oauth_config.is_some() && state_directory.is_none() {
-        return Err("--oauth-config requires an explicit --state-directory.".into());
-    }
-    if let Some(state_directory) = state_directory {
-        if options.ready_file.is_some() {
-            return Err(
-                "Foundation measurement readiness cannot be combined with connected mode.".into(),
-            );
+        startup::Startup::Isolated { options, quit } => {
+            if quit {
+                request_quit(&options.instance_key)?;
+            } else {
+                run_tray(options)?;
+            }
         }
-        options.client = Some(ClientOptions {
-            state_directory,
-            oauth_config,
-            clipboard_enabled: !options.self_test,
-            installed,
-        });
-    }
-    if quit {
-        if options.ready_file.is_some()
-            || options.run_for_seconds.is_some()
-            || options.self_test
-            || options.client.is_some()
-        {
-            return Err("--quit cannot be combined with startup options.".into());
-        }
-        request_quit(&options.instance_key)?;
-    } else {
-        run_tray(options)?;
     }
     Ok(())
 }

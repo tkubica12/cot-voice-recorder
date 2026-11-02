@@ -122,6 +122,13 @@ Audit freezes before delivery and drains independently every 30 seconds while id
 Only acknowledged upload deletes the outbox, with fixed original completion/expiry.
 Pause does not block explicit manual copy or audit upload; account/backend changes do.
 
+The installed/isolated CLI parser is tested without filesystem/IPC access.
+Packaged `VoicePrompt.exe` and explicit `--installed` always select the installed
+client plan; value-option order cannot turn them into the platform-only tray.
+Installed mode rejects fixture/readiness/explicit-path flags before any personal
+state is opened. Process tests exercise only those rejection paths, not a real
+installed launch or upgrade.
+
 ## Recovery codec parity, not the recovery runtime
 
 `--recovery-load-fixture` and `--recovery-save-fixture` take an explicit absolute

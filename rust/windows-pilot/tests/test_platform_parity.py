@@ -7,6 +7,7 @@ import concurrent.futures
 import json
 import os
 import random
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -35,6 +36,37 @@ def reference(mode: str, data: bytes) -> subprocess.CompletedProcess[bytes]:
 
 
 class PlatformParityTests(unittest.TestCase):
+    def test_installed_modes_reject_fixture_flags_before_personal_startup(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="VoicePrompt-installed-plan-"
+        ) as directory:
+            root = Path(directory)
+            for arguments in [
+                ["--installed", "--self-test", "--state-directory", str(root)],
+                ["--self-test", "--state-directory", str(root), "--installed"],
+                ["--self-test", "--installed"],
+            ]:
+                refused = subprocess.run(
+                    [str(PILOT), *arguments],
+                    capture_output=True,
+                    timeout=20,
+                    check=False,
+                )
+                self.assertNotEqual(refused.returncode, 0)
+                self.assertIn(b"Installed mode cannot", refused.stderr)
+                self.assertEqual(list(root.iterdir()), [])
+            packaged = root.joinpath("VoicePrompt.exe")
+            shutil.copyfile(PILOT, packaged)
+            refused = subprocess.run(
+                [str(packaged), "--self-test"],
+                capture_output=True,
+                timeout=20,
+                check=False,
+            )
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertIn(b"Installed mode cannot", refused.stderr)
+            self.assertEqual(list(root.iterdir()), [packaged])
+
     def test_single_instance_quit_is_bidirectionally_compatible_in_isolated_namespaces(
         self,
     ) -> None:

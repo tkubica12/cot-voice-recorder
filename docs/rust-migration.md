@@ -1043,3 +1043,26 @@ s viditelnym diagnostickym zaznamem. Sedm cleanup testu vcetne unexpected-name
 fixture a strict Clippy/fmt proslo; take finalni Windows/Linux/MSRV/container
 a backend CI tohoto safeguard commitu jsou successful. Zadna produkcni data
 nebyla ctena ani smazana.
+
+## Installed startup parser regression
+
+Kontrola startovaci composition cesty odhalila drive neotestovany wiring bug:
+installed initialization byla omylem uvnitr vetve options s hodnotou. Obvykle
+VoicePrompt.exe bez args nebo --installed proto nemusel vytvorit ClientOptions,
+tedy ani zapojit compatible IPC a per-user klienta. Predchozi build-only installer
+a negativni fixture testy tuto cestu samy o sobe neprokazovaly.
+
+Parser je nyni samostatny bez I/O: installed/default packaged a isolated plany
+jsou rozlisene pred dotykem state/IPC. Installed/quit rozhodnuti nezavisi na
+poradi voleb nebo pritomnosti value argumentu. Installed mode zakazuje vsechny
+fixture/value startup options, nikoli jen nektere. Packaged filename detection
+je Windows-case-insensitive. Standardni uzivatelska installed inicializace
+nasleduje az po hotovem planu a neprobiha v unattended testech.
+
+Pet novych pure startup testu overuje default/explicit/quit, materializovany
+installed client plan a konflikty v obou poradi. Process fixture overuje odmitnuti
+mixed args a prejmenovane packaged EXE se self-test, bez aktivace osobni IPC
+nebo zmeny user state. Proslo218 Windows workspace testu,6 platform a6 native
+lifecycle parity skupin, fmt/Clippy a release. Installer byl jen rebuild:
+SHA256 AB92DFB077270B2BD19206BAE7A09D99BF135ED1F978ACDC2AC1E555984975A2.
+Skutecna instalace/start/upgrade zustava neprovedena; acceptance prahy se nemeni.
