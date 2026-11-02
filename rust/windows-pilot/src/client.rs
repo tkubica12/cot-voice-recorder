@@ -32,6 +32,7 @@ pub struct ClientOptions {
     pub clipboard_enabled: bool,
     pub installed: bool,
     pub fixture_runtime: bool,
+    pub auth_only: bool,
 }
 
 #[derive(Clone)]
@@ -206,6 +207,22 @@ impl ClientHost {
             }
         }
         let clipboard_enabled = options.clipboard_enabled;
+        if options.auth_only {
+            if options.installed
+                || options.fixture_runtime
+                || options.clipboard_enabled
+                || options.oauth_config.is_none()
+                || options
+                    .oauth_config
+                    .as_ref()
+                    .is_some_and(|path| !path.is_absolute())
+            {
+                return Err(NativeError::InvalidArgument(
+                    "Auth-only acceptance cannot enable installed state, missing config or physical ports.",
+                ));
+            }
+            crate::fixtures::validate_auth(&options.state_directory, None)?;
+        }
         if options.fixture_runtime {
             if options.installed || options.oauth_config.is_some() || options.clipboard_enabled {
                 return Err(NativeError::InvalidArgument(
@@ -217,7 +234,7 @@ impl ClientHost {
         let settings_store =
             NativeSettingsStore::new(options.state_directory.join("settings.json"))?;
         let mut settings = settings_store.load()?;
-        if options.fixture_runtime
+        if (options.fixture_runtime || options.auth_only)
             && (settings.backend_base_url != "https://fixture.example.invalid"
                 || settings.auto_start
                 || settings.dictation_enabled
@@ -240,7 +257,11 @@ impl ClientHost {
                     .map_err(|error| NativeError::Io("read explicit OAuth configuration", error))?;
                 let parsed = DesktopClientConfig::parse(&data);
                 data.fill(0);
-                Some(parsed?)
+                let parsed = parsed?;
+                if options.auth_only {
+                    crate::auth_only::validate_google(&parsed)?;
+                }
+                Some(parsed)
             }
             None => None,
         };
@@ -281,8 +302,8 @@ impl ClientHost {
                     }
                 };
                 runtime.block_on(async move {
-                    let initialize = async {
-                        let auth = Arc::new(
+                    let auth = async {
+                        Ok::<_, NativeError>(Arc::new(
                             AuthRuntime::initialize(
                                 config,
                                 GoogleTokenClient::new().map_err(|_| {
@@ -299,7 +320,45 @@ impl ClientHost {
                                     "Authentication initialization failed; cache is preserved.",
                                 )
                             })?,
-                        );
+                        ))
+                    }
+                    .await;
+                    let auth = match auth {
+                        Ok(auth) => auth,
+                        Err(error) => {
+                            let _ = initialized.send(Err(error));
+                            return;
+                        }
+                    };
+                    if thread_options.auth_only {
+                        status_sender.send_modify(|status| {
+                            status.auth = *auth.status().borrow();
+                            status.settings = Arc::new(settings);
+                            status.runtime_ready = true;
+                        });
+                        let report =
+                            crate::auth_only::Report::start(&thread_options.state_directory);
+                        match report {
+                            Ok(report) => {
+                                if initialized.send(Ok(())).is_ok() {
+                                    crate::auth_only::run(
+                                        auth,
+                                        command_receiver,
+                                        status_sender,
+                                        shutdown,
+                                        thread_options.state_directory,
+                                        report,
+                                    )
+                                    .await;
+                                }
+                            }
+                            Err(error) => {
+                                let _ = initialized.send(Err(error));
+                            }
+                        }
+                        return;
+                    }
+                    let initialize = async {
                         let api = Arc::new(
                             ApiClient::new(settings.backend_url()?, auth.clone()).map_err(
                                 |_| {
@@ -408,7 +467,7 @@ impl Drop for ClientHost {
     }
 }
 
-fn browser(uri: &url::Url) -> Result<(), ProtocolError> {
+pub(crate) fn browser(uri: &url::Url) -> Result<(), ProtocolError> {
     let text: Vec<u16> = uri
         .as_str()
         .encode_utf16()
@@ -430,7 +489,7 @@ fn browser(uri: &url::Url) -> Result<(), ProtocolError> {
     Ok(())
 }
 
-fn issue(status: &watch::Sender<ClientStatus>, message: &'static str) {
+pub(crate) fn issue(status: &watch::Sender<ClientStatus>, message: &'static str) {
     eprintln!("Client: {message}");
     status.send_modify(|status| status.issue = Some(message));
 }
@@ -862,6 +921,7 @@ mod tests {
                 clipboard_enabled: false,
                 installed: false,
                 fixture_runtime: false,
+                auth_only: false,
             })
             .is_err()
         );
@@ -886,6 +946,7 @@ mod tests {
             clipboard_enabled: false,
             installed: false,
             fixture_runtime: false,
+            auth_only: false,
         })
         .unwrap();
         assert!(!host.policy.authenticated());
@@ -894,5 +955,78 @@ mod tests {
         assert_eq!(host.status.borrow().auth, AuthState::NotConfigured);
         drop(host);
         assert!(!directory.0.join("tokens.bin").exists());
+    }
+
+    #[test]
+    fn auth_only_composition_never_constructs_backend_or_device_runtime_and_blocks_other_commands()
+    {
+        let directory = crate::recovery_store::tests::TemporaryRoot::new();
+        std::fs::write(
+            directory.0.join("migration-fixture.json"),
+            serde_json::to_vec(&serde_json::json!({"scope":crate::fixtures::AUTH_SCOPE,
+                "instance_key":"0123456789abcdef0123456789abcdef"}))
+            .unwrap(),
+        )
+        .unwrap();
+        NativeSettingsStore::new(directory.0.join("settings.json"))
+            .unwrap()
+            .save(&AppSettings {
+                backend_base_url: "https://fixture.example.invalid".into(),
+                notifications_paused: true,
+                auto_start: false,
+                dictation_enabled: false,
+                ..Default::default()
+            })
+            .unwrap();
+        let config = directory.0.join("synthetic-oauth.json");
+        std::fs::write(
+            &config,
+            br#"{"installed":{"client_id":"synthetic","client_secret":"synthetic"}}"#,
+        )
+        .unwrap();
+        let options = ClientOptions {
+            state_directory: directory.0.clone(),
+            oauth_config: Some(config),
+            clipboard_enabled: false,
+            installed: false,
+            fixture_runtime: false,
+            auth_only: true,
+        };
+        let mut host = ClientHost::start(options.clone()).unwrap();
+        assert_eq!(host.status.borrow().auth, AuthState::SignedOut);
+        assert_eq!(host.status.borrow().realtime, RealtimeState::Stopped);
+        assert!(!host.policy.authenticated() && !host.clipboard_enabled);
+        for command in [
+            ClientCommand::RefreshHistory,
+            ClientCommand::Reconnect,
+            ClientCommand::Copy {
+                id: None,
+                original: false,
+            },
+            ClientCommand::TogglePause,
+        ] {
+            host.commands.try_send(command).unwrap();
+        }
+        let until = std::time::Instant::now() + Duration::from_secs(2);
+        while host.status.borrow().issue.is_none() {
+            assert!(std::time::Instant::now() < until);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(host.requests.try_recv().is_err());
+        drop(host);
+        for name in ["tokens.bin", "history.json", "recovery"] {
+            assert!(!directory.0.join(name).exists(), "{name}");
+        }
+        let report: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(directory.0.join("auth-fixture-result.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(report["closed"], true);
+        assert_eq!(report["sign_in_attempted"], false);
+        assert_eq!(report["backend_or_realtime_constructed"], false);
+        assert!(
+            ClientHost::start(options).is_err(),
+            "A consumed marked root cannot be reused."
+        );
     }
 }

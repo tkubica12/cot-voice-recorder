@@ -1823,3 +1823,44 @@ nahrazuje pouze cekani testu na retry delay, nemeni produkcni backoff.
 SDK vyzaduje stream_attempt=2; zadny timer, retry limit ani safety invariant
 se nesnizil. Compile/Clippy/fmt,4 existing continuous regressions a5local
 typed-proof/TLS/MI guards prosly; actual fault run jeste ceka na CI.
+
+8b638d5 replay-after-model-error case nasledne prosel v
+[backend-ci41434473034](https://github.com/tkubica12/cot-voice-recorder/actions/runs/41434473034).
+Actual HTTPS storage potvrdil failed attempt1 bez ASR-ready/raw pointeru,
+released ownership a retained exact audio; attempt2 poslal full160320 samples
+od nuly a pouze jeho final commit vedl k durable transcript/delivery.
+Azure SDK navic overil attempt2 a stored cursor/body/dates. Report
+azure-replay-8b638d5/azure-rest-contract.json SHA256
+27a41cdd4cf1aaac113f2a116d678ebebf792e165faadd75211be8dad41dd070.
+Prvni healthy12b825a Windows/Linux/MSRV/container RustCI41433417304 take
+prosel; cold-reference preparation dda696e RustCI41431754015 prosel.
+
+Uzivatel pak samostatne schvalil jeden live Google sign-in/out scenar
+v nove izolovane Rust app/DPAPIcache bez produkcniho backendu/realtime,
+osobni cache nebo paidAI a prevzal browser account/consent krok.
+Povolil minimalni cilenou discovery existujiciho desktop OAuth configu;
+repo-staged JSON byl nalezen a jeho client ID se shoduje s presnou znamou
+instalovanou konfiguraci, bez vypsani hodnot nebo zmeny souboru.
+Zadny osobni token/history/recovery nebyl cten.
+
+Pri prime kontrole source se opravil predchozi konzervativni, ale nespravny
+predpoklad o Google revocation: Rust AuthRuntime::sign_out i referencni
+C# AuthManager.SignOut pouze mazou lokalni cache a vypnou memory bearer.
+Google revoke endpoint se nevola. Remote revocation se do kompatibilniho
+chovani kvuli testu nepridava a nebude se tvrdit.
+
+Novy explicitni auth-only fixture ma own marker/root/IPC, bounded lifetime,
+exact official Google endpoints a nejvyse jeden sign-in/out attempt.
+Odbocuje pred vytvorenim ApiClient/RealtimeClient/coordinator/outbox/devices;
+fyzicke porty a ostatni UI commands jsou blokovane. Vysledek obsahuje
+pouze Boolean DPAPI-readback/local-signout/stale-bearer stavy a PID.
+Opakovane pouziti stejneho rootu je odmitnute. Jde o pripravu schvaleneho
+live scenare, nikoliv zatim dukaz provedeneho Google loginu.
+
+Priprava prosla241 regular Windows workspace Rust testy, fmt/Clippy
+all-targets a release buildem. Pet novych nonphysical guards overuje bounded
+parser, official endpoints, exclusive safe Boolean report, structurally
+backend/device-free composition/rejected commands a joined local sign-out
+shutdown nad pouze syntetickou DPAPIcache. Manual microphone/engine-hour/
+Azurite cases zustaly v obycejnem behu ignored; zadny live login se v
+unit testech nespustil.

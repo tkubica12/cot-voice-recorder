@@ -83,6 +83,31 @@ rust\target\release\VoicePromptRustPilot.exe --instance-key isolated-client `
   --state-directory D:\chosen-isolated-state --oauth-config D:\chosen-desktop-client.json
 ```
 
+### Explicit live Google acceptance without backend access
+
+`--auth-only --state-directory <absolute-root> --oauth-config <absolute-json>
+--instance-key <N-format-GUID> --run-for-seconds <1-3600>` is a separately
+authorized, one-attempt manual acceptance fixture, not a normal installed mode.
+It requires a fresh root with `migration-fixture.json` containing exactly
+`{"scope":"single-google-auth-only-fixture","instance_key":"<same-GUID>"}`.
+Its explicit settings must use `https://fixture.example.invalid`, pause
+notifications, and disable autostart and dictation. Existing token/result files
+are rejected; no personal config or state is discovered.
+
+The actual native Sign in/Sign out controls use the real PKCE/loopback/Google
+token and DPAPI implementation. The user completes account selection and any
+Google consent personally. Only the exact official Google endpoints are allowed.
+This composition **never constructs** a backend, realtime, recovery, dictation
+or audit runtime; non-authentication commands and physical ports are disabled.
+Its atomic `auth-fixture-result.json` contains only Boolean state and process
+identity, never token values or account details. A previous attempt cannot be
+restarted in the same root.
+
+Sign out matches the C# reference: it clears local credentials and disables
+in-memory bearer vending. It does **not** call Google's token-revocation API.
+Do not claim remote revocation, production-backend acceptance or automatic
+dictation acceptance from this deliberately narrower test.
+
 Clipboard writes use immediate `CF_UNICODETEXT` publication from moveable global
 memory, transferring ownership only after successful `SetClipboardData`.
 Bounded retries apply only to a busy clipboard. Pause, suspended/sign-out state

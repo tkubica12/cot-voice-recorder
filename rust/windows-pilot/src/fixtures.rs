@@ -4,8 +4,27 @@ use std::os::windows::fs::MetadataExt;
 use std::path::Path;
 
 pub const SCOPE: &str = "full-client-signed-out-fixture";
+pub const AUTH_SCOPE: &str = "single-google-auth-only-fixture";
 
 pub fn validate(root: &Path, key: Option<&str>) -> Result<(), NativeError> {
+    validate_scope(root, key, SCOPE)
+}
+
+pub fn validate_auth(root: &Path, key: Option<&str>) -> Result<(), NativeError> {
+    validate_scope(root, key, AUTH_SCOPE)?;
+    if root
+        .join("auth-fixture-result.json")
+        .try_exists()
+        .map_err(|error| NativeError::Io("Inspect auth-only result boundary", error))?
+    {
+        return Err(NativeError::InvalidArgument(
+            "Auth-only acceptance cannot reuse a previous attempt.",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_scope(root: &Path, key: Option<&str>, scope: &str) -> Result<(), NativeError> {
     if !root.is_absolute() || !root.is_dir() {
         return Err(NativeError::InvalidArgument(
             "Fixture state must be an explicit existing absolute directory.",
@@ -62,7 +81,7 @@ pub fn validate(root: &Path, key: Option<&str>) -> Result<(), NativeError> {
             "Measurement key must be an explicit N-format GUID.",
         ))?;
     if bytes.len() > 1024
-        || object.get("scope").and_then(serde_json::Value::as_str) != Some(SCOPE)
+        || object.get("scope").and_then(serde_json::Value::as_str) != Some(scope)
         || key.is_some_and(|key| key != instance)
     {
         return Err(NativeError::InvalidArgument(

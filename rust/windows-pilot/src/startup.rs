@@ -20,6 +20,7 @@ pub fn installed_options(state_directory: PathBuf, oauth_config: Option<PathBuf>
             clipboard_enabled: true,
             installed: true,
             fixture_runtime: false,
+            auth_only: false,
         }),
     }
 }
@@ -41,6 +42,7 @@ pub fn parse(
     let mut installed = packaged_executable;
     let mut explicit_instance = false;
     let mut fixture_runtime = false;
+    let mut auth_only = false;
     let mut quit = false;
     let mut position = 0;
     while position < args.len() {
@@ -48,6 +50,7 @@ pub fn parse(
             Some("--self-test") => options.self_test = true,
             Some("--quit") => quit = true,
             Some("--installed") => installed = true,
+            Some("--auth-only") => auth_only = true,
             Some("--instance-key" | "--ready-file" | "--fixture-ready-file" | "--signed-out-fixture" | "--run-for-seconds" | "--state-directory" | "--oauth-config") => {
                 let option = args[position].to_str().ok_or("Invalid option encoding.")?;
                 position += 1;
@@ -84,6 +87,7 @@ pub fn parse(
             || options.fixture_ready_file.is_some()
             || state_directory.is_some()
             || oauth_config.is_some()
+            || auth_only
         {
             return Err(
                 "Installed mode cannot be combined with fixture/benchmark/explicit-state startup."
@@ -94,6 +98,19 @@ pub fn parse(
     }
     if oauth_config.is_some() && state_directory.is_none() {
         return Err("--oauth-config requires an explicit --state-directory.".into());
+    }
+    if auth_only
+        && (state_directory.is_none()
+            || oauth_config.is_none()
+            || !explicit_instance
+            || options.run_for_seconds.is_none()
+            || options.self_test
+            || fixture_runtime
+            || quit
+            || options.ready_file.is_some()
+            || options.fixture_ready_file.is_some())
+    {
+        return Err("Auth-only acceptance requires explicit state, OAuth config, instance key and bounded duration, without installed/measurement/self-test/quit.".into());
     }
     if fixture_runtime
         && (!explicit_instance
@@ -118,9 +135,10 @@ pub fn parse(
         options.client = Some(ClientOptions {
             state_directory,
             oauth_config,
-            clipboard_enabled: !options.self_test && !fixture_runtime,
+            clipboard_enabled: !options.self_test && !fixture_runtime && !auth_only,
             installed: false,
             fixture_runtime,
+            auth_only,
         });
     }
     if quit
@@ -184,6 +202,7 @@ mod tests {
             &["--oauth-config", "fixture"],
             &["--fixture-ready-file", "fixture"],
             &["--signed-out-fixture", r"C:\fixture"],
+            &["--auth-only"],
         ] {
             let mut values = arguments(flags);
             values.push("--installed".into());
@@ -272,6 +291,37 @@ mod tests {
             &["--self-test", "--quit"],
         ] {
             assert!(parse(&arguments(values), false).is_err());
+        }
+    }
+
+    #[test]
+    fn auth_only_requires_an_explicit_bounded_scope_and_never_enables_physical_ports() {
+        let flags = [
+            "--auth-only",
+            "--state-directory",
+            r"C:\fixture",
+            "--oauth-config",
+            r"C:\explicit-google.json",
+            "--instance-key",
+            "0123456789abcdef0123456789abcdef",
+            "--run-for-seconds",
+            "600",
+        ];
+        let Startup::Isolated { options, quit } = parse(&arguments(&flags), false).unwrap() else {
+            panic!("Expected isolated auth-only plan");
+        };
+        let client = options.client.unwrap();
+        assert!(!quit && client.auth_only && !client.clipboard_enabled);
+        assert!(!client.installed && !client.fixture_runtime);
+        for flag in ["--self-test", "--installed", "--quit"] {
+            let mut args = arguments(&flags);
+            args.push(flag.into());
+            assert!(parse(&args, false).is_err());
+        }
+        for (start, end) in [(1, 3), (3, 5), (5, 7), (7, 9)] {
+            let mut args = arguments(&flags);
+            args.drain(start..end);
+            assert!(parse(&args, false).is_err());
         }
     }
 }

@@ -7,6 +7,9 @@ mod platform;
 mod fixtures;
 
 #[cfg(windows)]
+mod auth_only;
+
+#[cfg(windows)]
 mod clipboard;
 
 #[cfg(windows)]

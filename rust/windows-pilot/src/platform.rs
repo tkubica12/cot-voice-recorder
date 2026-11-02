@@ -853,6 +853,14 @@ fn selected_id(hwnd: HWND) -> Result<Option<String>, NativeError> {
 }
 
 fn client_command(hwnd: HWND, command: usize) -> Result<(), NativeError> {
+    if CLIENT.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .is_some_and(|host| host.options.auth_only && !matches!(command, SIGN_IN | SIGN_OUT))
+    }) {
+        eprintln!("Auth-only fixture rejected a non-authentication UI command.");
+        return Ok(());
+    }
     if command == OPEN_SETTINGS {
         return CLIENT.with(|slot| {
             if let Some(host) = slot.borrow().as_ref() {
@@ -1158,7 +1166,9 @@ fn refresh_client_ui(hwnd: HWND) -> Result<(), NativeError> {
         set_text(hwnd, PAUSE, if host.policy.paused() { "Resume auto-copy" } else { "Pause auto-copy" })?;
         for id in [SIGN_IN, SIGN_OUT, COPY_LATEST, PAUSE, RECONNECT, COPY_SELECTED, COPY_ORIGINAL, RECOVER_SELECTED, DELETE_RECOVERY, OPEN_SETTINGS, REFRESH_HISTORY, CLEAR_HISTORY] {
             let control = api("GetDlgItem", unsafe { GetDlgItem(Some(hwnd), id as i32) })?;
-            let enabled = match id {
+            let enabled = if host.options.auth_only && !matches!(id, SIGN_IN | SIGN_OUT) {
+                false
+            } else { match id {
                 SIGN_IN => status.auth != voiceprompt_client_protocol::state::AuthState::NotConfigured && !status.signing_in,
                 SIGN_OUT => status.auth == voiceprompt_client_protocol::state::AuthState::SignedIn || status.signing_in,
                 COPY_LATEST | COPY_SELECTED | COPY_ORIGINAL => !status.history.is_empty(),
@@ -1167,7 +1177,7 @@ fn refresh_client_ui(hwnd: HWND) -> Result<(), NativeError> {
                 RECOVER_SELECTED | DELETE_RECOVERY => !status.recovery.is_empty() && !matches!(status.dictation.stage,
                     crate::dictation::DictationStage::Starting | crate::dictation::DictationStage::Recording | crate::dictation::DictationStage::Finishing),
                 _ => true,
-            };
+            }};
             unsafe { let _ = EnableWindow(control, enabled); }
         }
         let changed = UI_HISTORY.with(|history| {
@@ -1702,6 +1712,18 @@ fn attach_client(hwnd: HWND, options: ClientOptions) -> Result<(), NativeError> 
 }
 
 pub fn run_tray(options: TrayOptions) -> Result<(), NativeError> {
+    if let Some(client) = options.client.as_ref().filter(|client| client.auth_only) {
+        if options.self_test
+            || options.run_for_seconds.is_none()
+            || options.ready_file.is_some()
+            || options.fixture_ready_file.is_some()
+        {
+            return Err(NativeError::InvalidArgument(
+                "Auth-only acceptance requires a bounded isolated application.",
+            ));
+        }
+        crate::fixtures::validate_auth(&client.state_directory, Some(&options.instance_key))?;
+    }
     if let Some(path) = &options.fixture_ready_file {
         let client = options
             .client
@@ -1896,6 +1918,7 @@ pub fn run_tray(options: TrayOptions) -> Result<(), NativeError> {
                 "Self-test cannot use OAuth configuration or the system clipboard.",
             ));
         }
+        let auth_only = client.auth_only;
         attach_client(hwnd, client)?;
         CLIENT_TICK.with(|tick| *tick.borrow_mut() = 100);
         if unsafe { SetTimer(Some(hwnd), CLIENT_TIMER, 100, None) } == 0 {
@@ -1905,6 +1928,12 @@ pub fn run_tray(options: TrayOptions) -> Result<(), NativeError> {
             ));
         }
         refresh_client_ui(hwnd)?;
+        if auth_only {
+            api("Set auth-only window title", unsafe {
+                SetWindowTextW(hwnd, w!("VoicePrompt - Google auth-only test"))
+            })?;
+            show_status(hwnd);
+        }
         if options.self_test {
             CLIENT.with(|slot| {
                 let client = slot.borrow();
