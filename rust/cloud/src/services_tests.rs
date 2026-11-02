@@ -206,3 +206,18 @@ fn python_cursor_and_envelope_dates_keep_fixed_microsecond_format() {
     assert_eq!(python_datetime(date, true), "2026-11-01T10:00:00.123400Z");
     assert_eq!(preview(&"x ".repeat(100), 10), "x x x x x\u{2026}");
 }
+
+#[tokio::test]
+async fn configured_preview_limit_reaches_persisted_audit_summary() {
+    let mut services = fixture();
+    Arc::make_mut(&mut services.config).preview_max_chars = 8;
+    let payload:models::ArchiveDictation=serde_json::from_value(serde_json::json!({
+        "text":"synthetic long text","raw_text":"synthetic raw","completed_at":python_datetime(now(),true)
+    })).unwrap();
+    let result = services
+        .archive("0123456789abcdef0123456789abcdef", payload)
+        .await
+        .unwrap();
+    assert_eq!(result.preview.chars().count(), 8);
+    assert_eq!(result.preview, "synthet\u{2026}");
+}

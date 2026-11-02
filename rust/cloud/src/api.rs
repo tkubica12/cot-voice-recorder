@@ -398,7 +398,7 @@ async fn upload(
         }
         let index = u32::try_from(index)
             .map_err(|_| Problem::validation("Chunk index exceeds supported bounds."))?;
-        let wav = body(request, 8 * 1024 * 1024, "audio/wav").await?;
+        let wav = body(request, state.services.config.max_chunk_bytes, "audio/wav").await?;
         let checksum = crate::audio::content_digest(
             headers
                 .get("Content-Digest")

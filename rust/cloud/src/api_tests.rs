@@ -343,9 +343,28 @@ fn typed_body_validation_keeps_missing_unknown_nested_field_paths_and_rejects_tr
         assert_eq!(error.status, 422);
         assert_eq!(error.errors[0].field, field);
     }
+
     assert!(
         fields_json::<models::CreateRecording>(br#"{"client_recording_id":"fixture"} {}"#).is_err()
     );
+}
+
+#[tokio::test]
+async fn configured_upload_body_limit_is_enforced_before_missing_recording_or_digest_checks() {
+    let mut state = fixture();
+    let mut config = (*state.services.config).clone();
+    config.max_chunk_bytes = 64;
+    Arc::get_mut(&mut state.services).unwrap().config = Arc::new(config);
+    let mut input = request(
+        "PUT",
+        "/v1/recordings/missing/chunks/0",
+        Body::from(vec![0; 65]),
+    );
+    input
+        .headers_mut()
+        .insert("Content-Type", HeaderValue::from_static("audio/wav"));
+    let response = router(state).oneshot(input).await.unwrap();
+    assert_eq!(response.status(), 413);
 }
 
 #[tokio::test]

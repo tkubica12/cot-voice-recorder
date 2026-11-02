@@ -29,6 +29,19 @@ defaults:
     working-directory: rust
 
 jobs:
+  msrv-check:
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install declared compiler in the disposable CI runner
+        run: rustup toolchain install 1.85.0 --profile minimal
+      - name: Fetch the existing locked approved graph
+        run: cargo +1.85.0 fetch --locked
+      - name: Check all workspace targets with the declared MSRV
+        run: cargo +1.85.0 check --workspace --all-targets --offline --locked
   cloud-container:
     runs-on: ubuntu-latest
     steps:

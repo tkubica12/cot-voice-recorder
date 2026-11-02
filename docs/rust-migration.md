@@ -934,3 +934,29 @@ Cloud-container job predchoziho a2a1140 prosel skutecnym Linux image buildem
 a nonroot UID10001/CLI/missing-config guards, bez image push nebo deploymentu.
 Windows/Ubuntu Rust a backend CI take prosly. Lokalni Docker daemon zustava
 nedostupny; acceptance prahy se tim nesnizuji.
+
+## Konfigurace a obnovena native evidence
+
+Konfigurovane preview/body limity nyni skutecne dosahuji audit/finalizer/stream
+progress a upload readeru; default140 a8MiB zustava. Retention48h, batch1 a
+PCM16mono16k se nesmi v migraci tise zmenit ani ignorovat. Nepodporovana override
+konfigurace failuje explicitne pred resource access. CLI vypisuje safe detail
+startup konfiguracni chyby, nikoli pouze generic status.
+
+Cloud finalizer pri resume respektuje drive persisted preview limit, ne nove
+nastaveni v okamziku retry. Nove prime testy overuji 8char audit preview,
+64byte upload reader bound a invariant config rejection.
+Proslo 205 workspace testu (87 cloud library +2 CLI), locked release/fmt/Clippy.
+
+Actual C# reference build ma0 warnings/errors. Znovu proslo6 hidden native
+lifecycle/Settings skupin,5 DPAPI/IPC/startup skupin a4 dictation text/checkpoint
+skupiny, vse s explicitnimi syntetickymi soubory/namespaces. Aktualni installer
+byl pouze sestaven, nebyl spusten ani instalovan:
+SHA256 CF1FED76DF5246DA18F85C1D671BFA18F365DCB5FCCF908A718B005148BFA150.
+
+Predchozi abf7f05 ma potvrzene Windows/Linux Rust CI, Linux container build/guards
+a backend CI vcetne externiho HTTP korpusu. Rust1.85 neni lokalne nainstalovany;
+novy MSRV check instaluje compiler pouze do disposable Windows/Linux CI runneru
+a kontroluje locked all-targets workspace. Jeho verdict jeste neni znam.
+Mereni kompletniho klienta proti feature-matched C# baseline a hodinovy capture
+test nebyly provedeny a drivejsi foundation cisla je nesmi nahrazovat.

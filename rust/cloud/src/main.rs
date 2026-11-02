@@ -93,7 +93,11 @@ async fn run() -> Result<(), Box<dyn Error>> {
 #[tokio::main]
 async fn main() {
     if let Err(error) = run().await {
-        eprintln!("VoicePrompt cloud failed: {error}");
+        if let Some(problem) = error.downcast_ref::<voiceprompt_cloud::problem::Problem>() {
+            eprintln!("VoicePrompt cloud failed: {problem}: {}", problem.detail);
+        } else {
+            eprintln!("VoicePrompt cloud failed: {error}");
+        }
         std::process::exit(1);
     }
 }

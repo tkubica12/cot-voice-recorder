@@ -86,7 +86,10 @@ impl Session {
             tail.reverse();
             (
                 progress.cursor,
-                preview(&tail.into_iter().collect::<String>(), 140),
+                preview(
+                    &tail.into_iter().collect::<String>(),
+                    self.services.config.preview_max_chars,
+                ),
             )
         };
         self.leases
@@ -357,7 +360,7 @@ pub async fn transcribe_recording(
                 record.stream_asr_ready = true;
                 record.stream_raw_path = Some(path.clone());
                 record.streamed_samples = cursor;
-                record.stream_preview = preview(&text, 140);
+                record.stream_preview = preview(&text, services.config.preview_max_chars);
                 record.stream_error = None;
             })
             .await?;

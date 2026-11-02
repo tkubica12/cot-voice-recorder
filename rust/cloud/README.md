@@ -64,7 +64,7 @@ actual HTTP handlers, multipart/provider contracts, physical-call cancellation,
 ordered PCM relay, actual 15-second/30-second timeout boundaries, lease takeover/
 late-publication fencing, exact contiguous/legacy continuous model replay,
 receipt rotation and graceful producer/heartbeat shutdown.
-The current workspace has 202 passing tests, including 84 cloud library tests and
+The current workspace has 205 passing tests, including 87 cloud library tests and
 two CLI guards. Read-only resource probes and active-writer-safe cleanup use
 synthetic local fixtures.
 No Azure, paid model, production data or credentials are used. These are not
@@ -76,6 +76,12 @@ retain the declared Rust 1.85 profile; the newest XML version required a newer
 compiler. The installed compiler and CI verify the locked graph, not the MSRV
 itself. RSA key generation is a test-only dependency; no private key fixture is
 committed.
+
+The explicit MSRV CI job now checks all targets on Windows/Linux with Rust1.85
+in disposable runners; its result must be read before claiming minimum-compiler
+support. No compiler was installed on the user's machine. Supported preview/
+upload overrides are wired through the services; incompatible retention, batch
+or PCM overrides fail explicitly instead of being silently ignored.
 
 ## Stored data compatibility
 

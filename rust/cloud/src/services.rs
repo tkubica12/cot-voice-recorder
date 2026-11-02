@@ -161,7 +161,7 @@ impl Services {
             let transcript = domain::Transcript {
                 transcript_id: id.clone(),
                 recording_id: id.clone(),
-                preview: preview(&data.text, 140),
+                preview: preview(&data.text, self.config.preview_max_chars),
                 language: data.language,
                 refine_model: if data.polished {
                     self.config.refinement.clone()

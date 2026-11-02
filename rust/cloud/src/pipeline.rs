@@ -485,7 +485,7 @@ impl Pipeline {
             let transcript = Transcript {
                 transcript_id: transcript_id.clone(),
                 recording_id: id.into(),
-                preview: preview(&canonical, 140),
+                preview: preview(&canonical, self.services.config.preview_max_chars),
                 language: record.language,
                 refine_model: if record.refinement_enabled {
                     record.refine_model
@@ -524,7 +524,8 @@ impl Pipeline {
             if published.recording_id != id
                 || published.body_path != format!("{transcript_id}.txt")
                 || published.character_count != canonical.chars().count()
-                || published.preview != preview(&canonical, 140)
+                || published.preview
+                    != preview(&canonical, published.preview.chars().count().max(1))
             {
                 return Err(StreamWorkError::Terminal(
                     "Canonical transcript metadata conflicts with its immutable body.",

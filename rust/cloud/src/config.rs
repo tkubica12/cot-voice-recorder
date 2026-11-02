@@ -50,6 +50,8 @@ pub struct Config {
     pub queue_retry_base_seconds: u32,
     pub queue_receive_error_backoff_seconds: f64,
     pub queue_receive_error_max_backoff_seconds: f64,
+    pub preview_max_chars: usize,
+    pub max_chunk_bytes: usize,
 }
 
 fn endpoint(value: &str, allow_loopback: bool) -> Result<Url, Problem> {
@@ -275,7 +277,36 @@ impl Config {
             )
             .parse()
             .map_err(|_| Problem::validation("Invalid queue receive backoff cap."))?,
+            preview_max_chars: value("VR_PREVIEW_MAX_CHARS", "140")
+                .parse()
+                .map_err(|_| Problem::validation("Invalid preview limit."))?,
+            max_chunk_bytes: value("VR_MAX_CHUNK_BYTES", "8388608")
+                .parse()
+                .map_err(|_| Problem::validation("Invalid chunk body limit."))?,
         };
+        for (key, expected) in [
+            ("VR_RETENTION_HOURS", "48"),
+            ("VR_QUEUE_BATCH_SIZE", "1"),
+            ("VR_WAV_SAMPLE_RATE", "16000"),
+            ("VR_WAV_CHANNELS", "1"),
+            ("VR_WAV_BITS_PER_SAMPLE", "16"),
+        ] {
+            if values
+                .get(key)
+                .is_some_and(|value| value.trim() != expected)
+            {
+                return Err(Problem::validation(format!(
+                    "{key} must remain {expected} to preserve the migration contract."
+                )));
+            }
+        }
+        if !(1..=140).contains(&config.preview_max_chars)
+            || !(44..=8 * 1024 * 1024).contains(&config.max_chunk_bytes)
+        {
+            return Err(Problem::validation(
+                "Preview or chunk-body limit exceeds the public contract.",
+            ));
+        }
         for name in [
             &config.hub,
             &config.group,
@@ -433,5 +464,25 @@ mod tests {
             assert!(Config::parse(&values).is_err(), "{key}");
             values.remove(key);
         }
+    }
+    #[test]
+    fn migration_invariants_cannot_be_silently_overridden_and_preview_body_limits_remain_bounded() {
+        let mut values = valid();
+        for (key, value) in [
+            ("VR_RETENTION_HOURS", "24"),
+            ("VR_QUEUE_BATCH_SIZE", "2"),
+            ("VR_WAV_SAMPLE_RATE", "8000"),
+            ("VR_PREVIEW_MAX_CHARS", "141"),
+            ("VR_MAX_CHUNK_BYTES", "8388609"),
+        ] {
+            values.insert(key.into(), value.into());
+            assert!(Config::parse(&values).is_err(), "{key}");
+            values.remove(key);
+        }
+        values.insert("VR_PREVIEW_MAX_CHARS".into(), "80".into());
+        values.insert("VR_MAX_CHUNK_BYTES".into(), "1024".into());
+        let config = Config::parse(&values).unwrap();
+        assert_eq!(config.preview_max_chars, 80);
+        assert_eq!(config.max_chunk_bytes, 1024);
     }
 }
