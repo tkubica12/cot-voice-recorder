@@ -157,6 +157,63 @@ fn confirmation_never_releases_audio_for_an_ack_or_a_provisional_hypothesis() {
 }
 
 #[test]
+fn repeated_streaming_confirmations_release_each_chunk_once_not_quadratic_old_deletions() {
+    let wav = to_wav(&[1, 0]).unwrap();
+    let mut state = RecoveryManifest::create(
+        "auto".into(),
+        "synthetic".into(),
+        true,
+        DOTNET_UNIX_EPOCH_TICKS,
+    )
+    .unwrap();
+    let checkpoints: Vec<_> = (0..1000)
+        .map(|index| AudioCheckpoint {
+            wav: &wav,
+            overlaps_previous: false,
+            end_byte: (index + 1) * 2,
+        })
+        .collect();
+    state = state
+        .checkpoint(&[], 2000, &checkpoints, true, DOTNET_UNIX_EPOCH_TICKS)
+        .unwrap();
+    let mut text = String::new();
+    let mut deleted = 0;
+    for index in 0..1000 {
+        if !text.is_empty() {
+            text.push(' ');
+        }
+        text.push_str("synthetic");
+        let through = (index + 1) * 2;
+        let released = state
+            .confirm(
+                through,
+                text.clone(),
+                vec![0; through as usize],
+                false,
+                Some(1),
+                DOTNET_UNIX_EPOCH_TICKS,
+            )
+            .unwrap();
+        assert_eq!(released, [index as u32]);
+        deleted += released.len();
+    }
+    assert_eq!(deleted, 1000);
+    assert!(
+        state
+            .confirm(
+                2000,
+                text,
+                vec![0; 2000],
+                false,
+                Some(0),
+                DOTNET_UNIX_EPOCH_TICKS
+            )
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
 fn frozen_audit_completion_is_fixed_and_conflicts_cannot_extend_retention() {
     let (mut manifest, _) = manifest(true);
     manifest

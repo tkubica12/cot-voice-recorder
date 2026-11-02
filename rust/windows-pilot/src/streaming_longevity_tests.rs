@@ -130,7 +130,12 @@ async fn control(root: &Path, name: &str, nonce: &str) {
     .expect("Explicit synthetic measurement controller did not respond.");
 }
 
-async fn capture(store: &NativeRecoveryStore, seconds: u64, realtime: bool) -> serde_json::Value {
+async fn capture(
+    store: &NativeRecoveryStore,
+    seconds: u64,
+    realtime: bool,
+    diagnostics: Option<&Path>,
+) -> serde_json::Value {
     let service = Arc::new(Service {
         sent: AtomicU64::new(0),
         starts: Mutex::new(Vec::new()),
@@ -145,7 +150,7 @@ async fn capture(store: &NativeRecoveryStore, seconds: u64, realtime: bool) -> s
         .unwrap();
     let id = journal.id().to_owned();
     let session = StreamingSession::start(journal, Arc::new(service.clone()), false).unwrap();
-    let progress = session.progress();
+    let mut progress = session.progress();
     let mut timer = tokio::time::interval(Duration::from_millis(20));
     let began = tokio::time::Instant::now();
     let mut frame = [0; 640];
@@ -162,6 +167,30 @@ async fn capture(store: &NativeRecoveryStore, seconds: u64, realtime: bool) -> s
         }
         session.append(&frame).unwrap();
         assert!(!progress.borrow().storage_failed);
+        if !realtime && (index + 1) % 100 == 0 {
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while progress.borrow().transcribed_bytes < (index + 1) * 640 {
+                    progress.changed().await.unwrap();
+                }
+            })
+            .await
+            .expect("Accelerated validation did not reach its durable confirmed boundary.");
+        }
+        if (index + 1) % 3000 == 0 {
+            if let Some(root) = diagnostics {
+                let state = progress.borrow();
+                publish(
+                    root,
+                    &format!("progress-{:04}.json", (index + 1) / 50),
+                    json!({
+                        "phase": "capturing", "elapsed_seconds": began.elapsed().as_secs_f64(),
+                        "captured_bytes": state.captured_bytes, "saved_bytes": state.saved_bytes,
+                        "confirmed_bytes": state.transcribed_bytes,
+                        "maximum_lateness_ms": maximum_lateness.as_secs_f64() * 1000.0,
+                    }),
+                );
+            }
+        }
     }
     frame.fill(0);
     let elapsed = began.elapsed().as_secs_f64();
@@ -171,7 +200,24 @@ async fn capture(store: &NativeRecoveryStore, seconds: u64, realtime: bool) -> s
             "The wall clock was not exercised."
         );
     }
+    if let Some(root) = diagnostics {
+        publish(
+            root,
+            "producer-complete.json",
+            json!({
+                "phase": "producer-complete", "elapsed_seconds": elapsed,
+                "captured_bytes": seconds * 32000,
+            }),
+        );
+    }
     session.finish_capture().unwrap();
+    if let Some(root) = diagnostics {
+        publish(
+            root,
+            "capture-sealed.json",
+            json!({"phase": "capture-sealed"}),
+        );
+    }
     assert!(
         session
             .wait_for_completion(Duration::from_secs(5), false)
@@ -180,6 +226,15 @@ async fn capture(store: &NativeRecoveryStore, seconds: u64, realtime: bool) -> s
             .is_some()
     );
     let state = session.snapshot().unwrap();
+    if let Some(root) = diagnostics {
+        publish(
+            root,
+            "transcription-complete.json",
+            json!({
+                "phase": "transcription-complete", "confirmed_bytes": state.confirmed_bytes,
+            }),
+        );
+    }
     let expected = seconds * 32000;
     assert!(state.capture_complete);
     assert_eq!(state.captured_bytes, expected);
@@ -203,9 +258,31 @@ async fn capture(store: &NativeRecoveryStore, seconds: u64, realtime: bool) -> s
     drop(state);
     drop(progress);
     session.shutdown().await.unwrap();
+    if let Some(root) = diagnostics {
+        publish(
+            root,
+            "shutdown-complete.json",
+            json!({"phase": "shutdown-complete"}),
+        );
+    }
     store.delete_idle(&id).unwrap();
     assert!(store.list().unwrap().is_empty());
     result
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "Explicit115200000-byte synthetic volume validation; not a wall-clock hour."]
+async fn accelerated_hour_sample_volume() {
+    let directory = crate::recovery_store::tests::TemporaryRoot::new();
+    let store = NativeRecoveryStore::new(directory.0.clone(), DEFAULT_RECOVERY_QUOTA).unwrap();
+    let result = capture(&store, 3600, false, None).await;
+    println!(
+        "{}",
+        json!({
+            "scope": "accelerated-engine-hour-sample-volume",
+            "real_hour": false, "full_migration_acceptance": false, "result": result,
+        })
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -250,7 +327,7 @@ async fn realtime_synthetic_hour() {
             .unwrap();
     assert_eq!(marker["instance_key"], nonce);
     let store = NativeRecoveryStore::new(root.join("recovery"), DEFAULT_RECOVERY_QUOTA).unwrap();
-    capture(&store, 2, false).await;
+    capture(&store, 2, false, None).await;
     publish(
         &root,
         "ready.json",
@@ -260,7 +337,7 @@ async fn realtime_synthetic_hour() {
         }),
     );
     control(&root, "begin", nonce).await;
-    let result = capture(&store, seconds, true).await;
+    let result = capture(&store, seconds, true, Some(&root)).await;
     publish(&root, "idle-ready.json", result);
     control(&root, "finish", nonce).await;
 }

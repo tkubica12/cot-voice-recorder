@@ -435,7 +435,7 @@ impl RecoveryManifest {
         let acknowledged: Vec<_> = self
             .chunks
             .iter()
-            .filter(|chunk| chunk.end_byte <= through)
+            .filter(|chunk| chunk.text.is_none() && chunk.end_byte <= through)
             .map(|chunk| chunk.index)
             .collect();
         for index in &acknowledged {

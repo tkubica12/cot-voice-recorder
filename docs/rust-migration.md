@@ -1371,3 +1371,35 @@ Aktualni release client bundles0a2e715 jsou allowlist-copy frozen pro dalsi
 soubezne s aktivnim CPU-heavy hour capture, aby agent sam nezmenil zatez mezi
 baseline/target phases. Namerena631c11f data zustavaji pravdiva pro svuj source
 checkpoint; nejsou automaticky vydavana za novou verzi po dalsich opravach.
+
+## Hour01 neuspech a linearni confirmed-audio cleanup
+
+Skutecny09bc686 hour beh selhal:301 warm-idle a3601 capture samples se ulozily,
+ale engine nedodal completion/idle marker v navazujicim30s okne. After-idle
+data ani success report nevznikly. CPU postupne rostlo az k93% jednoho jadra;
+private bytes na konci capture byly7.22MiB. Tato neuplna data nejsou PASS
+hour/memory-growth akceptace a zustavaji zachovana jako failure evidence.
+
+Review odhalilo konkretni quadratic filesystem praci: kazde nove streaming
+confirmation vracelo vsechny dosud potvrzene indexy. Native journal tak znovu
+guardoval/deleteoval tisice uz davno smazanych souboru. Nyni uvolnuje pouze
+nove potvrzene chunky. Samostatny reopen pass explicitne retryuje confirmed
+orphan po publish-before-delete crashi; nikdy neodstrani pending audio.
+Disk manifest se stale znovu cte pod sdilenym gate, CurrentUser DPAPI/entropy,
+quota256MiB, v1-v4 format, absolute cursor a confirmation pravidla se nemeni.
+
+1000-confirmation test prokazuje presne1000 released indexu, nikoli soucet
+1+...+1000. Actual native v3/v4 file-lock/crash-orphan test prokazuje viditelnou
+chybu, retry po reopen a zachovane neconfirmovane sample bytes.233 regularnich
+Windows Rust testu, strict fmt/Clippy a sedm actual C#/Rust recovery/DPAPI
+parity groups proslo. Rozsireny accelerated115200000-byte synthetic volume
+probe prosel vsemi1800 durable checkpointy a kazdym sample za351.827s;
+je oznacen real_hour=false a NENAHRAZUJE nove wall-clock mereni.
+
+Collector ted kontinualne draine bounded stdout/stderr, aby error spam
+nezablokoval dite. Pri chybe uklada status=failed, logs, minute progress/
+phase markers a kopii pouze vlastniho synthetic state. Zero-test a real
+child-pipe-backpressure failure testy prosly; neuspech nemuze publikovat
+complete report. Full hour se musi znovu provest nad novym frozen buildem,
+se stejnymi301/3601/301 samples a nezmenenym5s completion/30s controller oknem.
+Fyzicky mikrofon, clipboard, Google, install ani Azure se zatim nepouzily.

@@ -6,12 +6,16 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import statistics
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
+from collections import deque
 from pathlib import Path
+from typing import BinaryIO
 
 ROOT = Path(__file__).resolve().parents[1]
 SCOPE = "native-streaming-engine-realtime-synthetic-pcm"
@@ -39,8 +43,7 @@ def wait(path: Path, process: subprocess.Popen, seconds: int) -> dict:
     began = time.monotonic()
     while not path.exists():
         if process.poll() is not None:
-            out, error = process.communicate()
-            raise RuntimeError(f"Synthetic engine exited: {process.returncode}; {out!r} {error!r}")
+            raise RuntimeError(f"Synthetic engine exited before {path.name}: {process.returncode}")
         if time.monotonic() - began > seconds:
             raise TimeoutError(f"Synthetic engine did not publish {path.name}.")
         time.sleep(0.01)
@@ -134,6 +137,25 @@ def run(
             stderr=subprocess.PIPE,
             creationflags=subprocess.CREATE_NO_WINDOW,
         )
+        stdout: deque[bytes] = deque(maxlen=200)
+        stderr: deque[bytes] = deque(maxlen=200)
+
+        def drain(stream: BinaryIO, tail: deque[bytes]) -> None:
+            for line in stream:
+                tail.append(line[-16384:])
+
+        readers = [
+            threading.Thread(target=drain, args=(process.stdout, stdout), daemon=True),
+            threading.Thread(target=drain, args=(process.stderr, stderr), daemon=True),
+        ]
+        for reader in readers:
+            reader.start()
+
+        def logs() -> tuple[bytes, bytes]:
+            for reader in readers:
+                reader.join(timeout=5)
+            return b"".join(stdout), b"".join(stderr)
+
         try:
             ready = wait(control.joinpath("ready.json"), process, 15)
             if ready != {
@@ -177,7 +199,8 @@ def run(
                 process, digest, directory.joinpath("after.json"), idle_samples, revision
             )
             create(control.joinpath("finish"), nonce.encode())
-            out, error = process.communicate(timeout=15)
+            process.wait(timeout=15)
+            out, error = logs()
             if process.returncode or error:
                 raise RuntimeError(
                     f"Synthetic engine failed: {process.returncode}; {out!r} {error!r}"
@@ -240,10 +263,53 @@ def run(
                 ),
                 flush=True,
             )
+        except BaseException as error:
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=10)
+            out, failure = logs()
+            progress = {
+                path.name: json.loads(path.read_bytes())
+                for path in control.glob("*.json")
+                if path.name
+                in {
+                    "ready.json",
+                    "producer-complete.json",
+                    "capture-sealed.json",
+                    "transcription-complete.json",
+                    "shutdown-complete.json",
+                    "idle-ready.json",
+                }
+                or path.name.startswith("progress-")
+            }
+            shutil.copytree(control, directory.joinpath("failure-state"), symlinks=True)
+            create(
+                directory.joinpath("failure.json"),
+                json.dumps(
+                    {
+                        "status": "failed",
+                        "scope": SCOPE,
+                        "source_revision": revision,
+                        "pid": process.pid,
+                        "binary_sha256": digest,
+                        "error": str(error),
+                        "stdout": out.decode(errors="replace"),
+                        "stderr": failure.decode(errors="replace"),
+                        "progress": progress,
+                        "whole_migration_acceptance": False,
+                    },
+                    indent=2,
+                ).encode(),
+            )
+            error.add_note(f"Native fixture stderr: {failure.decode(errors='replace')[-4096:]}")
+            raise
         finally:
             if process.poll() is None:
                 process.kill()
-                process.communicate(timeout=10)
+                process.wait(timeout=10)
+            logs()
+            process.stdout.close()
+            process.stderr.close()
 
 
 if __name__ == "__main__":

@@ -9,6 +9,7 @@ on:
       - "windows/tools/ClientFixture/**"
       - "scripts/measure_clients.py"
       - "scripts/measure_synthetic_capture.py"
+      - "scripts/tests/test_synthetic_capture.py"
       - "scripts/tests/test_full_client_fixture.py"
       - ".cargo/config.toml"
       - "scripts/Measure-VoicePromptProcess.ps1"
@@ -24,6 +25,7 @@ on:
       - "windows/tools/ClientFixture/**"
       - "scripts/measure_clients.py"
       - "scripts/measure_synthetic_capture.py"
+      - "scripts/tests/test_synthetic_capture.py"
       - "scripts/tests/test_full_client_fixture.py"
       - ".cargo/config.toml"
       - "scripts/Measure-VoicePromptProcess.ps1"
@@ -199,3 +201,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Synthetic collector smoke failed.' }
           $report = Get-Content -Raw (Join-Path $output 'synthetic-engine-hour.json') | ConvertFrom-Json
           if ($report.sufficient_for_synthetic_engine_hour -or $report.full_client_profile -or $report.whole_migration_acceptance) { throw 'Smoke must not claim hour/full-client acceptance.' }
+          python scripts\tests\test_synthetic_capture.py --oracle (Join-Path $frozen 'VoicePromptNativeCaptureFixture.exe')
+          if ($LASTEXITCODE -ne 0) { throw 'Synthetic failure/pipe evidence guards failed.' }
+          & (Join-Path $frozen 'VoicePromptNativeCaptureFixture.exe') streaming_session::longevity_tests::accelerated_hour_sample_volume --exact --ignored --nocapture --test-threads=1
+          if ($LASTEXITCODE -ne 0) { throw 'Accelerated exact-hour sample volume failed.' }

@@ -167,7 +167,11 @@ impl NativeRecoveryStore {
                 "This recovery journal already has an active owner.",
             ));
         }
-        self.0.load(id, true)?;
+        let state = self.0.load(id, true)?;
+        // Retry publish-before-delete leftovers once on reopen, not on every new confirmation.
+        for chunk in state.chunks.iter().filter(|chunk| chunk.text.is_some()) {
+            self.0.remove_audio(id, chunk.index)?;
+        }
         active.insert(id.into());
         Ok(NativeRecoveryJournal {
             root: self.0.clone(),

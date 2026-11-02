@@ -212,6 +212,62 @@ fn failed_confirmation_never_deletes_pending_audio_and_idempotent_retry_is_safe(
 }
 
 #[test]
+fn reopen_retries_confirmed_orphan_deletion_without_touching_pending_audio() {
+    for streaming in [false, true] {
+        let directory = TemporaryRoot::new();
+        let store = NativeRecoveryStore::new(directory.0.clone(), DEFAULT_RECOVERY_QUOTA).unwrap();
+        let journal = store
+            .create("auto".into(), "synthetic".into(), streaming, now())
+            .unwrap();
+        let id = journal.id().to_owned();
+        let first = to_wav(&[1; 6400]).unwrap();
+        let pending = to_wav(&[2; 6400]).unwrap();
+        journal
+            .checkpoint(
+                &[],
+                12800,
+                &[audio(&first, 6400), audio(&pending, 12800)],
+                true,
+                now(),
+            )
+            .unwrap();
+        if streaming {
+            journal
+                .confirm_streaming(
+                    6400,
+                    "synthetic".into(),
+                    vec![1; 6400],
+                    false,
+                    Some(1),
+                    now(),
+                )
+                .unwrap();
+        } else {
+            journal.save_result(0, "synthetic".into(), now()).unwrap();
+        }
+        let orphan = store.0.audio_path(&id, 0).unwrap();
+        std::fs::write(&orphan, protect(&first).unwrap()).unwrap();
+        drop(journal);
+        let locked = OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&orphan)
+            .unwrap();
+        assert!(
+            store.open(&id).is_err(),
+            "Failed cleanup must remain visible and retryable."
+        );
+        assert!(store.0.audio_path(&id, 1).unwrap().exists());
+        drop(locked);
+        let restored = store.open(&id).unwrap();
+        assert!(!orphan.exists());
+        assert_eq!(restored.read_audio(1).unwrap(), pending);
+        assert!(restored.snapshot().unwrap().chunks[0].text.is_some());
+        assert!(restored.snapshot().unwrap().chunks[1].text.is_none());
+    }
+}
+
+#[test]
 fn cleanup_retains_active_and_corrupt_journals_and_uses_strict_48_hour_boundary() {
     let directory = TemporaryRoot::new();
     let store = NativeRecoveryStore::new(directory.0.clone(), DEFAULT_RECOVERY_QUOTA).unwrap();
