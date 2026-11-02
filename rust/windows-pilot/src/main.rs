@@ -321,6 +321,8 @@ fn main() {
                     "--self-test"
                         | "--run-for-seconds"
                         | "--ready-file"
+                        | "--fixture-ready-file"
+                        | "--signed-out-fixture"
                         | "--settings-save"
                         | "--settings-load"
                         | "--cache-save"

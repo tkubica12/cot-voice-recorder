@@ -11,6 +11,7 @@ pub fn installed_options(state_directory: PathBuf, oauth_config: Option<PathBuf>
     TrayOptions {
         instance_key: "interactive".into(),
         ready_file: None,
+        fixture_ready_file: None,
         run_for_seconds: None,
         self_test: false,
         client: Some(ClientOptions {
@@ -18,6 +19,7 @@ pub fn installed_options(state_directory: PathBuf, oauth_config: Option<PathBuf>
             oauth_config,
             clipboard_enabled: true,
             installed: true,
+            fixture_runtime: false,
         }),
     }
 }
@@ -29,6 +31,7 @@ pub fn parse(
     let mut options = TrayOptions {
         instance_key: "interactive".into(),
         ready_file: None,
+        fixture_ready_file: None,
         run_for_seconds: None,
         self_test: false,
         client: None,
@@ -37,6 +40,7 @@ pub fn parse(
     let mut oauth_config = None;
     let mut installed = packaged_executable;
     let mut explicit_instance = false;
+    let mut fixture_runtime = false;
     let mut quit = false;
     let mut position = 0;
     while position < args.len() {
@@ -44,7 +48,7 @@ pub fn parse(
             Some("--self-test") => options.self_test = true,
             Some("--quit") => quit = true,
             Some("--installed") => installed = true,
-            Some("--instance-key" | "--ready-file" | "--run-for-seconds" | "--state-directory" | "--oauth-config") => {
+            Some("--instance-key" | "--ready-file" | "--fixture-ready-file" | "--signed-out-fixture" | "--run-for-seconds" | "--state-directory" | "--oauth-config") => {
                 let option = args[position].to_str().ok_or("Invalid option encoding.")?;
                 position += 1;
                 let value = args.get(position).ok_or("Missing option value.")?;
@@ -54,8 +58,16 @@ pub fn parse(
                         options.instance_key = value.to_str().ok_or("Instance key must be ASCII.")?.into();
                     }
                     "--ready-file" => options.ready_file = Some(PathBuf::from(value)),
+                    "--fixture-ready-file"=>options.fixture_ready_file=Some(PathBuf::from(value)),
+                    "--signed-out-fixture"=>{
+                        if state_directory.is_some(){return Err("Measurement needs one unambiguous explicit state directory.".into());}
+                        state_directory=Some(PathBuf::from(value));fixture_runtime=true;
+                    }
                     "--run-for-seconds" => options.run_for_seconds = Some(value.to_str().ok_or("Invalid duration encoding.")?.parse()?),
-                    "--state-directory" => state_directory = Some(PathBuf::from(value)),
+                    "--state-directory" => {
+                        if fixture_runtime{return Err("Measurement cannot override its marked state directory.".into());}
+                        state_directory = Some(PathBuf::from(value));
+                    }
                     "--oauth-config" => oauth_config = Some(PathBuf::from(value)),
                     _ => unreachable!(),
                 }
@@ -69,6 +81,7 @@ pub fn parse(
             || options.self_test
             || options.ready_file.is_some()
             || options.run_for_seconds.is_some()
+            || options.fixture_ready_file.is_some()
             || state_directory.is_some()
             || oauth_config.is_some()
         {
@@ -82,6 +95,20 @@ pub fn parse(
     if oauth_config.is_some() && state_directory.is_none() {
         return Err("--oauth-config requires an explicit --state-directory.".into());
     }
+    if fixture_runtime
+        && (!explicit_instance
+            || options.fixture_ready_file.is_none()
+            || options.run_for_seconds.is_none()
+            || options.self_test
+            || oauth_config.is_some()
+            || quit
+            || options.ready_file.is_some())
+    {
+        return Err("Signed-out full-client measurement needs a key, separate readiness path and bounded duration, with no OAuth/self-test/quit.".into());
+    }
+    if options.fixture_ready_file.is_some() && !fixture_runtime {
+        return Err("Client measurement readiness requires --signed-out-fixture.".into());
+    }
     if let Some(state_directory) = state_directory {
         if options.ready_file.is_some() {
             return Err(
@@ -91,8 +118,9 @@ pub fn parse(
         options.client = Some(ClientOptions {
             state_directory,
             oauth_config,
-            clipboard_enabled: !options.self_test,
+            clipboard_enabled: !options.self_test && !fixture_runtime,
             installed: false,
+            fixture_runtime,
         });
     }
     if quit
@@ -154,6 +182,8 @@ mod tests {
             &["--ready-file", "fixture"],
             &["--state-directory", r"C:\fixture"],
             &["--oauth-config", "fixture"],
+            &["--fixture-ready-file", "fixture"],
+            &["--signed-out-fixture", r"C:\fixture"],
         ] {
             let mut values = arguments(flags);
             values.push("--installed".into());
@@ -162,6 +192,45 @@ mod tests {
             values.insert(0, "--installed".into());
             assert!(parse(&values, false).is_err());
             assert!(parse(&arguments(flags), true).is_err());
+        }
+    }
+
+    #[test]
+    fn full_client_measurement_needs_its_own_scope_and_blocks_all_physical_ports() {
+        let args = arguments(&[
+            "--signed-out-fixture",
+            r"C:\fixture",
+            "--fixture-ready-file",
+            r"C:\ready",
+            "--instance-key",
+            "0123456789abcdef0123456789abcdef",
+            "--run-for-seconds",
+            "2",
+        ]);
+        let Startup::Isolated { options, quit } = parse(&args, false).unwrap() else {
+            panic!("Expected isolated full fixture");
+        };
+        assert!(!quit && !options.self_test && options.ready_file.is_none());
+        assert_eq!(options.fixture_ready_file, Some(PathBuf::from(r"C:\ready")));
+        let client = options.client.unwrap();
+        assert!(
+            client.fixture_runtime
+                && !client.clipboard_enabled
+                && !client.installed
+                && client.oauth_config.is_none()
+        );
+        for values in [
+            &["--fixture-ready-file", r"C:\ready"][..],
+            &["--signed-out-fixture", r"C:\fixture"],
+            &["--signed-out-fixture", r"C:\fixture", "--self-test"],
+            &[
+                "--signed-out-fixture",
+                r"C:\fixture",
+                "--oauth-config",
+                "fixture",
+            ],
+        ] {
+            assert!(parse(&arguments(values), false).is_err());
         }
     }
     #[test]

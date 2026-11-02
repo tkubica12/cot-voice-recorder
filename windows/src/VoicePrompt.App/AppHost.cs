@@ -1,4 +1,5 @@
 using System.Net.Http;
+using System.IO;
 using VoicePrompt.App.Services;
 using VoicePrompt.Core;
 using VoicePrompt.Core.Api;
@@ -134,11 +135,41 @@ public sealed class AppHost : IAsyncDisposable, IDictationHost
     /// <summary>False when no Desktop OAuth client JSON was found (safe unconfigured state).</summary>
     public bool OAuthConfigured { get; }
 
-    public static AppHost Create(INotifier notifier, IClipboardWriter? clipboardWriter = null)
+    public static AppHost Create(INotifier notifier, IClipboardWriter? clipboardWriter = null) =>
+        CreateCore(AppPaths.Default(), notifier, clipboardWriter, discoverDesktop: true, isolatedAutoStart: null);
+
+    internal static string ValidateSignedOutFixture(string directory)
+    {
+        var root = Path.GetFullPath(directory);
+        var personal = Path.TrimEndingDirectorySeparator(AppPaths.Default().Root);
+        if (!Path.IsPathFullyQualified(directory) || !Directory.Exists(root)
+            || root.Equals(personal, StringComparison.OrdinalIgnoreCase)
+            || root.StartsWith(personal + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+            || !File.Exists(Path.Combine(root, "migration-fixture.json"))
+            || File.Exists(Path.Combine(root, "tokens.bin")))
+            throw new InvalidOperationException("The signed-out fixture requires its own existing marked state directory without tokens.");
+        for (var parent = new DirectoryInfo(root); parent is not null; parent = parent.Parent)
+            if ((parent.Attributes & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidOperationException("Fixture paths cannot cross a reparse point.");
+        foreach (var path in new[] { "migration-fixture.json", "settings.json", "history.json", "logs", "logs\\voiceprompt.log", "dictation-recovery" })
+        {
+            var candidate = Path.Combine(root, path);
+            if ((File.Exists(candidate) || Directory.Exists(candidate))
+                && (File.GetAttributes(candidate) & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidOperationException("Fixture state cannot contain linked files or directories.");
+        }
+        return root;
+    }
+
+    internal static AppHost CreateSignedOutFixture(string directory, INotifier notifier, IClipboardWriter clipboardWriter) =>
+        CreateCore(new AppPaths(ValidateSignedOutFixture(directory)), notifier, clipboardWriter,
+            discoverDesktop: false, isolatedAutoStart: new NullAutoStartManager());
+
+    private static AppHost CreateCore(AppPaths paths, INotifier notifier, IClipboardWriter? clipboardWriter,
+        bool discoverDesktop, IAutoStartManager? isolatedAutoStart)
     {
         var clock = SystemClock.Instance;
         var fs = PhysicalFileSystem.Instance;
-        var paths = AppPaths.Default();
         paths.EnsureCreated(fs);
 
         var log = new FileLog(paths.LogFile, clock);
@@ -148,7 +179,9 @@ public sealed class AppHost : IAsyncDisposable, IDictationHost
         var firstRun = !fs.FileExists(paths.SettingsFile);
         var settings = settingsStore.Load();
 
-        var desktopConfig = DesktopClientLocator.TryLoad(AppContext.BaseDirectory, paths.Root, fs, log);
+        var desktopConfig = discoverDesktop
+            ? DesktopClientLocator.TryLoad(AppContext.BaseDirectory, paths.Root, fs, log)
+            : null;
 
         var tokenHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
         var protector = new DpapiSecretProtector();
@@ -187,7 +220,7 @@ public sealed class AppHost : IAsyncDisposable, IDictationHost
 
         realtime.TranscriptCompleted += coordinator.HandleAsync;
 
-        var autoStart = new RegistryAutoStartManager(
+        var autoStart = isolatedAutoStart ?? new RegistryAutoStartManager(
             Environment.ProcessPath ?? AppContext.BaseDirectory, log);
 
         host = new AppHost(

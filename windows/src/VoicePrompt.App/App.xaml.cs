@@ -16,12 +16,18 @@ namespace VoicePrompt.App;
 /// </summary>
 public partial class App : Application
 {
+    private readonly SignedOutFixture? _fixture;
+    private DispatcherTimer? _fixtureTimer;
+    private bool _fixtureFailure;
     private SingleInstanceGuard? _instance;
     private AppHost? _host;
     private TrayIconHost? _tray;
     private MainWindow? _window;
     private DictationController? _dictation;
     private bool _exiting;
+
+    public App() { }
+    internal App(SignedOutFixture fixture) => _fixture = fixture;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -31,9 +37,11 @@ public partial class App : Application
             a.Equals("--quit", StringComparison.OrdinalIgnoreCase)
             || a.Equals("/quit", StringComparison.OrdinalIgnoreCase));
 
-        _instance = SingleInstanceGuard.Acquire();
+        _instance = SingleInstanceGuard.Acquire(_fixture is null
+            ? SingleInstanceGuard.DefaultName : SignedOutFixture.InstanceName(_fixture.Key));
         if (!_instance.IsPrimary)
         {
+            if (_fixture is not null) throw new InvalidOperationException("Isolated fixture instance already exists.");
             // Another instance owns the tray icon. Either ask it to shut down (--quit, used by
             // the installer before an upgrade) or surface its window, then quit quietly.
             if (quitRequested)
@@ -70,7 +78,9 @@ public partial class App : Application
             _host?.Log.Error($"fatal: {(args.ExceptionObject as Exception)?.GetType().Name ?? "unknown"}");
 
         _tray = new TrayIconHost(TrayIconHost.LoadAppIcon());
-        _host = AppHost.Create(_tray);
+        _host = _fixture is null ? AppHost.Create(_tray)
+            : AppHost.CreateSignedOutFixture(_fixture.Root, _tray, new SignedOutFixture.ForbiddenClipboard());
+        if (_fixture is not null) SignedOutFixture.ValidateHost(_host);
 
         _tray.SetPausedChecked(_host.Settings.NotificationsPaused);
         _tray.Open += () => Dispatcher.BeginInvoke(ShowMainWindow);
@@ -105,6 +115,7 @@ public partial class App : Application
         }
         catch (Exception ex)
         {
+            if (_fixture is not null) throw;
             _host.Log.Warn($"dictation: recovery discovery failed ({ex.GetType().Name})");
             _tray.Notify("Recovery needs attention", "Saved dictation data could not be read. Open Recovery for details.",
                 Core.Notifications.NotificationKind.Warning);
@@ -115,17 +126,25 @@ public partial class App : Application
         }
         catch (Exception ex)
         {
+            if (_fixture is not null) throw;
             _host.Log.Warn($"dictation: shortcut registration failed ({ex.GetType().Name})");
             _tray.Notify("Dictation shortcut unavailable", "Choose another shortcut in Settings.",
                 Core.Notifications.NotificationKind.Warning);
         }
 
-        if (!_host.OAuthConfigured)
+        if (!_host.OAuthConfigured && _fixture is null)
         {
             _tray.Notify(
                 "VoicePrompt",
                 "Sign-in is not configured yet. Open the window for setup details.",
                 Core.Notifications.NotificationKind.Warning);
+        }
+        if (_fixture is not null)
+        {
+            _fixtureTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(_fixture.Seconds) };
+            _fixtureTimer.Tick += (_, _) => ExitApplication();
+            _fixtureTimer.Start();
+            Dispatcher.BeginInvoke(() => _fixture.Publish(_host.History.All().Count), DispatcherPriority.ApplicationIdle);
         }
     }
 
@@ -199,6 +218,14 @@ public partial class App : Application
 
     private void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
     {
+        if (_fixture is not null)
+        {
+            Console.Error.WriteLine($"C# fixture UI failed: {e.Exception.GetType().Name}");
+            _fixtureFailure = true;
+            e.Handled = true;
+            ExitApplication();
+            return;
+        }
         var site = new StackTrace(e.Exception, false).GetFrames()?
             .Select(frame =>
             {
@@ -220,9 +247,23 @@ public partial class App : Application
         }
 
         _exiting = true;
+        _fixtureTimer?.Stop();
         if (_dictation is not null)
-            await _dictation.DisposeAsync();
-        Shutdown(0);
+        {
+            if (_fixture is null) await _dictation.DisposeAsync();
+            else
+            {
+                try { await _dictation.DisposeAsync(); }
+                catch (Exception error) { Console.Error.WriteLine($"C# fixture dictation shutdown failed: {error.GetType().Name}"); _fixtureFailure = true; }
+            }
+        }
+        if (_fixture is not null && _host is not null)
+        {
+            try { await _host.DisposeAsync(); }
+            catch (Exception error) { Console.Error.WriteLine($"C# fixture shutdown failed: {error.GetType().Name}"); _fixtureFailure = true; }
+            _host = null;
+        }
+        Shutdown(_fixtureFailure ? 1 : 0);
     }
 
     protected override void OnExit(ExitEventArgs e)

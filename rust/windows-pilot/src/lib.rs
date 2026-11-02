@@ -4,6 +4,9 @@
 mod platform;
 
 #[cfg(windows)]
+mod fixtures;
+
+#[cfg(windows)]
 mod clipboard;
 
 #[cfg(windows)]

@@ -129,6 +129,17 @@ Installed mode rejects fixture/readiness/explicit-path flags before any personal
 state is opened. Process tests exercise only those rejection paths, not a real
 installed launch or upgrade.
 
+## Full-client signed-out measurement
+
+The separate `--signed-out-fixture <marked-root> --fixture-ready-file <new-path>
+--instance-key <N-guid> --run-for-seconds <1-3600>` mode initializes the actual
+client/recovery/dictation/audit/overlay lifecycle without enabling physical ports.
+It refuses token caches, OAuth, installed state and reparse paths and publishes
+only `full-client-signed-out-fixture` readiness, never foundation readiness.
+The matching C# tool starts the actual WPF App with isolated paths/IPC; see
+`scripts\measure_clients.py` and its guard tests. These are bounded signed-out
+measurements, not real-device or whole-migration acceptance.
+
 ## Recovery codec parity, not the recovery runtime
 
 `--recovery-load-fixture` and `--recovery-save-fixture` take an explicit absolute

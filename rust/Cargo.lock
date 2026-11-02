@@ -1955,6 +1955,7 @@ version = "0.1.0"
 name = "voiceprompt-windows-pilot"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
  "time",
  "tokio",
  "url",

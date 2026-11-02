@@ -31,6 +31,7 @@ pub struct ClientOptions {
     pub oauth_config: Option<PathBuf>,
     pub clipboard_enabled: bool,
     pub installed: bool,
+    pub fixture_runtime: bool,
 }
 
 #[derive(Clone)]
@@ -45,6 +46,7 @@ pub(crate) struct ClientStatus {
     pub dictation: DictationView,
     pub recovery: Arc<Vec<crate::NativeRecoveryInfo>>,
     pub history_refreshing: bool,
+    pub runtime_ready: bool,
 }
 
 impl Default for ClientStatus {
@@ -60,6 +62,7 @@ impl Default for ClientStatus {
             dictation: DictationView::default(),
             recovery: Arc::new(Vec::new()),
             history_refreshing: false,
+            runtime_ready: false,
         }
     }
 }
@@ -203,9 +206,27 @@ impl ClientHost {
             }
         }
         let clipboard_enabled = options.clipboard_enabled;
+        if options.fixture_runtime {
+            if options.installed || options.oauth_config.is_some() || options.clipboard_enabled {
+                return Err(NativeError::InvalidArgument(
+                    "Measurement cannot enable installed state, OAuth or clipboard access.",
+                ));
+            }
+            crate::fixtures::validate(&options.state_directory, None)?;
+        }
         let settings_store =
             NativeSettingsStore::new(options.state_directory.join("settings.json"))?;
         let mut settings = settings_store.load()?;
+        if options.fixture_runtime
+            && (settings.backend_base_url != "https://fixture.example.invalid"
+                || settings.auto_start
+                || settings.dictation_enabled
+                || !settings.notifications_paused)
+        {
+            return Err(NativeError::InvalidArgument(
+                "Signed-out fixture settings must disable physical ports, autostart and automatic copy.",
+            ));
+        }
         if options.installed {
             settings.auto_start = crate::autostart::enabled(true)?;
         }
@@ -227,7 +248,7 @@ impl ClientHost {
         let history = Arc::new(NativeHistoryStore::new(
             options.state_directory.join("history.json"),
         )?);
-        let recovery = if clipboard_enabled {
+        let recovery = if clipboard_enabled || options.fixture_runtime {
             Some(crate::dictation::open_recovery(
                 options.state_directory.join("recovery"),
             )?)
@@ -533,6 +554,7 @@ async fn run_client(
         }
     });
     let mut cleanup = tokio::time::interval(Duration::from_secs(60));
+    status.send_modify(|status| status.runtime_ready = true);
     loop {
         tokio::select! {
             _ = stop.changed() => if *stop.borrow_and_update() { break; },
@@ -837,6 +859,7 @@ mod tests {
                 oauth_config: None,
                 clipboard_enabled: false,
                 installed: false,
+                fixture_runtime: false,
             })
             .is_err()
         );

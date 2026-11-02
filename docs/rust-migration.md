@@ -1066,3 +1066,38 @@ nebo zmeny user state. Proslo218 Windows workspace testu,6 platform a6 native
 lifecycle parity skupin, fmt/Clippy a release. Installer byl jen rebuild:
 SHA256 AB92DFB077270B2BD19206BAE7A09D99BF135ED1F978ACDC2AC1E555984975A2.
 Skutecna instalace/start/upgrade zustava neprovedena; acceptance prahy se nemeni.
+
+## Bezpecny full-client signed-out measurement fixture
+
+Pro kontrolovany odhlaseny profil uz neni nutne spoustet osobni C# entry point:
+minimalni VoicePromptClientFixture.exe vola skutecny WPF App.InitializeComponent/
+OnStartup s internal fixture options. Normalni App konstruktor a produkcni
+Create cesta zustavaji zachovane. Fixture meni jen explicitni state root,
+oddeleny IPC namespace a zakazane physical ports; neni druhou implementaci UI
+ani jen Core-only hostem. Actual tray, SystemEvents, auth/HTTP/realtime/history,
+recovery, dictation/controller/overlay a audit lifecycle se inicializuji.
+
+Rust --signed-out-fixture pouziva real run_tray/ClientHost a plny recovery/
+dictation/audit runtime, ale bez OAuth/clipboard/device pristupu. Ma vlastni
+--fixture-ready-file a scope full-client-signed-out-fixture; nesmi publikovat
+foundation readiness nebo pouzit installed/ordinary explicit-state kombinaci.
+Both fixtures odmitaji existing tokens, nespravny marker a reparse paths.
+I pritomny synteticky OAuth env override je ignorovan; real config se nehleda.
+
+Process tests overuji skutecne obe aplikacni composition cesty a bezpecny
+graceful quit pouze vlastnich namespaces; input JSON zustava byte-exact.
+C# build ma0 warnings/errors a402 Core regression testu proslo. Rust ma219
+Windows workspace testu vcetne6 startup planning testu; fmt/Clippy/release prosly.
+Novy fixture guard je zapojeny do Windows CI pres existing approved NuGet feed.
+
+scripts/measure_clients.py sbira30 alternating startu kazde implementace a3
+paired memory serie po301 samples. Pouziva stejny byte-identicky200-entry
+corpus, kontroluje PID, scope, samplovani a binary/DLL bundle hashes pred/po.
+Vyhodnocuje vsechny serie i explicitni80MiB/50% a1s/70% prahy; neredukuje je.
+Smoke2/3/1 neni acceptance a ma sufficient=false. Full beh se provadi zvlast
+az nad ulozenym code checkpointem a frozen binaries.
+
+Tento profil nemeri signed-in networking, fyzicky mikrofon, clipboard/paste,
+registry autostart, installed upgrade, cold OS cache ani hodinovou nahravku.
+whole_migration_acceptance zustava false i pri uspesnem profilu. Puvodni
+foundation mereni se nadale nesmi pouzit jako nahrada kompletniho klienta.

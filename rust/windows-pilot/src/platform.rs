@@ -45,6 +45,7 @@ const MAX_CIPHERTEXT_BYTES: usize = MAX_PLAINTEXT_BYTES + 64 * 1024;
 const TRAY_MESSAGE: u32 = WM_APP + 1;
 const ACTIVATE_MESSAGE: u32 = WM_APP + 2;
 const QUIT_MESSAGE: u32 = WM_APP + 3;
+const FIXTURE_READY_MESSAGE: u32 = WM_APP + 4;
 const EXIT_TIMER: usize = 1;
 const MENU_OPEN: usize = 1001;
 const MENU_EXIT: usize = 1002;
@@ -69,6 +70,7 @@ const INSTANCE_TIMER: usize = 3;
 
 thread_local! {
     static CALLBACK_ERROR: RefCell<Option<NativeError>> = const { RefCell::new(None) };
+    static FIXTURE_READY:RefCell<Option<(PathBuf,Vec<u8>)>>=const{RefCell::new(None)};
     static CLIENT: RefCell<Option<ClientHost>> = const { RefCell::new(None) };
     static DICTATION_UI: RefCell<Option<crate::dictation_ui::DictationUi>> = const { RefCell::new(None) };
     static RELOAD_CLIENT: RefCell<Option<ClientOptions>> = const { RefCell::new(None) };
@@ -1294,6 +1296,12 @@ fn dispatch(
     lparam: LPARAM,
 ) -> Result<LRESULT, NativeError> {
     match message {
+        FIXTURE_READY_MESSAGE => {
+            if let Some((path, data)) = FIXTURE_READY.with(|slot| slot.borrow_mut().take()) {
+                atomic_write(&path, &data, WriteMode::CreateNew)?;
+            }
+            Ok(LRESULT(0))
+        }
         WM_CREATE => {
             let instance = HINSTANCE(
                 api("GetModuleHandleW", unsafe {
@@ -1646,6 +1654,7 @@ fn publish_ready(path: &Path) -> Result<(), NativeError> {
 pub struct TrayOptions {
     pub instance_key: String,
     pub ready_file: Option<PathBuf>,
+    pub fixture_ready_file: Option<PathBuf>,
     pub run_for_seconds: Option<u32>,
     pub self_test: bool,
     pub client: Option<ClientOptions>,
@@ -1655,6 +1664,7 @@ struct ClientAttachment;
 
 impl Drop for ClientAttachment {
     fn drop(&mut self) {
+        FIXTURE_READY.with(|slot| *slot.borrow_mut() = None);
         crate::settings_ui::close();
         let ui = DICTATION_UI.with(|slot| slot.borrow_mut().take());
         drop(ui);
@@ -1692,6 +1702,27 @@ fn attach_client(hwnd: HWND, options: ClientOptions) -> Result<(), NativeError> 
 }
 
 pub fn run_tray(options: TrayOptions) -> Result<(), NativeError> {
+    if let Some(path) = &options.fixture_ready_file {
+        let client = options
+            .client
+            .as_ref()
+            .filter(|client| client.fixture_runtime)
+            .ok_or(NativeError::InvalidArgument(
+                "Client measurement readiness requires the signed-out full fixture.",
+            ))?;
+        if options.self_test
+            || options.ready_file.is_some()
+            || !path.is_absolute()
+            || path
+                .try_exists()
+                .map_err(|error| NativeError::Io("Inspect fixture readiness destination", error))?
+        {
+            return Err(NativeError::InvalidArgument(
+                "Invalid client measurement readiness destination.",
+            ));
+        }
+        crate::fixtures::validate(&client.state_directory, Some(&options.instance_key))?;
+    }
     if let Some(seconds) = options.run_for_seconds {
         if seconds == 0 || seconds > 3600 {
             return Err(NativeError::InvalidArgument(
@@ -1913,6 +1944,48 @@ pub fn run_tray(options: TrayOptions) -> Result<(), NativeError> {
     }
     if let Some(path) = &options.ready_file {
         publish_ready(path)?;
+    }
+    if let Some(path) = &options.fixture_ready_file {
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let ready = CLIENT.with(|slot| {
+                slot.borrow()
+                    .as_ref()
+                    .is_some_and(|host| host.status.borrow().runtime_ready)
+            });
+            if ready {
+                break;
+            }
+            if std::time::Instant::now() >= until {
+                return Err(NativeError::Verification(
+                    "Full client fixture runtime did not become ready.",
+                ));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        let count = CLIENT.with(|slot| {
+            let slot = slot.borrow();
+            let host = slot
+                .as_ref()
+                .ok_or(NativeError::Verification("Missing full client fixture."))?;
+            if host.clipboard_enabled
+                || host.status.borrow().auth
+                    != voiceprompt_client_protocol::state::AuthState::NotConfigured
+            {
+                return Err(NativeError::Verification(
+                    "Measurement fixture enabled physical ports or authentication.",
+                ));
+            }
+            Ok(host.status.borrow().history.len())
+        })?;
+        let data=serde_json::to_vec(&serde_json::json!({"status":"ready","scope":crate::fixtures::SCOPE,
+            "pid":std::process::id(),"implementation":"rust","history_count":count,"auth":"not_configured",
+            "physical_ports_enabled":false,"full_components":true,"instance_key":options.instance_key}))
+            .map_err(|_|NativeError::Verification("Could not encode client measurement readiness."))?;
+        FIXTURE_READY.with(|slot| *slot.borrow_mut() = Some((path.clone(), data)));
+        api("Post client fixture readiness turn", unsafe {
+            PostMessageW(Some(hwnd), FIXTURE_READY_MESSAGE, WPARAM(0), LPARAM(0))
+        })?;
     }
     let mut message = MSG::default();
     loop {

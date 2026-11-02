@@ -4,6 +4,11 @@ on:
   push:
     paths:
       - "rust/**"
+      - "windows/src/VoicePrompt.App/**"
+      - "windows/src/VoicePrompt.Core/**"
+      - "windows/tools/ClientFixture/**"
+      - "scripts/measure_clients.py"
+      - "scripts/tests/test_full_client_fixture.py"
       - ".cargo/config.toml"
       - "scripts/Measure-VoicePromptProcess.ps1"
       - "scripts/Measure-RustNativePilot.ps1"
@@ -13,6 +18,11 @@ on:
   pull_request:
     paths:
       - "rust/**"
+      - "windows/src/VoicePrompt.App/**"
+      - "windows/src/VoicePrompt.Core/**"
+      - "windows/tools/ClientFixture/**"
+      - "scripts/measure_clients.py"
+      - "scripts/tests/test_full_client_fixture.py"
       - ".cargo/config.toml"
       - "scripts/Measure-VoicePromptProcess.ps1"
       - "scripts/Measure-RustNativePilot.ps1"
@@ -149,3 +159,23 @@ jobs:
           python rust\client-protocol\tests\test_dictation_parity.py
           --client rust\target\release\examples\client_contract.exe
           --reference rust\tests\reference\bin\Release\net8.0\ReferenceAudio.dll
+
+      - name: Build actual C# application fixture through the approved feed
+        if: runner.os == 'Windows'
+        working-directory: .
+        shell: pwsh
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+        run: |
+          dotnet restore windows\tools\ClientFixture\ClientFixture.csproj --source https://packagefeedproxy.microsoft.io/nuget/v3/index.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet build windows\tools\ClientFixture\ClientFixture.csproj -c Release --no-restore
+
+      - name: Full client fixture guards without physical ports or installed state
+        if: runner.os == 'Windows'
+        working-directory: .
+        shell: pwsh
+        run: >
+          python scripts\tests\test_full_client_fixture.py
+          --csharp windows\tools\ClientFixture\bin\Release\net8.0-windows\win-x64\VoicePromptClientFixture.exe
+          --rust rust\target\release\VoicePromptRustPilot.exe
