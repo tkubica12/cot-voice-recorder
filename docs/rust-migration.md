@@ -1232,3 +1232,15 @@ Tri local actual-client guard testy prosly. Meni se pouze functional test setup;
 produkcni runtime, measurement defaults a namerena cisla zustavaji stejna.
 C# rollback baseline nema
 Rust1s startup cil a functional cold-VM guard neni performance acceptance.
+
+Code checkpoint b75f367 ma nyni successful vsechny Windows/Linux Rust,
+MSRV1.85 a non-root container jobs:
+[rust-ci41387511745](https://github.com/tkubica12/cot-voice-recorder/actions/runs/41387511745).
+Actual CI guard zaznamenal C#3462.307ms a native70.583ms, vsechny tri isolation/
+budget testy prosly; virtual50min rotation take prosla. Tato dve CI startup
+pozorovani nejsou nova C01/C02 serie ani nahrada ulozenych30-start profilu.
+
+Povoleny lokalni/source inkrement je commitnuty a pushnuty. Potreba vyhrazeneho
+Windows test prostredi a oddelenych opravneni pro real-world testy byla predana
+koordinatorovi. Kompletni migrace neni oznacena jako hotova; zadny skutecky
+Google/device/clipboard/install/Azure test nebo produkcni zmena se tim neschvaluje.
