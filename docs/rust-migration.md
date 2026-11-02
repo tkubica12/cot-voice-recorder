@@ -1321,3 +1321,41 @@ sledovany streaming body a prokazuje, ze pri chybne metadata validaci nebyl
 ani pollnuty. Proslo230 regularnich Windows Rust testu (95 cloud library),
 strict fmt/Clippy a vsechny tri externi HTTP parity groups. Nejde o tvrzeni
 uplne shody vsech Pydantic coercions nebo kazdeho message wording.
+
+## Physical-port boundary a upresnena autorita hostu
+
+Posledni UI boundary nyni kontroluje take explicitni physical-enabled flag,
+nejen auth/cancel/busy stav. Ani omylem queued authenticated Deliver tedy nesmi
+v isolated/fixture modu pristoupit k systemovemu clipboardu nebo SendInput.
+Regresni test overuje pure admission predicate nad hidden owned UI; nevola
+skutecny clipboard ani kdyby samotny predicate v budoucnu selhal.
+
+0790ef7 ma successful full Rust Windows/Linux/MSRV/container a backend CI.
+Refreshed30+30/3-series authenticated memory-port HTTP profil ma p95 readiness
+Python576.258ms vs Rust36.263ms, paired RSS Python103.703/104.191/104.699MiB
+vs Rust16.078/17.984/19.949MiB a nejhorsi API p95 pomer77.66% baseline.
+Vsechny scoped prahy znovu prosly; full production acceptance zustava false.
+Artifact SHA25619236e4919e5eee1488b4dc1f8e4590455e1ebc58a37a0ba771d88db0a8d06d6.
+
+Koordinator predal drivejsi vyslovne rozhodnuti uzivatele: tento pocitac je pro
+testy schvaleny a uzivatel uvadi, ze osobni VoicePrompt instanci vypnul.
+Jiny Windows profil/stroj tedy neni dalsi organizacni podminka, pokud lze
+konkretni test bezpecne izolovat explicitnim synthetic rootem a IPC. Pred
+relevantnim testem je stale nutne overit skutecny stav. Osobni soubory/cache/
+tokeny/recovery se neoteviraji.
+
+Toto rozhodnuti neschvaluje microphone capture, system clipboard/paste,
+Google login, skutecny install/upgrade, Azure ani placene AI. Po aktivnim
+hodinovem engine checku se koordinatorovi preda nejmensi konkretni fyzicky
+test a jeho skutecna akce/dusledek, nikoli dalsi obecna zadost o jiny profil.
+
+Pro tento nejmensi dalsi krok je pouze zkompilovana explicitne ignored native
+probe: manual_default_device_240ms_count_only_no_store. Pred jakymkoli otevrenim
+zarizeni vyzaduje oddeleny explicitni opt-in; samotny env flag nenahrazuje
+souhlas uzivatele. Po pripadnem souhlasu otevre default WinMM vstup na240ms,
+jen spocita PCM bytes/buffers, zeroizuje je, provede reset/close a vypise timing/
+status. Nic neuklada/neuploaduje a nema auth, UI, hotkeys nebo clipboard cestu.
+Zatim NEBYLA spustena. Existing C# --microphone reference ma stejny240ms
+count-and-clear profil a take nebyla spustena.41 native nonphysical testu
+proslo; hour a manual microphone fixture jsou dve zamerne ignored polozky,
+nikoli zapoctene PASS fyzicke akceptace.

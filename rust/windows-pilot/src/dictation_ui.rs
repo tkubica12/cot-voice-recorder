@@ -358,12 +358,7 @@ impl DictationUi {
         let Some(mut paste) = self.paste.take() else {
             return Ok(());
         };
-        if paste.cancelled.load(Ordering::Acquire)
-            || self.cancel_requested
-            || paste.reply.is_closed()
-            || !self.busy
-            || !self.policy.authenticated()
-        {
+        if !self.can_process_paste(&paste) {
             let _ = paste.reply.send(DeliveryResult::CopiedOnly);
             return Ok(());
         }
@@ -425,6 +420,15 @@ impl DictationUi {
         }
         let _ = paste.reply.send(result);
         Ok(())
+    }
+
+    fn can_process_paste(&self, paste: &Paste) -> bool {
+        self.enabled
+            && self.busy
+            && !self.cancel_requested
+            && !paste.cancelled.load(Ordering::Acquire)
+            && !paste.reply.is_closed()
+            && self.policy.authenticated()
     }
 
     fn show(&mut self, text: &str) -> Result<(), NativeError> {
@@ -577,5 +581,22 @@ mod tests {
         ui.poll(&status).unwrap();
         assert!(!ui.busy);
         assert!(ui.paste.is_none());
+    }
+
+    #[test]
+    fn disabled_physical_ports_reject_even_an_accidentally_queued_authenticated_delivery() {
+        let (mut ui, _commands) = pending_ui();
+        let (reply, result) = oneshot::channel();
+        ui.deliver(
+            17,
+            "synthetic must never touch system clipboard".into(),
+            Arc::new(AtomicBool::new(false)),
+            reply,
+        );
+        assert!(ui.paste.is_some());
+        assert!(!ui.can_process_paste(ui.paste.as_ref().unwrap()));
+        assert!(!unsafe { IsWindowVisible(ui.overlay) }.as_bool());
+        drop(ui);
+        assert!(result.blocking_recv().is_err());
     }
 }

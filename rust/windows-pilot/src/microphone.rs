@@ -304,4 +304,43 @@ mod tests {
         assert_eq!(receiver.try_recv().unwrap().0, [1, 0]);
         assert_eq!(receiver.try_recv().unwrap().0, [2, 0]);
     }
+
+    #[test]
+    #[ignore = "Physical microphone: requires separate explicit user approval; never run by CI."]
+    fn manual_default_device_240ms_count_only_no_store() {
+        assert_eq!(
+            std::env::var("VOICEPROMPT_MANUAL_MICROPHONE_PROBE").as_deref(),
+            Ok("240ms-count-only-no-store"),
+            "Separate user approval is required before opening any microphone."
+        );
+        let began = std::time::Instant::now();
+        let (microphone, mut receiver) = Microphone::start().unwrap();
+        let opened_ms = began.elapsed().as_secs_f64() * 1000.0;
+        std::thread::sleep(Duration::from_millis(240));
+        let stopping = std::time::Instant::now();
+        microphone.finish().unwrap();
+        let stop_ms = stopping.elapsed().as_secs_f64() * 1000.0;
+        let mut bytes = 0;
+        let mut buffers = 0;
+        while let Ok(buffer) = receiver.try_recv() {
+            assert_eq!(buffer.0.len() % 2, 0);
+            bytes += buffer.0.len();
+            buffers += 1;
+        }
+        assert!(
+            bytes >= BUFFER_BYTES,
+            "No complete default-input PCM buffer arrived."
+        );
+        assert!(receiver.is_closed());
+        println!(
+            "{}",
+            serde_json::json!({
+                "scope": "manual-default-microphone-240ms-count-only",
+                "pcm_bytes_counted_then_zeroed": bytes,
+                "buffers": buffers, "open_ms": opened_ms, "stop_ms": stop_ms,
+                "saved_or_uploaded": false, "clipboard_or_keyboard": false,
+                "full_migration_acceptance": false,
+            })
+        );
+    }
 }
