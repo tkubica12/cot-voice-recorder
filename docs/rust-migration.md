@@ -800,3 +800,33 @@ Fixture preferuje dostupny pwsh, ma explicitni 60s setup budget a overuje,
 ze vytvoreny objekt je skutecne junction. Sedm lokalnich recovery parity skupin
 proslo; CI opravy se overuje samostatne. Zadny aplikacni timeout ani acceptance
 prah nebyl zmenen nebo skryt.
+
+## Legacy text a canonical Blob fencing foundation
+
+Server overlap stitching pouziva skutecny Python NFKC/full-casefold/word profil,
+ne Windows invariant-lowercase helper. Prime Python parity overuje vsechny
+assigned Unicode scalars, seam korpus a presne uuid5 namespace publication IDs.
+622 CJK Extension I letters z Unicode15.1 bylo nutne doplnit ke kompatibilnim
+15.0 tabulkam; Windows Unicode profil se kvuli tomu nemeni.
+PubSub event IDs jsou nyni stabilni z recording_id stejne jako v Python pipeline.
+
+Whole-recording refiner zachovava vlastni puvodni system/user prompt a deployment,
+nezamenuje se s bounded literal-edit dictation refinerem. Exact prompt a skutecny
+lokalni HTTP payload byly overeny. Novy caseless0.2.2 a sha1.11 byly queried v
+approved Cargo exception a resolved s locked normalization0.1.23, bez upgradu
+zbytku grafu. Caseless nema declared MSRV; build overuje instalovany compiler,
+ne samostatne rust1.85.
+
+Native Blob acquire/renew/release a leased PUT/If-None-Match primitives i memory
+lease model chrani canonical paths pred stale writerem. Fencing se kontroluje
+na Blob serveru, ne jen pred PUT v recording Table. Tato cast je foundation
+pro finalization; kompletni legacy engine, finalizer a supervisor wiring
+tim jeste nejsou hotove. Provedeny jsou synteticke/local REST a takeover testy,
+nikoli Azure nebo placeny model.
+
+Proslo 182 workspace testu (66 cloud), locked release/fmt/Clippy a tri actual
+Python pipeline text/prompt/UUID parity skupiny, vcetne all-assigned-Unicode
+normalization corpus. Existujici SDK entity a audit byte parity zustavaji passing.
+CI junction-fixture opravy dabeff2 je potvrzene successful na Windows i Linux.
+Zdrojove canonical Blob fencing primitives nejsou vydavany za plnou distributed
+finalizer akceptaci; je treba je jeste napojit na legacy/finalize processor.

@@ -11,6 +11,7 @@ pub mod gateway;
 mod http_fixture;
 pub mod identity;
 pub mod models;
+pub mod pipeline_text;
 pub mod ports;
 pub mod problem;
 pub mod relay;

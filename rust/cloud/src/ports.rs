@@ -8,11 +8,22 @@ use tokio::sync::Mutex;
 #[derive(Clone)]
 pub enum Blobs {
     Azure(Arc<AzureStorage>),
-    Memory(Arc<Mutex<BlobData>>),
+    Memory(Arc<Mutex<MemoryBlobs>>),
+}
+pub struct MemoryBlobs {
+    data: BlobData,
+    leases: HashMap<(String, String), MemoryBlobLease>,
+}
+struct MemoryBlobLease {
+    id: String,
+    expires: tokio::time::Instant,
 }
 impl Blobs {
     pub fn memory() -> Self {
-        Self::Memory(Arc::new(Mutex::new(HashMap::new())))
+        Self::Memory(Arc::new(Mutex::new(MemoryBlobs {
+            data: HashMap::new(),
+            leases: HashMap::new(),
+        })))
     }
     pub async fn put(
         &self,
@@ -24,10 +35,17 @@ impl Blobs {
         match self {
             Self::Azure(storage) => storage.put_blob(container, name, data, content_type).await,
             Self::Memory(memory) => {
-                memory
-                    .lock()
-                    .await
-                    .insert((container.into(), name.into()), data);
+                let mut memory = memory.lock().await;
+                let key = (container.into(), name.into());
+                if memory
+                    .leases
+                    .get(&key)
+                    .is_some_and(|lease| lease.expires > tokio::time::Instant::now())
+                {
+                    return Err(StorageError::Conflict);
+                }
+                memory.leases.remove(&key);
+                memory.data.insert(key, data);
                 Ok(())
             }
         }
@@ -43,6 +61,7 @@ impl Blobs {
             Self::Memory(memory) => {
                 let memory = memory.lock().await;
                 let value = memory
+                    .data
                     .get(&(container.into(), name.into()))
                     .ok_or(StorageError::NotFound)?;
                 if value.len() > maximum {
@@ -57,12 +76,214 @@ impl Blobs {
     pub async fn delete(&self, container: &str, name: &str) -> Result<bool, StorageError> {
         match self {
             Self::Azure(storage) => storage.delete_blob(container, name).await,
-            Self::Memory(memory) => Ok(memory
-                .lock()
-                .await
-                .remove(&(container.into(), name.into()))
-                .is_some()),
+            Self::Memory(memory) => {
+                let mut memory = memory.lock().await;
+                let key = (container.into(), name.into());
+                if memory
+                    .leases
+                    .get(&key)
+                    .is_some_and(|lease| lease.expires > tokio::time::Instant::now())
+                {
+                    return Err(StorageError::Conflict);
+                }
+                memory.leases.remove(&key);
+                Ok(memory.data.remove(&key).is_some())
+            }
         }
+    }
+    pub async fn put_if_absent(
+        &self,
+        container: &str,
+        name: &str,
+        data: Vec<u8>,
+        mime: &str,
+    ) -> Result<(), StorageError> {
+        match self {
+            Self::Azure(storage) => {
+                storage
+                    .put_blob_if_absent(container, name, data, mime)
+                    .await
+            }
+            Self::Memory(memory) => {
+                let mut memory = memory.lock().await;
+                let key = (container.into(), name.into());
+                if memory.data.contains_key(&key) {
+                    return Err(StorageError::Conflict);
+                }
+                memory.data.insert(key, data);
+                Ok(())
+            }
+        }
+    }
+    pub async fn acquire_lease(
+        &self,
+        container: &str,
+        name: &str,
+        proposed: &str,
+    ) -> Result<String, StorageError> {
+        if !crate::storage::valid_lease(proposed) {
+            return Err(StorageError::Failure(crate::problem::Problem::validation(
+                "Invalid Blob lease ID.",
+            )));
+        }
+        match self {
+            Self::Azure(storage) => storage.acquire_blob_lease(container, name, proposed).await,
+            Self::Memory(memory) => {
+                let mut memory = memory.lock().await;
+                let key = (container.into(), name.into());
+                if !memory.data.contains_key(&key) {
+                    return Err(StorageError::NotFound);
+                }
+                let now = tokio::time::Instant::now();
+                if memory
+                    .leases
+                    .get(&key)
+                    .is_some_and(|lease| lease.expires > now)
+                {
+                    return Err(StorageError::Conflict);
+                }
+                memory.leases.insert(
+                    key,
+                    MemoryBlobLease {
+                        id: proposed.into(),
+                        expires: now + std::time::Duration::from_secs(60),
+                    },
+                );
+                Ok(proposed.into())
+            }
+        }
+    }
+    pub async fn renew_lease(
+        &self,
+        container: &str,
+        name: &str,
+        id: &str,
+    ) -> Result<(), StorageError> {
+        if !crate::storage::valid_lease(id) {
+            return Err(StorageError::Failure(crate::problem::Problem::validation(
+                "Invalid Blob lease ID.",
+            )));
+        }
+        match self {
+            Self::Azure(storage) => storage.renew_blob_lease(container, name, id).await,
+            Self::Memory(memory) => {
+                let mut memory = memory.lock().await;
+                let lease = memory
+                    .leases
+                    .get_mut(&(container.into(), name.into()))
+                    .filter(|lease| lease.id == id)
+                    .ok_or(StorageError::Conflict)?;
+                lease.expires = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
+                Ok(())
+            }
+        }
+    }
+    pub async fn release_lease(
+        &self,
+        container: &str,
+        name: &str,
+        id: &str,
+    ) -> Result<(), StorageError> {
+        if !crate::storage::valid_lease(id) {
+            return Err(StorageError::Failure(crate::problem::Problem::validation(
+                "Invalid Blob lease ID.",
+            )));
+        }
+        match self {
+            Self::Azure(storage) => storage.release_blob_lease(container, name, id).await,
+            Self::Memory(memory) => {
+                let mut memory = memory.lock().await;
+                let key = (container.into(), name.into());
+                if !memory.leases.get(&key).is_some_and(|lease| lease.id == id) {
+                    return Err(StorageError::Conflict);
+                }
+                memory.leases.remove(&key);
+                Ok(())
+            }
+        }
+    }
+    pub async fn put_leased(
+        &self,
+        container: &str,
+        name: &str,
+        data: Vec<u8>,
+        mime: &str,
+        id: &str,
+    ) -> Result<(), StorageError> {
+        if !crate::storage::valid_lease(id) {
+            return Err(StorageError::Failure(crate::problem::Problem::validation(
+                "Invalid Blob lease ID.",
+            )));
+        }
+        match self {
+            Self::Azure(storage) => {
+                storage
+                    .put_leased_blob(container, name, data, mime, id)
+                    .await
+            }
+            Self::Memory(memory) => {
+                let mut memory = memory.lock().await;
+                let key = (container.into(), name.into());
+                if !memory.leases.get(&key).is_some_and(|lease| {
+                    lease.id == id && lease.expires > tokio::time::Instant::now()
+                }) {
+                    return Err(StorageError::Conflict);
+                }
+                memory.data.insert(key, data);
+                Ok(())
+            }
+        }
+    }
+}
+
+pub struct BlobLease {
+    blobs: Blobs,
+    container: String,
+    name: String,
+    id: String,
+}
+impl BlobLease {
+    pub async fn acquire(
+        blobs: Blobs,
+        container: String,
+        name: String,
+    ) -> Result<Self, StorageError> {
+        match blobs
+            .put_if_absent(&container, &name, Vec::new(), "text/plain; charset=utf-8")
+            .await
+        {
+            Ok(()) | Err(StorageError::Conflict) => {}
+            Err(error) => return Err(error),
+        }
+        let proposed = crate::services::uuid().map_err(StorageError::Failure)?;
+        let id = blobs.acquire_lease(&container, &name, &proposed).await?;
+        Ok(Self {
+            blobs,
+            container,
+            name,
+            id,
+        })
+    }
+    pub async fn renew(&self) -> Result<(), StorageError> {
+        self.blobs
+            .renew_lease(&self.container, &self.name, &self.id)
+            .await
+    }
+    pub async fn write(&self, data: Vec<u8>) -> Result<(), StorageError> {
+        self.blobs
+            .put_leased(
+                &self.container,
+                &self.name,
+                data,
+                "text/plain; charset=utf-8",
+                &self.id,
+            )
+            .await
+    }
+    pub async fn release(&self) -> Result<(), StorageError> {
+        self.blobs
+            .release_lease(&self.container, &self.name, &self.id)
+            .await
     }
 }
 
@@ -249,6 +470,70 @@ mod queue_tests {
         receipt.delete().await.unwrap();
         assert!(memory.messages.lock().await.is_empty());
         receipt.delete().await.unwrap();
+    }
+
+    #[cfg(test)]
+    mod blob_lease_tests {
+        use super::*;
+        #[tokio::test]
+        async fn expired_and_released_blob_owners_cannot_overwrite_or_release_the_current_canonical_writer()
+         {
+            let blobs = Blobs::memory();
+            let first =
+                BlobLease::acquire(blobs.clone(), "transcripts".into(), "fixture.txt".into())
+                    .await
+                    .unwrap();
+            first.write(b"initial".to_vec()).await.unwrap();
+            assert!(matches!(
+                blobs
+                    .put(
+                        "transcripts",
+                        "fixture.txt",
+                        b"unsafe".to_vec(),
+                        "text/plain"
+                    )
+                    .await,
+                Err(StorageError::Conflict)
+            ));
+            assert!(matches!(
+                BlobLease::acquire(blobs.clone(), "transcripts".into(), "fixture.txt".into()).await,
+                Err(StorageError::Conflict)
+            ));
+            first.renew().await.unwrap();
+            let Blobs::Memory(memory) = &blobs else {
+                panic!("memory fixture");
+            };
+            memory
+                .lock()
+                .await
+                .leases
+                .get_mut(&("transcripts".into(), "fixture.txt".into()))
+                .unwrap()
+                .expires = tokio::time::Instant::now() - std::time::Duration::from_secs(1);
+            let successor =
+                BlobLease::acquire(blobs.clone(), "transcripts".into(), "fixture.txt".into())
+                    .await
+                    .unwrap();
+            assert!(matches!(
+                first.write(b"stale".to_vec()).await,
+                Err(StorageError::Conflict)
+            ));
+            assert!(matches!(first.release().await, Err(StorageError::Conflict)));
+            successor.write(b"canonical".to_vec()).await.unwrap();
+            assert_eq!(
+                blobs.get("transcripts", "fixture.txt", 128).await.unwrap(),
+                b"canonical"
+            );
+            successor.release().await.unwrap();
+            assert!(matches!(
+                successor.write(b"late".to_vec()).await,
+                Err(StorageError::Conflict)
+            ));
+            assert_eq!(
+                blobs.get("transcripts", "fixture.txt", 128).await.unwrap(),
+                b"canonical"
+            );
+        }
     }
     #[tokio::test]
     async fn delayed_messages_and_visible_redelivery_keep_one_message_per_receive() {

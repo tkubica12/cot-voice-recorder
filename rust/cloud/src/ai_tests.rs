@@ -278,3 +278,47 @@ async fn cancelled_http_waiter_keeps_physical_slot_until_work_finishes() {
     .unwrap();
     assert!(pool.execute(async { Ok(()) }).await.is_ok());
 }
+
+#[tokio::test]
+async fn whole_recording_refiner_preserves_its_own_original_prompt_and_selected_deployment() {
+    let mut server = serve(vec![
+        token(),
+        (
+            200,
+            r#"{"choices":[{"message":{"content":"synthetic refined text"}}]}"#.into(),
+        ),
+    ])
+    .await;
+    let ai = AzureAi::new(
+        Arc::new(config(&server.endpoint)),
+        Arc::new(ManagedIdentity::fixture(server.endpoint.as_str())),
+    )
+    .unwrap();
+    assert_eq!(
+        ai.refine_recording("synthetic raw text", "gpt-5.6-terra")
+            .await
+            .unwrap(),
+        "synthetic refined text"
+    );
+    server.next().await;
+    let request = server.next().await;
+    assert_eq!(
+        request.target.path(),
+        "/openai/deployments/gpt-5.6-terra/chat/completions"
+    );
+    let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+    assert_eq!(body["model"], "gpt-5.6-terra");
+    assert_eq!(
+        body["messages"][0]["content"],
+        RECORDING_PROMPT
+            .replace("\r\n", "\n")
+            .trim_end_matches('\n')
+    );
+    assert_eq!(
+        body["messages"][1]["content"],
+        "Clean up the following raw transcript according to the rules. Return only the cleaned transcript.\n\n<transcript>\nsynthetic raw text\n</transcript>"
+    );
+    assert!(body.get("reasoning_effort").is_none());
+    assert!(body.get("response_format").is_none());
+    server.finish().await;
+}

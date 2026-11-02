@@ -19,8 +19,19 @@ fn invalid(category: &'static str) -> InvalidEdits {
 pub(crate) fn python_whitespace(value: char) -> bool {
     value.is_whitespace() || matches!(value, '\u{1c}'..='\u{1f}')
 }
-fn word(value: char) -> bool {
+pub(crate) fn word(value: char) -> bool {
     value == '_'
+        || letter(value)
+        || matches!(
+            get_general_category(value),
+            GeneralCategory::DecimalNumber
+                | GeneralCategory::LetterNumber
+                | GeneralCategory::OtherNumber
+        )
+}
+fn letter(value: char) -> bool {
+    // Python 3.13's Unicode 15.1 adds CJK Extension I to the pinned 15.0 tables.
+    matches!(value, '\u{2ebf0}'..='\u{2ee5d}')
         || matches!(
             get_general_category(value),
             GeneralCategory::UppercaseLetter
@@ -28,9 +39,6 @@ fn word(value: char) -> bool {
                 | GeneralCategory::TitlecaseLetter
                 | GeneralCategory::ModifierLetter
                 | GeneralCategory::OtherLetter
-                | GeneralCategory::DecimalNumber
-                | GeneralCategory::LetterNumber
-                | GeneralCategory::OtherNumber
         )
 }
 fn linebreak(value: char) -> bool {
@@ -110,14 +118,7 @@ fn identifiers(text: &str) -> HashMap<String, usize> {
 fn scripts(text: &str) -> HashSet<String> {
     let mut scripts = HashSet::new();
     for value in text.chars() {
-        if matches!(
-            get_general_category(value),
-            GeneralCategory::UppercaseLetter
-                | GeneralCategory::LowercaseLetter
-                | GeneralCategory::TitlecaseLetter
-                | GeneralCategory::ModifierLetter
-                | GeneralCategory::OtherLetter
-        ) {
+        if letter(value) {
             let name = unicode_names2::name(value)
                 .map(|name| name.to_string())
                 .unwrap_or_else(|| "UNKNOWN".into());

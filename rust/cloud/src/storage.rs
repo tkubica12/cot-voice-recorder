@@ -180,6 +180,110 @@ impl AzureStorage {
         let uri = Self::uri(&self.blob, &[container, name])?;
         Self::bytes(self.request(Method::GET, uri, None, &[]).await?, maximum).await
     }
+    pub async fn put_blob_if_absent(
+        &self,
+        container: &str,
+        name: &str,
+        data: Vec<u8>,
+        content_type: &str,
+    ) -> Result<()> {
+        self.request(
+            Method::PUT,
+            Self::uri(&self.blob, &[container, name])?,
+            Some(data),
+            &[
+                ("x-ms-blob-type", "BlockBlob"),
+                ("Content-Type", content_type),
+                ("If-None-Match", "*"),
+            ],
+        )
+        .await?;
+        Ok(())
+    }
+    pub async fn put_leased_blob(
+        &self,
+        container: &str,
+        name: &str,
+        data: Vec<u8>,
+        content_type: &str,
+        lease: &str,
+    ) -> Result<()> {
+        if !valid_lease(lease) {
+            return Err(invalid());
+        }
+        self.request(
+            Method::PUT,
+            Self::uri(&self.blob, &[container, name])?,
+            Some(data),
+            &[
+                ("x-ms-blob-type", "BlockBlob"),
+                ("Content-Type", content_type),
+                ("x-ms-lease-id", lease),
+            ],
+        )
+        .await?;
+        Ok(())
+    }
+    pub async fn acquire_blob_lease(
+        &self,
+        container: &str,
+        name: &str,
+        proposed: &str,
+    ) -> Result<String> {
+        if !valid_lease(proposed) {
+            return Err(invalid());
+        }
+        let mut uri = Self::uri(&self.blob, &[container, name])?;
+        uri.query_pairs_mut().append_pair("comp", "lease");
+        let response = self
+            .request(
+                Method::PUT,
+                uri,
+                None,
+                &[
+                    ("x-ms-lease-action", "acquire"),
+                    ("x-ms-lease-duration", "60"),
+                    ("x-ms-proposed-lease-id", proposed),
+                ],
+            )
+            .await?;
+        response
+            .headers()
+            .get("x-ms-lease-id")
+            .and_then(|value| value.to_str().ok())
+            .filter(|value| valid_lease(value))
+            .map(str::to_owned)
+            .ok_or_else(error)
+    }
+    pub async fn renew_blob_lease(&self, container: &str, name: &str, lease: &str) -> Result<()> {
+        self.blob_lease_action(container, name, lease, "renew")
+            .await
+    }
+    pub async fn release_blob_lease(&self, container: &str, name: &str, lease: &str) -> Result<()> {
+        self.blob_lease_action(container, name, lease, "release")
+            .await
+    }
+    async fn blob_lease_action(
+        &self,
+        container: &str,
+        name: &str,
+        lease: &str,
+        action: &'static str,
+    ) -> Result<()> {
+        if !valid_lease(lease) {
+            return Err(invalid());
+        }
+        let mut uri = Self::uri(&self.blob, &[container, name])?;
+        uri.query_pairs_mut().append_pair("comp", "lease");
+        self.request(
+            Method::PUT,
+            uri,
+            None,
+            &[("x-ms-lease-action", action), ("x-ms-lease-id", lease)],
+        )
+        .await?;
+        Ok(())
+    }
     pub async fn delete_blob(&self, container: &str, name: &str) -> Result<bool> {
         let uri = Self::uri(&self.blob, &[container, name])?;
         match self.request(Method::DELETE, uri, None, &[]).await {
@@ -438,6 +542,16 @@ fn odata_key(value: &str) -> Result<String> {
         return Err(invalid());
     }
     Ok(value.replace('\'', "''"))
+}
+pub(crate) fn valid_lease(value: &str) -> bool {
+    value.len() == 36
+        && value.bytes().enumerate().all(|(index, value)| {
+            if matches!(index, 8 | 13 | 18 | 23) {
+                value == b'-'
+            } else {
+                value.is_ascii_hexdigit()
+            }
+        })
 }
 fn response_etag(response: &Response) -> Result<String> {
     response
@@ -750,6 +864,97 @@ mod tests {
                 Err(StorageError::Failure(_))
             ));
         }
+        server.await.unwrap();
+        identity_server.await.unwrap();
+    }
+    #[tokio::test]
+    async fn canonical_blob_writes_use_a_server_lease_and_cannot_bypass_another_owner() {
+        use tokio::io::AsyncWriteExt;
+        let (identity, identity_server) = identity_fixture().await;
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            for (stage, status) in [(0, 201), (1, 200), (2, 201), (3, 412), (4, 200)] {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let (headers, body) = read_request(&mut stream).await;
+                let headers = headers.to_ascii_lowercase();
+                match stage {
+                    0 => {
+                        assert!(headers.contains("comp=lease"));
+                        assert!(headers.contains("x-ms-lease-action: acquire"));
+                        assert!(headers.contains("x-ms-lease-duration: 60"));
+                        assert!(headers.contains(
+                            "x-ms-proposed-lease-id: 00000000-0000-4000-8000-000000000001"
+                        ));
+                    }
+                    1 => {
+                        assert!(headers.contains("x-ms-lease-action: renew"));
+                        assert!(
+                            headers.contains("x-ms-lease-id: 00000000-0000-4000-8000-000000000001")
+                        );
+                    }
+                    2 => {
+                        assert!(
+                            headers.contains("x-ms-lease-id: 00000000-0000-4000-8000-000000000001")
+                        );
+                        assert_eq!(body, b"synthetic canonical");
+                    }
+                    3 => assert!(
+                        headers.contains("x-ms-lease-id: 00000000-0000-4000-8000-000000000002")
+                    ),
+                    4 => {
+                        assert!(headers.contains("x-ms-lease-action: release"));
+                        assert!(
+                            headers.contains("x-ms-lease-id: 00000000-0000-4000-8000-000000000001")
+                        );
+                    }
+                    _ => unreachable!(),
+                }
+                stream.write_all(format!("HTTP/1.1 {status} Fixture\r\nx-ms-lease-id: 00000000-0000-4000-8000-000000000001\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").as_bytes()).await.unwrap();
+            }
+        });
+        let storage = fixture(port, identity);
+        let lease = storage
+            .acquire_blob_lease(
+                "transcripts",
+                "fixture.txt",
+                "00000000-0000-4000-8000-000000000001",
+            )
+            .await
+            .unwrap();
+        assert_eq!(lease, "00000000-0000-4000-8000-000000000001");
+        storage
+            .renew_blob_lease("transcripts", "fixture.txt", &lease)
+            .await
+            .unwrap();
+        storage
+            .put_leased_blob(
+                "transcripts",
+                "fixture.txt",
+                b"synthetic canonical".to_vec(),
+                "text/plain",
+                &lease,
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            storage
+                .put_leased_blob(
+                    "transcripts",
+                    "fixture.txt",
+                    b"bad".to_vec(),
+                    "text/plain",
+                    "00000000-0000-4000-8000-000000000002"
+                )
+                .await,
+            Err(StorageError::Conflict)
+        ));
+        storage
+            .release_blob_lease("transcripts", "fixture.txt", &lease)
+            .await
+            .unwrap();
         server.await.unwrap();
         identity_server.await.unwrap();
     }

@@ -9,6 +9,7 @@ use crate::models::Refinement;
 use crate::problem::Problem;
 
 pub const DICTATION_PROMPT: &str = include_str!("../resources/dictation-system.txt");
+pub const RECORDING_PROMPT: &str = include_str!("../resources/recording-system.txt");
 
 #[cfg(test)]
 #[path = "ai_tests.rs"]
@@ -245,6 +246,49 @@ impl AzureAi {
                 "OpenAI transcription returned invalid text.",
             )
         })
+    }
+    pub async fn refine_recording(
+        &self,
+        raw_text: &str,
+        deployment: &str,
+    ) -> Result<String, Problem> {
+        let mut url = Self::path(
+            &self.config.foundry,
+            &["openai", "deployments", deployment, "chat", "completions"],
+        )?;
+        url.query_pairs_mut()
+            .append_pair("api-version", &self.config.foundry_api_version);
+        let token = self
+            .identity
+            .token("https://cognitiveservices.azure.com/")
+            .await?;
+        let body = serde_json::json!({"model":deployment, "messages":[
+            {"role":"system", "content":RECORDING_PROMPT.replace("\r\n", "\n").trim_end_matches('\n')},
+            {"role":"user", "content":format!("Clean up the following raw transcript according to the rules. Return only the cleaned transcript.\n\n<transcript>\n{raw_text}\n</transcript>")}
+        ]});
+        let response = self
+            .http
+            .post(url)
+            .bearer_auth(token)
+            .json(&body)
+            .timeout(Duration::from_secs(600))
+            .send()
+            .await
+            .map_err(|_| Problem::unavailable("Recording refinement request failed."))?;
+        let payload = Self::json(response).await?;
+        payload["choices"]
+            .as_array()
+            .and_then(|choices| choices.first())
+            .and_then(|choice| choice["message"]["content"].as_str())
+            .map(str::to_owned)
+            .ok_or_else(|| {
+                Problem::new(
+                    502,
+                    "bad-gateway",
+                    "Bad gateway",
+                    "Recording refinement returned no text.",
+                )
+            })
     }
     pub async fn refine_dictation(
         &self,

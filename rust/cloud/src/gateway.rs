@@ -121,7 +121,7 @@ impl WebPubSub {
         url.query_pairs_mut()
             .append_pair("api-version", "2024-12-01");
         let event = serde_json::json!({
-            "event":"transcript.completed","event_id":crate::services::uuid()?,
+            "event":"transcript.completed","event_id":crate::pipeline_text::event_id(&transcript.recording_id),
             "transcript_id":transcript.transcript_id,"recording_id":transcript.recording_id,
             "completed_at":crate::services::python_datetime(transcript.completed_at, true),
             "preview":transcript.preview,

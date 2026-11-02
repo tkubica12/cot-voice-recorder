@@ -69,3 +69,6 @@ jobs:
 
       - name: Actual asynchronous Python relay and Rust cursor parity
         run: uv run --locked python ../rust/cloud/tests/test_relay_parity.py --oracle ../rust/target/release/examples/entity_contract
+
+      - name: Actual Python overlap stitching, complete Unicode and deterministic ID parity
+        run: uv run --locked python ../rust/cloud/tests/test_pipeline_text_parity.py --oracle ../rust/target/release/examples/entity_contract

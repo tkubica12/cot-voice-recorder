@@ -15,6 +15,23 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Err("Entity fixture exceeds supported bounds.".into());
     }
     let values: serde_json::Value = serde_json::from_slice(&data)?;
+    if mode == "pipeline-text" {
+        let texts: Vec<String> = serde_json::from_value(values["texts"].clone())?;
+        let tokens: Vec<String> = serde_json::from_value(values["tokens"].clone())?;
+        let id = values["recording_id"]
+            .as_str()
+            .ok_or("Missing synthetic recording id.")?;
+        let result = serde_json::json!({
+            "text":voiceprompt_cloud::pipeline_text::stitch_chunks(&texts, values["min_chars"].as_u64().ok_or("Missing minimum overlap.")? as usize, 60),
+            "tokens":tokens.iter().map(|token| voiceprompt_cloud::pipeline_text::normalize_token(token)).collect::<Vec<_>>(),
+            "transcript_id":voiceprompt_cloud::pipeline_text::transcript_id(id),
+            "event_id":voiceprompt_cloud::pipeline_text::event_id(id),
+        });
+        std::io::stdout()
+            .lock()
+            .write_all(&serde_json::to_vec(&result)?)?;
+        return Ok(());
+    }
     if mode == "relay" {
         let mut state = voiceprompt_cloud::relay::RelayState::new(
             values["start"].as_u64().ok_or("Missing start cursor.")?,

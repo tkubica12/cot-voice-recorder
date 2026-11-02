@@ -34,6 +34,9 @@ Implemented:
 - Leased continuous model processor with full durable replay after failure, exact
   sample/legacy-overlap handling, queue receipt heartbeat and joined shutdown.
   A separate sequential queue loop, legacy pipeline and finalization are not wired.
+- Python-profile full-casefold overlap stitching, deterministic UUID5 publication
+  identities and separate exact-prompt recording refinement. Canonical Blob lease
+  acquire/renew/write/release primitives are present; finalizer wiring remains open.
 
 Stored domain/entity codecs, strict wire defaults, content-digest/sample validation
 and conditional repository primitives now exist.
@@ -47,7 +50,7 @@ cargo test --manifest-path rust\Cargo.toml --offline --locked -p voiceprompt-clo
 cargo clippy --manifest-path rust\Cargo.toml --workspace --offline --locked --all-targets -- -D warnings
 ```
 
-The 62 direct cloud tests use generated in-memory RSA keys and local HTTP/WebSocket
+The direct cloud tests use generated in-memory RSA keys and local HTTP/WebSocket
 fixtures. They exercise real signature validation, cached JWKS, rejected
 HS256/unsigned/wrong claims, UAMI selection, Table CAS, Queue lease receipts,
 actual HTTP handlers, multipart/provider contracts, physical-call cancellation,
@@ -106,6 +109,7 @@ preview and original/final text. All fixtures are synthetic and in memory.
 backend\.venv\Scripts\python.exe rust\cloud\tests\test_edit_parity.py --oracle rust\target\release\examples\entity_contract.exe
 backend\.venv\Scripts\python.exe rust\cloud\tests\test_archive_parity.py --oracle rust\target\release\examples\entity_contract.exe
 backend\.venv\Scripts\python.exe rust\cloud\tests\test_relay_parity.py --oracle rust\target\release\examples\entity_contract.exe
+backend\.venv\Scripts\python.exe rust\cloud\tests\test_pipeline_text_parity.py --oracle rust\target\release\examples\entity_contract.exe
 ```
 
 These do not prove live Azure connectivity, full WebSocket/worker parity,
