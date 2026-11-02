@@ -2472,3 +2472,58 @@ instalovan:976cd0a39e70fce2f70ca4b405d2d56e3dcbf74266481134d6768db38e68ef86.
 Staged VoicePrompt.exe byte-exact odpovida release
 b2b867991907059b55364a4b4338ecda111162d698c14302f15b7d37b4d04d18.
 Dalsich6 existing isolated native Settings/client lifecycle groups PASS.
+
+### Current-main performance: zachovany incomplete failure a oprava eager UI
+
+Exact frozen a2d1200 klient (releaseB2B86799...) byl srovnavan s current
+allowlisted C# bundlem,30+30 starts/3 paired301-point idle series a stejny
+200-entry corpus. Prvni invocation selhal v caller preflight kvuli
+neexistujicimu output directory PRED prvnim client procesem; logs zustaly.
+Po oprave pouze tohoto path precondition provedl fresh collector b
+16 starts kazde implementace a skoncil na dalsi readiness>15s.
+Zadne memory serie ani kompletni30-trial verdict nebyly dokonceny.
+Toto je FAILED/INCOMPLETE, nikoli PASS. Native observed starts obsahovaly
+1.432s/1.590s/2.190s/10.306s, C# take5.024s/12.452s. Puvodni stdout/stderr
+a32 log-recovered rounded0.001ms observations jsou zachovane v
+client-comparison-main-a2d1200; nelze je vydavat za full-precision raw
+nebo vybrat jen rychlejsi subset. Vsech32 logged owned procesu skoncilo
+a generated state roots byly uklizeny. Pricina timeoutu nebyla
+prokazana. Pozdejsi current aggregate hostCPU72% neni dukaz drivejsiho
+load ani omluva pro automaticke snizeni cile.
+
+Source audit prokazal konkretni zbytecnou odchylku: native hidden main
+pri startup formatuje200 local date/history rows, zatimco actual WPF
+MainWindow je vytvoreny az na Open. Native ted odlozi pouze presentation
+work do visible window; vsech200 history entries zustava v plnem modelu
+i durable store, recovery/streaming/outbox/tray/delivery runtimes zustavaji.
+Hidden tick nadale zpracuje clipboard/notice/dictation a tray state;
+WM_SHOWWINDOW invaliduje presentation, takze nove Open neni stale cache.
+Nezahazuje se audio, historie ani funkce kvuli pametovemu benchmarku.
+Explicitni self-test stale force-renderuje sve hidden control probes;
+coupled6-group lifecycle regrese zachytila a overila tuto vyjimku.
+Tato oprava neni tvrzenim, ze eager formatting byl jedinou pricinou
+predchoziho oboustranneho zpomaleni.
+
+Fresh NoPorts actual UI native-lazy-main-a2d1200/PID55824/
+frozen225c97fa97b88f5a5d32822894d232e9759203e5f5b2d457b97a5207c889ef82
+prokazal200 retained entries a presne0 hidden formatting calls pred
+Show; actual image/AX po Show zobrazily original live UI a200 cache.
+Normal bound exit zaznamenal617 visible formatting calls, nezmenene
+settings/history a noToken; closed
+3ebf47e24e66777da67b9ac541013a3f424ac08a12af41b73323c8a736d9589a.
+Zadny clipboard, microphone, input, account nebo cloud port se nepouzil.
+
+Collector ted po kazdem measured startu ulozi immutable plnou presnost
+startup sample mimo timed interval a pri chybe explicitni FAILED/
+complete_profile=false record; exception zustava thrown. Owned impl/PID/
+elapsed/safety budget jsou v error notes pred cleanup. Reuse existujici
+complete/partial evidence se odmitne bez pridani failure k hotovemu reportu.
+8 fixture guard groups vcetne actual composition roots,71 native tests,
+Clippy/release/Ruff a6 lifecycle groups PASS. Functional single starts
+se NEPOUZIVAJI jako p95/performance verdict. Default15s safety budget
+i1s/70%/50%/80MiB acceptance prahy zustaly nezmenene. Dalsi plny profil
+musi patrit opravenemu novemu source/binary, nikoli tiche opakovani
+stejneho a2d ve snaze vybrat lepsi vysledek.
+
+a2dRustCI41510743527 mezitim dokoncilo Windows/Linux/MSRV1.85/container
+PASS. To neuzavira performance, human/controller ani celou migraci.

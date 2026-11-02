@@ -1207,7 +1207,7 @@ fn show_history_body(hwnd: HWND) -> Result<(), NativeError> {
     })
 }
 
-fn refresh_client_ui(hwnd: HWND) -> Result<(), NativeError> {
+fn refresh_client_ui(hwnd: HWND, force_presentation: bool) -> Result<(), NativeError> {
     CLIENT.with(|client| {
         let mut client = client.borrow_mut();
         let Some(host) = client.as_mut() else { return Ok(()) };
@@ -1309,13 +1309,17 @@ fn refresh_client_ui(hwnd: HWND) -> Result<(), NativeError> {
         }
         refresh_hover(hwnd);
         let view_changed = MAIN_VIEW_CHANGED.with(|changed| changed.replace(false));
+        let visible = force_presentation || unsafe { IsWindowVisible(hwnd) }.as_bool();
         if !host.status.has_changed().map_err(|_| {
             NativeError::Verification("The client status channel stopped.")
-        })? && !view_changed && UI_HISTORY.with(|history| history.borrow().is_some()) {
+        })? && !view_changed && (!visible || UI_HISTORY.with(|history| history.borrow().is_some())) {
             return Ok(());
         }
         let status = host.status.borrow_and_update().clone();
         update_tray_status(hwnd, &status)?;
+        if !visible {
+            return Ok(());
+        }
         let shortcut_error = DICTATION_UI.with(|slot| slot.borrow().as_ref().is_some_and(|ui| ui.shortcut_error()));
         let recovery_changed = UI_RECOVERY.with(|slot| slot.borrow().as_ref().is_none_or(|old| !std::sync::Arc::ptr_eq(old, &status.recovery)));
         if recovery_changed {
@@ -1959,6 +1963,11 @@ fn dispatch(
                 Ok(host.status.borrow().history.len())
             })?;
             let foreground = unsafe { GetForegroundWindow() };
+            if crate::main_presentation::history_format_calls() != 0 {
+                return Err(NativeError::Verification(
+                    "Hidden main-window startup formatted History rows.",
+                ));
+            }
             api("Name isolated native client preview", unsafe {
                 SetWindowTextW(hwnd, w!("Isolated Rust client preview - no physical ports"))
             })?;
@@ -1976,7 +1985,8 @@ fn dispatch(
             })?;
             let data = serde_json::to_vec(&serde_json::json!({"scope":"native-full-client-ui-preview","pid":std::process::id(),
                 "window":hwnd.0 as usize,"history_count":count,"physical_ports":false,"auth":"not_configured","dpi":crate::dpi::window_dpi(hwnd),
-                "client_width":bounds.right-bounds.left,"client_height":bounds.bottom-bounds.top,"foreground_unchanged":true}))
+                "client_width":bounds.right-bounds.left,"client_height":bounds.bottom-bounds.top,"foreground_unchanged":true,
+                "hidden_history_format_calls":0}))
                 .map_err(|_|NativeError::Verification("Encode visual client readiness failed."))?;
             atomic_write(
                 &root.join("ui-preview-ready.json"),
@@ -2464,7 +2474,7 @@ fn dispatch(
             Ok(LRESULT(0))
         }
         WM_TIMER if wparam.0 == CLIENT_TIMER => {
-            refresh_client_ui(hwnd)?;
+            refresh_client_ui(hwnd, false)?;
             let reload = RELOAD_CLIENT.with(|slot| slot.borrow_mut().take());
             if let Some(options) = reload {
                 let host = CLIENT.with(|slot| slot.borrow_mut().take());
@@ -2472,7 +2482,7 @@ fn dispatch(
                 UI_HISTORY.with(|slot| *slot.borrow_mut() = None);
                 UI_RECOVERY.with(|slot| *slot.borrow_mut() = None);
                 attach_client(hwnd, options)?;
-                refresh_client_ui(hwnd)?;
+                refresh_client_ui(hwnd, false)?;
             }
             Ok(LRESULT(0))
         }
@@ -2513,6 +2523,12 @@ fn dispatch(
                 let _ = ShowWindow(hwnd, SW_HIDE);
             }
             Ok(LRESULT(0))
+        }
+        WM_SHOWWINDOW => {
+            if wparam.0 != 0 {
+                MAIN_VIEW_CHANGED.with(|changed| changed.set(true));
+            }
+            Ok(unsafe { DefWindowProcW(hwnd, message, wparam, lparam) })
         }
         WM_KEYDOWN if wparam.0 == 0x1b => {
             unsafe {
@@ -2937,7 +2953,7 @@ pub fn run_tray(options: TrayOptions) -> Result<(), NativeError> {
                 windows::core::Error::from_thread(),
             ));
         }
-        refresh_client_ui(hwnd)?;
+        refresh_client_ui(hwnd, options.self_test)?;
         if auth_only {
             api("Set auth-only window title", unsafe {
                 SetWindowTextW(hwnd, w!("VoicePrompt - Google auth-only test"))
@@ -3092,6 +3108,7 @@ mod tests {
         }
         let before_settings = std::fs::read(root.join("settings.json")).unwrap();
         let before_history = std::fs::read(root.join("history.json")).unwrap();
+        crate::main_presentation::reset_history_format_calls();
         UI_PREVIEW_MINIMUM.with(|value| value.set(minimum));
         UI_PREVIEW_ROOT.with(|slot| *slot.borrow_mut() = Some(root.clone()));
         run_tray(TrayOptions {
@@ -3110,6 +3127,10 @@ mod tests {
             }),
         })
         .unwrap();
+        let visible_history_formats = crate::main_presentation::history_format_calls();
+        let history: Vec<voiceprompt_client_protocol::history::HistoryEntry> =
+            voiceprompt_client_protocol::history::parse_history(&before_history).unwrap();
+        assert!(visible_history_formats >= history.len());
         UI_PREVIEW_ROOT.with(|slot| *slot.borrow_mut() = None);
         UI_PREVIEW_MINIMUM.with(|value| value.set(false));
         assert_eq!(
@@ -3126,6 +3147,7 @@ mod tests {
             serde_json::json!({
                 "scope":"native-full-client-ui-preview","pid":std::process::id(),"closed":true,
                 "physical_ports":false,"settings_history_unchanged":true,"token_cache_absent":true,
+                "visible_history_format_calls":visible_history_formats,
             })
             .to_string()
             .as_bytes(),

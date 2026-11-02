@@ -9,6 +9,19 @@ use windows::core::PCWSTR;
 
 use crate::NativeError;
 
+#[cfg(test)]
+thread_local! {
+    static HISTORY_FORMAT_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+#[cfg(test)]
+pub(crate) fn history_format_calls() -> usize {
+    HISTORY_FORMAT_CALLS.with(std::cell::Cell::get)
+}
+#[cfg(test)]
+pub(crate) fn reset_history_format_calls() {
+    HISTORY_FORMAT_CALLS.with(|count| count.set(0));
+}
+
 fn local_date(value: OffsetDateTime) -> Result<String, NativeError> {
     let value = value.to_offset(UtcOffset::UTC);
     let year = u16::try_from(value.year()).map_err(|_| {
@@ -93,6 +106,8 @@ pub(crate) fn history_metadata(
     entry: &HistoryEntry,
     now: OffsetDateTime,
 ) -> Result<String, NativeError> {
+    #[cfg(test)]
+    HISTORY_FORMAT_CALLS.with(|count| count.set(count.get() + 1));
     let suffix = if entry.raw_body.is_none() {
         ""
     } else if entry.refinement_fallback_blocks > 0 {

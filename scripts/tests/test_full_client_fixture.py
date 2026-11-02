@@ -15,10 +15,12 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import measure_clients
 from measure_clients import (
     FixtureProcess,
     bundle_hashes,
     fixture_files,
+    publish,
     read_ready_payload,
 )
 
@@ -26,6 +28,75 @@ BINARIES: dict[str, Path]
 
 
 class ClientFixtureTests(unittest.TestCase):
+    def test_refused_profile_reuse_does_not_add_failure_to_completed_evidence(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="VoicePrompt-complete-proof-") as directory:
+            root = Path(directory)
+            report = root.joinpath("full-client-signed-out-comparison.json")
+            report.write_bytes(b'{"synthetic":"complete"}')
+            rust = root.joinpath("VoicePromptRustPilot.exe")
+            csharp = root.joinpath("VoicePromptClientFixture.exe")
+            rust.write_bytes(b"synthetic")
+            csharp.write_bytes(b"synthetic")
+            arguments = [
+                "measure_clients.py",
+                "--rust",
+                str(rust),
+                "--csharp",
+                str(csharp),
+                "--output-directory",
+                str(root),
+                "--source-revision",
+                "synthetic",
+            ]
+            with (
+                patch.object(sys, "argv", arguments),
+                patch.object(measure_clients, "measure", side_effect=FileExistsError(report)),
+                self.assertRaises(FileExistsError),
+            ):
+                measure_clients.main()
+            self.assertEqual(report.read_bytes(), b'{"synthetic":"complete"}')
+            self.assertFalse(root.joinpath("measurement-failure.json").exists())
+
+    def test_partial_startup_evidence_is_immutable_and_failure_is_never_complete(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="VoicePrompt-partial-proof-") as directory:
+            root = Path(directory)
+            path = root.joinpath("startup-rust-01.json")
+            payload = {"status": "observed-startup", "startup_ms": 123.456789}
+            publish(path, payload)
+            with self.assertRaises(FileExistsError):
+                publish(path, {"status": "incorrect-overwrite"})
+            self.assertEqual(json.loads(path.read_bytes()), payload)
+            rust = root.joinpath("VoicePromptRustPilot.exe")
+            csharp = root.joinpath("VoicePromptClientFixture.exe")
+            rust.write_bytes(b"synthetic")
+            csharp.write_bytes(b"synthetic")
+            arguments = [
+                "measure_clients.py",
+                "--rust",
+                str(rust),
+                "--csharp",
+                str(csharp),
+                "--output-directory",
+                str(root),
+                "--source-revision",
+                "synthetic",
+            ]
+            with (
+                patch.object(sys, "argv", arguments),
+                patch.object(
+                    measure_clients,
+                    "measure",
+                    side_effect=TimeoutError("synthetic readiness timeout"),
+                ),
+                self.assertRaises(TimeoutError),
+            ):
+                measure_clients.main()
+            failed = json.loads(root.joinpath("measurement-failure.json").read_bytes())
+            self.assertEqual(failed["status"], "failed")
+            self.assertFalse(failed["complete_profile"])
+            self.assertFalse(failed["whole_migration_acceptance"])
+            self.assertFalse(root.joinpath("full-client-signed-out-comparison.json").exists())
+
     def test_readable_readiness_includes_transient_file_lock_latency_and_never_restarts_trial(
         self,
     ) -> None:
@@ -37,9 +108,7 @@ class ClientFixtureTests(unittest.TestCase):
             original = Path.open
             attempts = 0
 
-            def open_after_lock(
-                selected: Path, *args: object, **kwargs: object
-            ) -> object:
+            def open_after_lock(selected: Path, *args: object, **kwargs: object) -> object:
                 nonlocal attempts
                 attempts += 1
                 if attempts < 3:
@@ -58,9 +127,7 @@ class ClientFixtureTests(unittest.TestCase):
     ) -> None:
         process = Mock(returncode=None)
         process.poll.return_value = None
-        with tempfile.TemporaryDirectory(
-            prefix="VoicePrompt-ready-refusal-"
-        ) as directory:
+        with tempfile.TemporaryDirectory(prefix="VoicePrompt-ready-refusal-") as directory:
             path = Path(directory).joinpath("ready.json")
             began = time.perf_counter()
             with (
@@ -94,17 +161,13 @@ class ClientFixtureTests(unittest.TestCase):
             "NAudio.Core.dll",
             "NAudio.WinMM.dll",
         ]
-        with tempfile.TemporaryDirectory(
-            prefix="VoicePrompt-bundle-fixture-"
-        ) as directory:
+        with tempfile.TemporaryDirectory(prefix="VoicePrompt-bundle-fixture-") as directory:
             root = Path(directory)
             for name in names:
                 root.joinpath(name).write_bytes(b"synthetic build fixture")
             root.joinpath("Assets").mkdir()
             root.joinpath("Assets", "app.ico").write_bytes(b"synthetic icon")
-            root.joinpath("must-not-discover-oauth.json").write_bytes(
-                b"synthetic excluded config"
-            )
+            root.joinpath("must-not-discover-oauth.json").write_bytes(b"synthetic excluded config")
             before = bundle_hashes(root.joinpath(names[0]), "csharp")
             self.assertEqual(set(before), {*names, "app.ico"})
             root.joinpath("NAudio.WinMM.dll").write_bytes(b"changed synthetic library")
@@ -121,9 +184,7 @@ class ClientFixtureTests(unittest.TestCase):
         for implementation, binary in BINARIES.items():
             with (
                 self.subTest(implementation=implementation),
-                tempfile.TemporaryDirectory(
-                    prefix="VoicePrompt-fixture-guards-"
-                ) as directory,
+                tempfile.TemporaryDirectory(prefix="VoicePrompt-fixture-guards-") as directory,
             ):
                 root = Path(directory)
                 budget = 60 if implementation == "csharp" else 15
@@ -140,11 +201,7 @@ class ClientFixtureTests(unittest.TestCase):
                         f"{fixture.startup_ms:.3f}ms; safety budget {budget}s",
                         flush=True,
                     )
-                    recovery = (
-                        "dictation-recovery"
-                        if implementation == "csharp"
-                        else "recovery"
-                    )
+                    recovery = "dictation-recovery" if implementation == "csharp" else "recovery"
                     self.assertTrue(fixture.state.joinpath(recovery).is_dir())
                     self.assertTrue(fixture.marker["full_components"])
                     self.assertFalse(fixture.marker["physical_ports_enabled"])
@@ -154,15 +211,9 @@ class ClientFixtureTests(unittest.TestCase):
     def test_functional_budget_cannot_change_the_measurement_default_or_be_unbounded(
         self,
     ) -> None:
-        default = (
-            inspect.signature(FixtureProcess)
-            .parameters["readiness_timeout_seconds"]
-            .default
-        )
+        default = inspect.signature(FixtureProcess).parameters["readiness_timeout_seconds"].default
         self.assertEqual(default, 15)
-        with tempfile.TemporaryDirectory(
-            prefix="VoicePrompt-fixture-budget-"
-        ) as directory:
+        with tempfile.TemporaryDirectory(prefix="VoicePrompt-fixture-budget-") as directory:
             for value in [0, 61]:
                 with self.subTest(value=value), self.assertRaises(ValueError):
                     FixtureProcess(
@@ -181,23 +232,17 @@ class ClientFixtureTests(unittest.TestCase):
             for mode in ["tokens", "marker", "marker_fields"]:
                 with (
                     self.subTest(implementation=implementation, mode=mode),
-                    tempfile.TemporaryDirectory(
-                        prefix="VoicePrompt-fixture-refusal-"
-                    ) as directory,
+                    tempfile.TemporaryDirectory(prefix="VoicePrompt-fixture-refusal-") as directory,
                 ):
                     root = Path(directory)
                     state = root.joinpath("state")
                     key = uuid.uuid4().hex
                     fixture_files(state, key, 5)
                     if mode == "tokens":
-                        state.joinpath("tokens.bin").write_bytes(
-                            b"synthetic forbidden token cache"
-                        )
+                        state.joinpath("tokens.bin").write_bytes(b"synthetic forbidden token cache")
                     elif mode == "marker":
                         state.joinpath("migration-fixture.json").write_text(
-                            json.dumps(
-                                {"scope": "not-a-measurement", "instance_key": key}
-                            )
+                            json.dumps({"scope": "not-a-measurement", "instance_key": key})
                         )
                     else:
                         state.joinpath("migration-fixture.json").write_text(

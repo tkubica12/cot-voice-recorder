@@ -228,6 +228,19 @@ human keyboard/screen-reader or migration acceptance.
 Frozen post-overlay performance evidence belongs to its original binary and
 does not measure this later main-window styling.
 
+Hidden startup now keeps the complete history/recovery/client models but defers
+main-window list formatting until the window opens, matching the reference's lazy
+main window. Tray delivery, notifications, dictation and recovery background work
+continue while hidden. Reopening marks presentation dirty so it uses the latest
+model. The explicit `--self-test` still renders its hidden control probes.
+
+Client comparisons preserve each completed startup as an immutable full-precision
+`startup-<implementation>-<trial>.json`, outside the timed readiness interval.
+Failures publish a distinct `measurement-failure.json` and still fail the command;
+partial data is never a complete verdict. Reusing an old complete/partial evidence
+directory is refused without modifying its result. The normal 15-second
+operational readiness budget and all statistical acceptance thresholds are unchanged.
+
 The main History/Recovery sections now adapt to the original 720x540-DIP window
 and 560x420 minimum instead of a fixed 570x730 all-controls canvas. Action rows
 wrap at the minimum width. History initially shows the original list-oriented

@@ -27,9 +27,7 @@ def read_ready_payload(
     lock_deadline = None
     while True:
         if time.perf_counter() >= deadline:
-            raise TimeoutError(
-                f"Full-client fixture readiness exceeded {timeout_seconds} seconds."
-            )
+            raise TimeoutError(f"Full-client fixture readiness exceeded {timeout_seconds} seconds.")
         if process.poll() is not None:
             raise RuntimeError(
                 f"Full-client fixture exited before readable readiness: {process.returncode}"
@@ -45,7 +43,8 @@ def read_ready_payload(
                 lock_deadline = min(now + 0.250, deadline)
             if now >= lock_deadline:
                 error.add_note(
-                    f"Readiness remained inaccessible; Windows error {error.winerror if hasattr(error, 'winerror') else None}. "
+                    "Readiness remained inaccessible; Windows error "
+                    f"{error.winerror if hasattr(error, 'winerror') else None}. "
                     "No ACL/sharing controls were changed and the trial was not restarted."
                 )
                 raise
@@ -58,9 +57,7 @@ def read_ready_payload(
                 )
             return payload
         if time.perf_counter() >= deadline:
-            raise TimeoutError(
-                f"Full-client fixture readiness exceeded {timeout_seconds} seconds."
-            )
+            raise TimeoutError(f"Full-client fixture readiness exceeded {timeout_seconds} seconds.")
         time.sleep(0.005)
 
 
@@ -115,18 +112,14 @@ class FixtureProcess:
         if os.name != "nt":
             raise RuntimeError("Client comparison requires Windows.")
         if not 1 <= readiness_timeout_seconds <= 60:
-            raise ValueError(
-                "Fixture readiness requires an explicit one-to-sixty-second budget."
-            )
+            raise ValueError("Fixture readiness requires an explicit one-to-sixty-second budget.")
         expected = (
             "VoicePromptClientFixture.exe"
             if implementation == "csharp"
             else "VoicePromptRustPilot.exe"
         )
         if binary.name != expected or implementation not in {"csharp", "rust"}:
-            raise ValueError(
-                "Only the explicitly named isolated fixture binaries are allowed."
-            )
+            raise ValueError("Only the explicitly named isolated fixture binaries are allowed.")
         self.binary = binary.resolve(strict=True)
         self.implementation = implementation
         self.directory = tempfile.TemporaryDirectory(
@@ -181,9 +174,7 @@ class FixtureProcess:
                 creationflags=subprocess.CREATE_NO_WINDOW,
                 env=environment,
             )
-            payload = read_ready_payload(
-                ready, self.process, started, readiness_timeout_seconds
-            )
+            payload = read_ready_payload(ready, self.process, started, readiness_timeout_seconds)
             self.startup_ms = (time.perf_counter() - started) * 1000
             self.marker = json.loads(payload)
             expected_marker = {
@@ -203,14 +194,17 @@ class FixtureProcess:
                 )
         except BaseException as error:
             if hasattr(self, "process"):
+                error.add_note(
+                    f"Owned fixture implementation={implementation}, pid={self.process.pid}, "
+                    f"readiness budget={readiness_timeout_seconds}s, "
+                    f"elapsed_ms={(time.perf_counter() - started) * 1000:.6f}."
+                )
                 output, failure = self.kill_owned()
                 if output or failure:
                     error.add_note(f"Fixture output: {output!r}; stderr: {failure!r}")
             progress = Path(str(ready) + ".progress")
             if progress.exists():
-                error.add_note(
-                    "C# fixture progress:\n" + progress.read_text(encoding="utf-8")
-                )
+                error.add_note("C# fixture progress:\n" + progress.read_text(encoding="utf-8"))
             self.directory.cleanup()
             raise
 
@@ -235,23 +229,15 @@ class FixtureProcess:
                     creationflags=subprocess.CREATE_NO_WINDOW,
                 )
                 if quit_process.returncode:
-                    raise RuntimeError(
-                        f"Isolated fixture quit failed: {quit_process.stderr!r}"
-                    )
+                    raise RuntimeError(f"Isolated fixture quit failed: {quit_process.stderr!r}")
             output, error = self.process.communicate(timeout=15)
             if self.process.returncode or error:
-                raise RuntimeError(
-                    f"Fixture exited unsuccessfully: {error!r} {output!r}"
-                )
+                raise RuntimeError(f"Fixture exited unsuccessfully: {error!r} {output!r}")
             for name, expected in self.inputs.items():
                 if self.state.joinpath(name).read_bytes() != expected:
-                    raise RuntimeError(
-                        f"Fixture unexpectedly changed its input {name}."
-                    )
+                    raise RuntimeError(f"Fixture unexpectedly changed its input {name}.")
             if self.state.joinpath("tokens.bin").exists():
-                raise RuntimeError(
-                    "Signed-out fixture unexpectedly wrote a token cache."
-                )
+                raise RuntimeError("Signed-out fixture unexpectedly wrote a token cache.")
         finally:
             if self.process.poll() is None:
                 self.kill_owned()
@@ -266,6 +252,13 @@ class FixtureProcess:
 
 def p95(values: list[float]) -> float:
     return sorted(values)[math.ceil(len(values) * 0.95) - 1]
+
+
+def publish(path: Path, payload: dict) -> None:
+    with path.open("xb") as stream:
+        stream.write(json.dumps(payload, indent=2, allow_nan=False).encode())
+        stream.flush()
+        os.fsync(stream.fileno())
 
 
 def bundle_hashes(binary: Path, implementation: str) -> dict[str, str]:
@@ -301,7 +294,11 @@ def measure(
 ) -> Path:
     directory = directory.resolve(strict=True)
     output = directory.joinpath("full-client-signed-out-comparison.json")
-    if output.exists():
+    if (
+        output.exists()
+        or directory.joinpath("measurement-failure.json").exists()
+        or any(directory.glob("startup-*.json"))
+    ):
         raise FileExistsError(output)
     binaries = {"csharp": csharp, "rust": native}
     bundles = {name: bundle_hashes(path, name) for name, path in binaries.items()}
@@ -335,6 +332,16 @@ def measure(
                         "startup_ms": fixture.startup_ms,
                     }
                 )
+                publish(
+                    directory.joinpath(f"startup-{implementation}-{trial + 1:02}.json"),
+                    {
+                        "scope": SCOPE,
+                        "source_revision": revision,
+                        "status": "observed-startup",
+                        "whole_migration_acceptance": False,
+                        **rows[-1],
+                    },
+                )
                 print(
                     f"{implementation} startup {trial + 1}/{trials}: "
                     f"{fixture.startup_ms:.3f} ms; owned PID {fixture.process.pid}",
@@ -342,9 +349,7 @@ def measure(
                 )
     memory: dict[str, list[dict]] = {"csharp": [], "rust": []}
     for index in range(series):
-        for implementation in (
-            ["csharp", "rust"] if index % 2 == 0 else ["rust", "csharp"]
-        ):
+        for implementation in ["csharp", "rust"] if index % 2 == 0 else ["rust", "csharp"]:
             target = directory.joinpath(f"{implementation}-idle-{index + 1}.json")
             if target.exists():
                 raise FileExistsError(target)
@@ -360,9 +365,7 @@ def measure(
                     for name in ["settings.json", "history.json"]
                 }
                 if corpus != digest:
-                    raise RuntimeError(
-                        "Client memory corpus differs from startup corpus."
-                    )
+                    raise RuntimeError("Client memory corpus differs from startup corpus.")
                 print(
                     f"Sampling {implementation} series {index + 1}/{series}, "
                     f"{samples} points, owned PID {fixture.process.pid}",
@@ -404,14 +407,13 @@ def measure(
                     or report["measurement"]["requested_interval_milliseconds"] != 1000
                 ):
                     raise RuntimeError(
-                        "The process sampler did not prove the requested process, inputs and sample shape."
+                        "The process sampler did not prove the requested process, "
+                        "inputs and sample shape."
                     )
                 memory[implementation].append(report)
     private = {
         implementation: [
-            sample["private_bytes"]
-            for report in reports
-            for sample in report["samples"]
+            sample["private_bytes"] for report in reports for sample in report["samples"]
         ]
         for implementation, reports in memory.items()
     }
@@ -436,9 +438,7 @@ def measure(
                 "mean_private_bytes": statistics.mean(
                     sample["private_bytes"] for sample in report["samples"]
                 ),
-                "max_private_bytes": max(
-                    sample["private_bytes"] for sample in report["samples"]
-                ),
+                "max_private_bytes": max(sample["private_bytes"] for sample in report["samples"]),
             }
             for report in reports
         ]
@@ -477,18 +477,15 @@ def measure(
         "corpus_sha256": corpus,
         "fixture_epoch": epoch.isoformat(),
         "binary_sha256": {
-            name: hashlib.sha256(path.read_bytes()).hexdigest()
-            for name, path in binaries.items()
+            name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in binaries.items()
         },
         "startup": startup_summary,
         "memory": memory_summary,
         "memory_series_summary": per_series,
         "observed_profile_thresholds": {
             "startup": startup_summary["rust"]["p95_ms"] <= 1000
-            and startup_summary["rust"]["p95_ms"]
-            <= startup_summary["csharp"]["p95_ms"] * 0.70,
-            "idle_private": memory_summary["rust"]["max_private_bytes"]
-            <= 80 * 1024 * 1024
+            and startup_summary["rust"]["p95_ms"] <= startup_summary["csharp"]["p95_ms"] * 0.70,
+            "idle_private": memory_summary["rust"]["max_private_bytes"] <= 80 * 1024 * 1024
             and all(
                 per_series["rust"][index]["mean_private_bytes"]
                 <= per_series["csharp"][index]["mean_private_bytes"] * 0.50
@@ -497,14 +494,10 @@ def measure(
         },
         "startup_samples": rows,
         "memory_reports": {
-            name: [f"{name}-idle-{index + 1}.json" for index in range(series)]
-            for name in binaries
+            name: [f"{name}-idle-{index + 1}.json" for index in range(series)] for name in binaries
         },
     }
-    with output.open("xb") as stream:
-        stream.write(json.dumps(result, indent=2).encode())
-        stream.flush()
-        os.fsync(stream.fileno())
+    publish(output, result)
     return output
 
 
@@ -526,8 +519,8 @@ def main() -> None:
         and 0 <= args.history_count <= 200
     ):
         parser.error("Measurement counts are outside their supported bounds.")
-    print(
-        measure(
+    try:
+        result = measure(
             args.csharp.resolve(strict=True),
             args.rust.resolve(strict=True),
             args.output_directory,
@@ -537,7 +530,25 @@ def main() -> None:
             args.memory_series,
             args.history_count,
         )
-    )
+    except BaseException as error:
+        if args.output_directory.is_dir() and not isinstance(error, FileExistsError):
+            path = args.output_directory.joinpath("measurement-failure.json")
+            if not path.exists():
+                publish(
+                    path,
+                    {
+                        "status": "failed",
+                        "scope": SCOPE,
+                        "source_revision": args.source_revision,
+                        "error_type": type(error).__name__,
+                        "error": str(error),
+                        "notes": getattr(error, "__notes__", []),
+                        "complete_profile": False,
+                        "whole_migration_acceptance": False,
+                    },
+                )
+        raise
+    print(result)
 
 
 if __name__ == "__main__":
