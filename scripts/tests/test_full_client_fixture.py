@@ -13,12 +13,48 @@ import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from measure_clients import FixtureProcess, fixture_files
+from measure_clients import FixtureProcess, bundle_hashes, fixture_files
 
 BINARIES: dict[str, Path]
 
 
 class ClientFixtureTests(unittest.TestCase):
+    def test_bundle_attestation_covers_runtime_dependencies_without_discovering_oauth_files(
+        self,
+    ) -> None:
+        names = [
+            "VoicePromptClientFixture.exe",
+            "VoicePromptClientFixture.dll",
+            "VoicePrompt.dll",
+            "VoicePrompt.Core.dll",
+            "VoicePromptClientFixture.deps.json",
+            "VoicePromptClientFixture.runtimeconfig.json",
+            "VoicePrompt.deps.json",
+            "VoicePrompt.runtimeconfig.json",
+            "NAudio.Core.dll",
+            "NAudio.WinMM.dll",
+        ]
+        with tempfile.TemporaryDirectory(
+            prefix="VoicePrompt-bundle-fixture-"
+        ) as directory:
+            root = Path(directory)
+            for name in names:
+                root.joinpath(name).write_bytes(b"synthetic build fixture")
+            root.joinpath("Assets").mkdir()
+            root.joinpath("Assets", "app.ico").write_bytes(b"synthetic icon")
+            root.joinpath("must-not-discover-oauth.json").write_bytes(
+                b"synthetic excluded config"
+            )
+            before = bundle_hashes(root.joinpath(names[0]), "csharp")
+            self.assertEqual(set(before), {*names, "app.ico"})
+            root.joinpath("NAudio.WinMM.dll").write_bytes(b"changed synthetic library")
+            after = bundle_hashes(root.joinpath(names[0]), "csharp")
+            self.assertNotEqual(before["NAudio.WinMM.dll"], after["NAudio.WinMM.dll"])
+            self.assertEqual(
+                before["VoicePromptClientFixture.exe"],
+                after["VoicePromptClientFixture.exe"],
+            )
+
     def test_both_actual_composition_roots_start_with_complete_runtime_and_only_marked_state(
         self,
     ) -> None:

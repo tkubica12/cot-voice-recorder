@@ -1359,3 +1359,15 @@ Zatim NEBYLA spustena. Existing C# --microphone reference ma stejny240ms
 count-and-clear profil a take nebyla spustena.41 native nonphysical testu
 proslo; hour a manual microphone fixture jsou dve zamerne ignored polozky,
 nikoli zapoctene PASS fyzicke akceptace.
+
+Full-client signed-out collector nyni fingerprintuje take NAudio Core/WinMM
+DLL, oba application deps/runtimeconfig soubory a explicitni app icon, nejen
+hlavni apphost/managed DLL. Pure synthetic-file test prokazuje, ze zmena runtime
+dependency zmeni attestation, zatimco unrelated OAuth/config soubor se nehleda.
+Vsechny ctyri full-client guard tests prosly.
+
+Aktualni release client bundles0a2e715 jsou allowlist-copy frozen pro dalsi
+30+30/3-series signed-out recheck po dokoncenych opravach. Rerun se nezahajuje
+soubezne s aktivnim CPU-heavy hour capture, aby agent sam nezmenil zatez mezi
+baseline/target phases. Namerena631c11f data zustavaji pravdiva pro svuj source
+checkpoint; nejsou automaticky vydavana za novou verzi po dalsich opravach.

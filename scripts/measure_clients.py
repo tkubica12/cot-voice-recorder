@@ -243,8 +243,13 @@ def bundle_hashes(binary: Path, implementation: str) -> dict[str, str]:
                 "VoicePrompt.Core.dll",
                 "VoicePromptClientFixture.deps.json",
                 "VoicePromptClientFixture.runtimeconfig.json",
+                "VoicePrompt.deps.json",
+                "VoicePrompt.runtimeconfig.json",
+                "NAudio.Core.dll",
+                "NAudio.WinMM.dll",
             ]
         )
+        files.append(binary.parent.joinpath("Assets", "app.ico"))
     return {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in files}
 
 
