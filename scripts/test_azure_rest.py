@@ -320,7 +320,9 @@ def run(oracle: Path, output: Path, revision: str) -> None:
                 )
             entity = table.get_table_client("recordings").get_entity("synthetic", "native'quote")
             assert entity["small"] == 8
-            assert int(getattr(entity["counter"], "value", entity["counter"])) == 2**40
+            assert isinstance(entity["counter"], EntityProperty)
+            assert entity["counter"].edm_type == EdmType.INT64
+            assert entity["counter"].value == 2**40
             assert entity["text"] == "synthetic \u0159 text"
             message = next(queue.get_queue_client("interop").receive_messages(messages_per_page=1))
             assert json.loads(base64.b64decode(message.content)) == {

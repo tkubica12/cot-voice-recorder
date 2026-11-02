@@ -1685,3 +1685,17 @@ kde uz existuje Docker a approved locked Python graph. Success report se
 publikuje az po stopped owned container/identity a smazani ephemeral private
 key. Artifact allowlist nikdy neuploaduje key nebo cely temporary root.
 Do prvniho skutecneho successful CI behu tento emulator contract neni PASS.
+
+Prvni actual run18a8bc1 prosel HTTPS resource probes a Rust bearer Table read
+SDK-created Int64, ale selhal na prilis prisnem testovacim predpokladu:
+GET s odata=nometadata skutecne vratil Int64 string, ne jeho type annotation.
+Type check se proto presunul na explicitni fullmetadata query a actual Azure
+SDK EntityProperty.edm_type/value; Int64 semantika se nezmekcuje na obycejny
+string. Produkcni adapter/endpoint/auth behavior se touto opravou nemeni.
+Failure artifact/log je zachovany a neni vydavan za completed contract.
+
+Ctvrty local guard nyni provadi actual loopback HTTPS handshake: client
+s presnym fixture certificate uspel a default untrusted client selhal
+s CERTIFICATE_VERIFY_FAILED. Nejen parsovani certificate tak overuje, ze
+se TLS verification nevypina. Vsechny ctyri local guards a native storage
+compile/tests prosly; actual emulator rerun nasledne rozhodne zbytek kontraktu.

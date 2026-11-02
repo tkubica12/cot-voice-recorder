@@ -82,7 +82,6 @@ async fn https_azure_contract() {
         .unwrap()
         .unwrap();
     assert_eq!(seed.values["counter"], "1099511627776");
-    assert_eq!(seed.values["counter@odata.type"], "Edm.Int64");
     assert_eq!(seed.values["small"], 7);
     let native = json!({
         "PartitionKey":"synthetic", "RowKey":"native'quote", "text":"synthetic \u{159} text",
@@ -124,6 +123,10 @@ async fn https_azure_contract() {
         .unwrap();
     assert_eq!(rows.len(), 2);
     assert!(rows.iter().all(|row| !row.etag.is_empty()));
+    assert!(
+        rows.iter()
+            .all(|row| row.values["counter@odata.type"] == "Edm.Int64")
+    );
 
     storage
         .put_blob_if_absent(

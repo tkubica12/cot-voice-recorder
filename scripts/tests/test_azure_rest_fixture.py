@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import ssl
 import sys
 import tempfile
+import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
@@ -17,6 +20,50 @@ import test_azure_rest as fixture
 
 
 class AzureRestFixtureTests(unittest.TestCase):
+    def test_strict_tls_client_trusts_only_the_owned_loopback_certificate(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="VoicePrompt-local-https-") as directory:
+            root = Path(directory)
+            fixture.certificate(root)
+
+            class Handler(BaseHTTPRequestHandler):
+                def do_GET(self) -> None:
+                    self.send_response(200)
+                    self.send_header("Content-Length", "2")
+                    self.end_headers()
+                    self.wfile.write(b"ok")
+
+                def log_message(self, format: str, *args: object) -> None:
+                    pass
+
+            server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            context.load_cert_chain(
+                root.joinpath("server-cert.pem"), root.joinpath("server-key.pem")
+            )
+            server.socket = context.wrap_socket(server.socket, server_side=True)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                verification = ssl.create_default_context(
+                    cafile=str(root.joinpath("server-cert.pem"))
+                )
+                with httpx.Client(verify=verification, trust_env=False, timeout=5) as client:
+                    self.assertEqual(
+                        client.get(f"https://127.0.0.1:{server.server_port}/").text, "ok"
+                    )
+                with (
+                    httpx.Client(
+                        verify=ssl.create_default_context(), trust_env=False, timeout=5
+                    ) as client,
+                    self.assertRaises(httpx.ConnectError) as failure,
+                ):
+                    client.get(f"https://127.0.0.1:{server.server_port}/")
+                self.assertIn("CERTIFICATE_VERIFY_FAILED", str(failure.exception))
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=5)
+
     def test_ephemeral_certificate_is_for_loopback_and_matches_the_generated_private_key(
         self,
     ) -> None:
