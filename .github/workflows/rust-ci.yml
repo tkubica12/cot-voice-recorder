@@ -8,6 +8,7 @@ on:
       - "windows/src/VoicePrompt.Core/**"
       - "windows/tools/ClientFixture/**"
       - "scripts/measure_clients.py"
+      - "scripts/measure_synthetic_capture.py"
       - "scripts/tests/test_full_client_fixture.py"
       - ".cargo/config.toml"
       - "scripts/Measure-VoicePromptProcess.ps1"
@@ -22,6 +23,7 @@ on:
       - "windows/src/VoicePrompt.Core/**"
       - "windows/tools/ClientFixture/**"
       - "scripts/measure_clients.py"
+      - "scripts/measure_synthetic_capture.py"
       - "scripts/tests/test_full_client_fixture.py"
       - ".cargo/config.toml"
       - "scripts/Measure-VoicePromptProcess.ps1"
@@ -179,3 +181,21 @@ jobs:
           python scripts\tests\test_full_client_fixture.py
           --csharp windows\tools\ClientFixture\bin\Release\net8.0-windows\win-x64\VoicePromptClientFixture.exe
           --rust rust\target\release\VoicePromptRustPilot.exe
+
+      - name: Bounded synthetic engine collector smoke, never hour or full-client acceptance
+        if: runner.os == 'Windows'
+        working-directory: .
+        shell: pwsh
+        run: |
+          $messages = cargo test --manifest-path rust\Cargo.toml -p voiceprompt-windows-pilot --lib --release --no-run --offline --locked --message-format json
+          if ($LASTEXITCODE -ne 0) { throw 'Synthetic release fixture build failed.' }
+          $binary = $messages | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.reason -eq 'compiler-artifact' -and $_.executable } | Select-Object -ExpandProperty executable
+          if (@($binary).Count -ne 1) { throw 'Expected exactly one native libtest fixture.' }
+          $frozen = Join-Path $env:RUNNER_TEMP 'native-capture-fixture'
+          $output = Join-Path $env:RUNNER_TEMP 'native-capture-smoke'
+          New-Item -ItemType Directory -Path $frozen,$output -ErrorAction Stop | Out-Null
+          Copy-Item -LiteralPath $binary -Destination (Join-Path $frozen 'VoicePromptNativeCaptureFixture.exe')
+          python scripts\measure_synthetic_capture.py --oracle (Join-Path $frozen 'VoicePromptNativeCaptureFixture.exe') --output-directory $output --source-revision $env:GITHUB_SHA --audio-seconds 3 --idle-samples 3
+          if ($LASTEXITCODE -ne 0) { throw 'Synthetic collector smoke failed.' }
+          $report = Get-Content -Raw (Join-Path $output 'synthetic-engine-hour.json') | ConvertFrom-Json
+          if ($report.sufficient_for_synthetic_engine_hour -or $report.full_client_profile -or $report.whole_migration_acceptance) { throw 'Smoke must not claim hour/full-client acceptance.' }

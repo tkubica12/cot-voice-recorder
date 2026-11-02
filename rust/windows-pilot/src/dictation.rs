@@ -17,6 +17,10 @@ use crate::{
     NativeHistoryStore, NativeRecoveryStore, SessionError, StreamingSession,
 };
 
+#[cfg(test)]
+#[path = "dictation_tests.rs"]
+mod tests;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DictationMode {
     Hold,
@@ -440,15 +444,10 @@ impl DictationHost {
             }
             let capture_ok = stop_microphone(microphone.take()).await;
             preserve |= !capture_ok;
-            if let Some(audio) = audio.as_mut() {
-                while let Some(buffer) = audio.recv().await {
-                    if !discard && !preserve {
-                        if let Err(error) = session.append(&buffer.0) {
-                            eprintln!("Final capture checkpoint: {error}");
-                            preserve = true;
-                        }
-                    }
-                }
+            if let Err(error) = drain_capture(&mut audio, discard, |pcm| session.append(pcm)).await
+            {
+                eprintln!("Final capture checkpoint: {error}");
+                preserve = true;
             }
             if !discard {
                 if let Err(error) = session.finish() {
@@ -765,6 +764,27 @@ async fn next_audio(receiver: &mut Option<mpsc::Receiver<CaptureBuffer>>) -> Opt
     match receiver {
         Some(receiver) => receiver.recv().await,
         None => std::future::pending().await,
+    }
+}
+
+async fn drain_capture(
+    receiver: &mut Option<mpsc::Receiver<CaptureBuffer>>,
+    discard: bool,
+    mut persist: impl FnMut(&[u8]) -> Result<(), SessionError>,
+) -> Result<(), SessionError> {
+    let mut failure = None;
+    if let Some(receiver) = receiver {
+        while let Some(buffer) = receiver.recv().await {
+            if !discard && failure.is_none() {
+                if let Err(error) = persist(&buffer.0) {
+                    failure = Some(error);
+                }
+            }
+        }
+    }
+    match failure {
+        Some(error) => Err(error),
+        None => Ok(()),
     }
 }
 

@@ -24,6 +24,10 @@ use crate::{NativeError, NativeRecoveryJournal};
 #[path = "streaming_session_tests.rs"]
 mod tests;
 
+#[cfg(test)]
+#[path = "streaming_longevity_tests.rs"]
+mod longevity_tests;
+
 pub trait AudioSender: Clone + Send + Sync + 'static {
     fn audio(&self, pcm: &[u8]) -> impl Future<Output = Result<(), ApiError>> + Send;
     fn commit(&self, finish: bool) -> impl Future<Output = Result<(), ApiError>> + Send;

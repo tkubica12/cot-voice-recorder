@@ -1244,3 +1244,37 @@ Povoleny lokalni/source inkrement je commitnuty a pushnuty. Potreba vyhrazeneho
 Windows test prostredi a oddelenych opravneni pro real-world testy byla predana
 koordinatorovi. Kompletni migrace neni oznacena jako hotova; zadny skutecky
 Google/device/clipboard/install/Azure test nebo produkcni zmena se tim neschvaluje.
+
+## Pokracovani: queued capture retention a skutecny synthetic hour
+
+Native controller review odhalilo konkretny datovy bug: po auth change,
+Interrupt nebo selhani microphone stop se preserve flag pouzil take jako zakaz
+ulozeni jiz prijatych queued PCM buffers. C# consumer pritom prestava ukladat
+jen pri explicitnim discard. Native nyni draine vsechny accepted buffers do
+stejneho recovery journalu i v preserve vetvi; samotne preserve stale zakazuje
+delivery. Explicitni discard neuklada nic, prvni storage error zustava viditelny
+a dalsi write se po nem nepokouseji. Tri testy overuji realnou DPAPI v3/v4
+persistence, presne obnovene sample bytes/context, discard a storage failure.
+
+Novy explicitni ignored libtest fixture meri realny cas, nikoli virtual clock:
+2s warmup, stejny empty-recovery idle pred/po,20ms deterministic PCM cadence,
+16000 samples/s a actual StreamingSession/NativeRecoveryStore s default256MiB
+kvotou. Provider kontroluje kazdy sample a absolute cursory bez uchovavani
+kopie cele nahravky; durable audio se uvolnuje jen po typed confirmed cursoru.
+Full3600s run musi prokazat115200000 exact PCM bytes a skutecny50min rotation.
+Nevynucuje se GC/heap trim a zadny audio limit/kvota se nesnizuje.
+
+scripts/measure_synthetic_capture.py uklada before/capture/after raw samples,
+actual elapsed time, PID/binary hashes a maximum idle growth proti warm
+baseline. Full run pouziva301/3601/301 jednosekundovych bodu a konzervativni
+10MiB check worst post-idle minus median pre-idle.3s/3-point smoke probe
+prosla a ma sufficient=false. CI spousti pouze tento bounded smoke; ignored
+hour neni implicitne zapocitany jako PASS.223 normalnich Windows Rust testu
+a strict fmt/Clippy proslo; jeden long fixture zustava explicitne ignored.
+
+Je to engine-only profile bez GUI/controller, microphone, system clipboard,
+auth, skutecneho cloud/model transportu nebo osobnich dat. Report ma
+full_client_profile=false a whole_migration_acceptance=false i pri PASS.
+Nenahrazuje kompletniho signed-in klienta, microphone readiness ani fyzicke
+akceptacni brany. Skutecny hodinovy beh se zahaji oddelene nad frozen binary
+po ulozeni tohoto source checkpointu; smoke nenahrazuje jeho chybejici data.
