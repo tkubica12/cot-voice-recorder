@@ -30,11 +30,15 @@ class AzureRestFixtureTests(unittest.TestCase):
             "tls_verified": True,
             "legacy_queue_worker_and_durable_delivery": True,
             "expired_cleanup_respects_active_blob_lease": True,
+            "continuous_single_stream_and_exact_samples": True,
+            "audio_retained_until_durable_finalization": True,
             "production_authorization_proven": False,
             "real_azure_resources": False,
             "real_managed_identity": False,
             "legacy_recording_id": "01234567-89ab-cdef-0123-456789abcdef",
             "legacy_transcript_id": "fedcba98-7654-3210-fedc-ba9876543210",
+            "continuous_recording_id": "11234567-89ab-cdef-0123-456789abcdef",
+            "continuous_transcript_id": "eedcba98-7654-3210-fedc-ba9876543210",
         }
         self.assertEqual(
             fixture.native_proof(("test synthetic ... " + json.dumps(proof)).encode()), proof
@@ -43,6 +47,8 @@ class AzureRestFixtureTests(unittest.TestCase):
             "legacy_queue_worker_and_durable_delivery",
             "expired_cleanup_respects_active_blob_lease",
             "real_managed_identity",
+            "continuous_single_stream_and_exact_samples",
+            "audio_retained_until_durable_finalization",
         ]:
             changed = dict(proof)
             changed[field] = not proof[field]

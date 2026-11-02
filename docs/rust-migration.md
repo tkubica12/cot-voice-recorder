@@ -1777,3 +1777,18 @@ s elapsed logem; dalsi crypto operations stale maji20s. Zadny runtime,
 parity expectation nebo mereny startup/performance threshold se nemenil.
 Sest actual DPAPI/IPC/startup parity groups proslo lokalne, bez osobnich
 token/history/recovery nebo dalsiho microphone/clipboard testu.
+
+Navazujici ignored actual-storage continuous scenar pouziva dva durable
+contiguous segmenty160000+320 samples. Real QueueWorker/recording lease/
+stream processor komunikuje jednim existing MAI transportem s lokalnim
+synthetic WS providerem, nikoli realnym modelem. Vyzaduje presne320640
+PCM bytes bez reset/silence/duplication, pouze jeden final commit a persisted
+160320-sample cursor. Source audio musi zustat i po ASR-ready az do durable
+canonical finalization; teprve potom musi byt obe Blob audio casti gone.
+SDK overi completed/delivery metadata, actual transcript body a48h dates.
+
+Jsou to stejna actual HTTPS Azure ports jako v legacy/cleanup proofu,
+tokeny/storage/model/notifikace zustavaji explicitne synthetic/loopback.
+Compile/Clippy/fmt, ctyri existing ordered continuous regressions a pet
+local safety/proof guards prosly. Tento novy composed continuous scenario
+se musi jeste skutecne provest v CI a nelze jej odvodit z legacy PASS.

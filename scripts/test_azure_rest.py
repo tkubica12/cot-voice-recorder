@@ -170,6 +170,8 @@ def native_proof(stdout: bytes) -> dict:
         "tls_verified",
         "legacy_queue_worker_and_durable_delivery",
         "expired_cleanup_respects_active_blob_lease",
+        "continuous_single_stream_and_exact_samples",
+        "audio_retained_until_durable_finalization",
     ]:
         if proof.get(field) is not True:
             raise ValueError(f"Native contract did not prove {field}.")
@@ -180,7 +182,12 @@ def native_proof(stdout: bytes) -> dict:
     ]:
         if proof.get(field) is not False:
             raise ValueError("An emulator fixture must not claim real production authorization.")
-    for field in ["legacy_recording_id", "legacy_transcript_id"]:
+    for field in [
+        "legacy_recording_id",
+        "legacy_transcript_id",
+        "continuous_recording_id",
+        "continuous_transcript_id",
+    ]:
         if str(uuid.UUID(proof[field])) != proof[field]:
             raise ValueError("Native pipeline did not publish canonical synthetic IDs.")
     return proof
@@ -382,6 +389,38 @@ def run(oracle: Path, output: Path, revision: str) -> None:
                 .readall()
             )
             assert body == b"synthetic Azure worker final"
+            continuous = table.get_table_client("recordings").get_entity(
+                "recording",
+                proof["continuous_recording_id"],
+            )
+            assert (
+                continuous["state"] == "completed"
+                and continuous["stream_delivery_completed"] is True
+            )
+            assert (
+                continuous["transcription_mode"] == "streaming"
+                and continuous["audio_layout"] == "contiguous"
+            )
+            samples = continuous["streamed_samples"]
+            assert int(getattr(samples, "value", samples)) == 160320
+            assert continuous.get("stream_lease_id") is None
+            continuous_text = table.get_table_client("transcripts").get_entity(
+                "transcript",
+                proof["continuous_transcript_id"],
+            )
+            assert continuous_text["recording_id"] == proof["continuous_recording_id"]
+            continuous_body = (
+                blob.get_blob_client(
+                    "transcripts",
+                    continuous_text["body_path"],
+                )
+                .download_blob()
+                .readall()
+            )
+            assert continuous_body == b"synthetic Azure continuous final"
+            assert (
+                continuous_text["expires_at"] - continuous_text["completed_at"]
+            ).total_seconds() == 48 * 3600
             message = next(queue.get_queue_client("interop").receive_messages(messages_per_page=1))
             assert json.loads(base64.b64decode(message.content)) == {
                 "direction": "rust-to-python",
@@ -408,6 +447,8 @@ def run(oracle: Path, output: Path, revision: str) -> None:
                 "legacy_worker_and_notification_settlement": True,
                 "cleanup_respects_real_active_blob_lease": True,
                 "actual_sdk_worker_transcript_retrieval": True,
+                "continuous_worker_single_stream_exact_samples": True,
+                "continuous_audio_retained_until_finalization": True,
                 "model_and_realtime_are_loopback_fixtures": True,
                 "synthetic_identity_requests": len(identity.resources),
                 "real_azure_resources": False,

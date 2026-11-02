@@ -208,6 +208,203 @@ async fn worker_and_cleanup(storage: Arc<AzureStorage>) -> (String, String) {
     (record.recording_id, transcript_id)
 }
 
+async fn continuous_worker(storage: Arc<AzureStorage>) -> (String, String) {
+    use crate::http_fixture::{config, serve, token};
+    use crate::ports::{Blobs, Queue};
+    use crate::services::{ChunkUpload, Services};
+    use base64::Engine;
+    use futures_util::{SinkExt, StreamExt};
+    use sha2::{Digest, Sha256};
+    use tokio_tungstenite::tungstenite::Message;
+
+    let identity_server = serve(vec![token(), token()]).await;
+    let mut notifications = serve(vec![(202, "".into())]).await;
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let endpoint: url::Url = format!("http://{}/", listener.local_addr().unwrap())
+        .parse()
+        .unwrap();
+    let mut options = config(&endpoint);
+    options.webpubsub = notifications.endpoint.clone();
+    let config = Arc::new(options);
+    let services = Arc::new(
+        Services::new(
+            config.clone(),
+            crate::repository::Repository::Azure(storage.clone()),
+            Blobs::Azure(storage.clone()),
+            Queue::Azure {
+                storage: storage.clone(),
+                name: config.queue.clone(),
+            },
+        )
+        .unwrap(),
+    );
+    let identity = Arc::new(ManagedIdentity::fixture(identity_server.endpoint.as_str()));
+    let worker = crate::worker::QueueWorker {
+        pipeline: Arc::new(crate::pipeline::Pipeline {
+            services: services.clone(),
+            ai: Arc::new(crate::ai::AzureAi::new(config.clone(), identity.clone()).unwrap()),
+            realtime: Arc::new(
+                crate::gateway::WebPubSub::new(config.clone(), identity.clone()).unwrap(),
+            ),
+        }),
+        streaming: Arc::new(
+            crate::streaming::MaiStreamingProvider::new(&config, identity, "synthetic-model")
+                .unwrap(),
+        ),
+    };
+    let (record, created) = services
+        .create(
+            serde_json::from_value(json!({
+                "client_recording_id":"actual-https-emulator-continuous",
+                "transcription_mode":"streaming", "audio_layout":"contiguous",
+                "refinement_enabled":false,
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(created);
+    let segments = [vec![1; 320000], vec![2; 640]];
+    for (index, pcm) in segments.iter().enumerate() {
+        let wav = voiceprompt_core::wav::to_wav(pcm).unwrap();
+        let checksum = format!(
+            "sha-256=:{}:",
+            base64::engine::general_purpose::STANDARD.encode(Sha256::digest(&wav))
+        );
+        services
+            .upload(
+                &record.recording_id,
+                ChunkUpload {
+                    index: index as u32,
+                    wav,
+                    checksum,
+                    duration_ms: None,
+                    overlap_ms: Some(0),
+                    started_at: None,
+                    start_sample: Some(index as u64 * 160000),
+                    sample_count: Some(pcm.len() as u64 / 2),
+                },
+            )
+            .await
+            .unwrap();
+    }
+    services.complete(&record.recording_id, 2).await.unwrap();
+    let expected = segments.concat();
+    let model = tokio::spawn(async move {
+        let (stream, _) = tokio::time::timeout(Duration::from_secs(15), listener.accept())
+            .await
+            .unwrap()
+            .unwrap();
+        let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+        socket
+            .send(Message::Text(r#"{"type":"session.created"}"#.into()))
+            .await
+            .unwrap();
+        socket.next().await.unwrap().unwrap();
+        socket
+            .send(Message::Text(r#"{"type":"session.updated"}"#.into()))
+            .await
+            .unwrap();
+        let mut captured = Vec::new();
+        let mut commits = 0;
+        while let Some(Ok(message)) = socket.next().await {
+            match message {
+                Message::Text(data) => {
+                    let event: serde_json::Value = serde_json::from_str(&data).unwrap();
+                    match event["type"].as_str().unwrap() {
+                        "input_audio_buffer.append" => {
+                            captured.extend(
+                                base64::engine::general_purpose::STANDARD
+                                    .decode(event["audio"].as_str().unwrap())
+                                    .unwrap(),
+                            );
+                            assert!(captured.len() <= expected.len());
+                        }
+                        "input_audio_buffer.commit" => {
+                            commits += 1;
+                            socket.send(Message::Text(r#"{"type":"conversation.item.input_audio_transcription.completed","transcript":"synthetic Azure continuous final"}"#.into())).await.unwrap();
+                        }
+                        _ => panic!(
+                            "Continuous model request must not reset between durable segments."
+                        ),
+                    }
+                }
+                Message::Close(_) => break,
+                _ => panic!("Unexpected continuous model frame."),
+            }
+        }
+        assert_eq!(commits, 1);
+        assert_eq!(
+            captured, expected,
+            "No missing, duplicated or inserted PCM samples."
+        );
+    });
+    let (_stop, stopping) = tokio::sync::watch::channel(false);
+    assert!(worker.run_once(stopping.clone()).await.unwrap());
+    let ready = services.recording(&record.recording_id).await.unwrap();
+    assert!(ready.stream_asr_ready);
+    assert_eq!(ready.stream_attempt, 1);
+    assert_eq!(ready.streamed_samples, 160320);
+    assert!(ready.stream_lease_id.is_none());
+    for index in 0..2 {
+        assert!(
+            storage
+                .get_blob(
+                    &config.audio_container,
+                    &format!("{}/{index}.wav", record.recording_id),
+                    1024 * 1024
+                )
+                .await
+                .is_ok()
+        );
+    }
+    for _ in 0..8 {
+        if services
+            .recording(&record.recording_id)
+            .await
+            .unwrap()
+            .stream_delivery_completed
+        {
+            break;
+        }
+        assert!(worker.run_once(stopping.clone()).await.unwrap());
+    }
+    let completed = services.recording(&record.recording_id).await.unwrap();
+    assert_eq!(completed.state, crate::domain::RecordingState::Completed);
+    assert!(completed.stream_delivery_completed && completed.stream_error.is_none());
+    let transcript_id = completed.transcript_id.unwrap();
+    assert_eq!(
+        services.transcript(&transcript_id).await.unwrap().body,
+        "synthetic Azure continuous final"
+    );
+    for index in 0..2 {
+        assert!(matches!(
+            storage
+                .get_blob(
+                    &config.audio_container,
+                    &format!("{}/{index}.wav", record.recording_id),
+                    1024 * 1024
+                )
+                .await,
+            Err(StorageError::NotFound)
+        ));
+    }
+    tokio::time::timeout(Duration::from_secs(5), model)
+        .await
+        .unwrap()
+        .unwrap();
+    let event = notifications.next().await;
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&event.body).unwrap()["event"],
+        "transcript.completed"
+    );
+    notifications.finish().await;
+    identity_server.finish().await;
+    (record.recording_id, transcript_id)
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Setup {
@@ -492,7 +689,9 @@ async fn https_azure_contract() {
             .await
             .unwrap()
     );
-    let (legacy_recording_id, legacy_transcript_id) = worker_and_cleanup(Arc::new(storage)).await;
+    let storage = Arc::new(storage);
+    let (legacy_recording_id, legacy_transcript_id) = worker_and_cleanup(storage.clone()).await;
+    let (continuous_recording_id, continuous_transcript_id) = continuous_worker(storage).await;
     println!(
         "{}",
         json!({
@@ -503,6 +702,10 @@ async fn https_azure_contract() {
             "expired_cleanup_respects_active_blob_lease":true,
             "legacy_recording_id":legacy_recording_id,
             "legacy_transcript_id":legacy_transcript_id,
+            "continuous_single_stream_and_exact_samples":true,
+            "audio_retained_until_durable_finalization":true,
+            "continuous_recording_id":continuous_recording_id,
+            "continuous_transcript_id":continuous_transcript_id,
             "real_azure_resources":false, "real_managed_identity":false,
             "production_authorization_proven":false,
         })
