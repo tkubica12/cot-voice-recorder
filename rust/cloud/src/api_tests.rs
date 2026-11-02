@@ -323,6 +323,31 @@ async fn body_limits_are_exact_and_interrupted_io_is_not_reported_as_oversized_i
     assert_eq!(json_body(response).await["code"], "bad-request");
 }
 
+#[test]
+fn typed_body_validation_keeps_missing_unknown_nested_field_paths_and_rejects_trailing_json() {
+    for (payload, field) in [
+        (r#"{}"#, "client_recording_id"),
+        (r#"{"client_recording_id":"fixture","extra":true}"#, "extra"),
+        (
+            r#"{"client_recording_id":"fixture","client":{}}"#,
+            "client.platform",
+        ),
+        (
+            r#"{"client_recording_id":"fixture","client":{"platform":"windows","extra":true}}"#,
+            "client.extra",
+        ),
+    ] {
+        let error = fields_json::<models::CreateRecording>(payload.as_bytes())
+            .err()
+            .unwrap();
+        assert_eq!(error.status, 422);
+        assert_eq!(error.errors[0].field, field);
+    }
+    assert!(
+        fields_json::<models::CreateRecording>(br#"{"client_recording_id":"fixture"} {}"#).is_err()
+    );
+}
+
 #[tokio::test]
 async fn complete_ephemeral_http_paths_use_actual_rust_provider_and_return_only_confirmed_safe_text()
  {

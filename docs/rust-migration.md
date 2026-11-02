@@ -910,3 +910,27 @@ zapojeny do CI bez push/deploy a zatim nejsou vydavany za uspesne overene.
 Predchozi 885ca36 ma potvrzene Windows/Linux Rust i backend CI.
 Full HTTP/OpenAPI/config edge parity, distributed fault cases, feature-matched
 performance, MSRV a lidska real-world akceptace stale zbyvaji.
+
+## Externi skutecny Rust HTTP versus FastAPI
+
+Novy test-only cloud_contract example bezi na loopback portu, ma explicitni
+memory stores a skutecny GoogleVerifier. Python probe generuje RSA key pouze
+v pameti, servuje local JWKS a posila podepsany RS256 bearer; nepouziva
+production auth bypass ani osobni tokeny. Stejny korpus posila do current
+FastAPI factory s izolovanymi fixtures.
+
+Porovnava actual HTTP status, Content-Type/Cache-Control/X-Request-Id/Allow/
+WWW-Authenticate, RFC9457 body keys/error fields a recording/upload/complete,
+audit summary/full/original/list tvary. Odhalil a opravil chybejici errors
+pole, nested/missing/extra JSON field paths, pagination min/max status422,
+digest/WAV field errors a automaticke JSON body media semantics. Rucne strict
+dictation/refine/archive routes zustavaji oddelene. Message text obecnych
+deserialize errors neni vydavan za byte-exact kopii Pydantic wording.
+
+Proslo 202 workspace testu (84 cloud library +2 CLI), locked release/fmt/Clippy
+a obe externi HTTP skupiny. Jde o bounded contract corpus, nikoli dukaz vsech
+moznych JSON typovych koerci nebo fault permutations.
+Cloud-container job predchoziho a2a1140 prosel skutecnym Linux image buildem
+a nonroot UID10001/CLI/missing-config guards, bez image push nebo deploymentu.
+Windows/Ubuntu Rust a backend CI take prosly. Lokalni Docker daemon zustava
+nedostupny; acceptance prahy se tim nesnizuji.

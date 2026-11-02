@@ -8,6 +8,12 @@ pub struct Problem {
     pub code: &'static str,
     pub title: &'static str,
     pub detail: String,
+    pub errors: Vec<FieldError>,
+}
+#[derive(Clone, Debug, Serialize)]
+pub struct FieldError {
+    pub field: String,
+    pub message: String,
 }
 
 #[derive(Serialize)]
@@ -20,6 +26,8 @@ struct Body<'a> {
     instance: &'a str,
     code: &'a str,
     trace_id: &'a str,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    errors: &'a Vec<FieldError>,
 }
 
 impl Problem {
@@ -34,6 +42,7 @@ impl Problem {
             code,
             title,
             detail: detail.into(),
+            errors: Vec::new(),
         }
     }
     pub fn unauthorized() -> Self {
@@ -54,6 +63,18 @@ impl Problem {
     }
     pub fn validation(detail: impl Into<String>) -> Self {
         Self::new(422, "validation", "Validation error", detail)
+    }
+    pub fn field(
+        detail: impl Into<String>,
+        field: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        let mut problem = Self::validation(detail);
+        problem.errors.push(FieldError {
+            field: field.into(),
+            message: message.into(),
+        });
+        problem
     }
     pub fn unavailable(detail: impl Into<String>) -> Self {
         Self::new(503, "service-unavailable", "Service unavailable", detail)
@@ -88,6 +109,7 @@ impl Problem {
             instance: path,
             code: self.code,
             trace_id,
+            errors: &self.errors,
         };
         let mut response = (status, axum::Json(body)).into_response();
         response.headers_mut().insert(

@@ -64,7 +64,7 @@ actual HTTP handlers, multipart/provider contracts, physical-call cancellation,
 ordered PCM relay, actual 15-second/30-second timeout boundaries, lease takeover/
 late-publication fencing, exact contiguous/legacy continuous model replay,
 receipt rotation and graceful producer/heartbeat shutdown.
-The current workspace has 201 passing tests, including 83 cloud library tests and
+The current workspace has 202 passing tests, including 84 cloud library tests and
 two CLI guards. Read-only resource probes and active-writer-safe cleanup use
 synthetic local fixtures.
 No Azure, paid model, production data or credentials are used. These are not
@@ -140,7 +140,21 @@ substituted; direct tests inject explicit isolated adapters.
 
 The root-context `rust\cloud\Dockerfile` builds a non-root UID10001 image with the
 same API8000/worker/cleanup entry point. The current local Docker daemon is
-unavailable; CI builds and probes the image without publishing it. The source-only
+unavailable; CI has built and probed the image without publishing it. The source-only
 `infra\deploy.ps1 -BackendRuntime Rust` switch preserves all classical ACA topology
 and keeps Python as its default/rollback. Do not execute it until deployment is
 separately approved.
+
+## Actual HTTP reference contracts
+
+```powershell
+cargo build --manifest-path rust\Cargo.toml --offline --locked --release -p voiceprompt-cloud --example cloud_contract
+backend\.venv\Scripts\python.exe rust\cloud\tests\test_http_parity.py --oracle rust\target\release\examples\cloud_contract.exe
+```
+
+The loopback-only server uses real RS256 verification against an in-memory
+generated-key local JWKS. The probe compares live Rust HTTP status/headers,
+structured errors, lifecycle and audit/history shapes with the actual FastAPI
+factory. No real account, cloud, model, database or credentials are involved.
+This is a bounded contract corpus, not exhaustive Pydantic coercion/message-text
+or distributed-fault parity.

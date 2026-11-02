@@ -245,6 +245,67 @@ async fn json<T: serde::de::DeserializeOwned>(
     serde_json::from_slice(&data)
         .map_err(|_| Problem::validation("One or more fields are invalid."))
 }
+fn fields_json<T: serde::de::DeserializeOwned>(data: &[u8]) -> Result<T, Problem> {
+    let mut deserializer = serde_json::Deserializer::from_slice(data);
+    let value = serde_path_to_error::deserialize(&mut deserializer).map_err(|error| {
+        let path = error.path().to_string();
+        let message = error.inner().to_string();
+        let quoted = message.split('`').nth(1);
+        let field = if message.starts_with("missing field") || message.starts_with("unknown field")
+        {
+            let name = quoted.unwrap_or("");
+            if path == "." || path.is_empty() {
+                name.into()
+            } else if path.rsplit('.').next() == Some(name) {
+                path
+            } else {
+                format!("{path}.{name}")
+            }
+        } else if path == "." {
+            String::new()
+        } else {
+            path
+        };
+        let label = if message.starts_with("missing field") {
+            "Field required"
+        } else if message.starts_with("unknown field") {
+            "Extra inputs are not permitted"
+        } else {
+            "Invalid field value"
+        };
+        Problem::field("One or more fields are invalid.", field, label)
+    })?;
+    deserializer
+        .end()
+        .map_err(|_| Problem::field("One or more fields are invalid.", "", "Invalid JSON input"))?;
+    Ok(value)
+}
+async fn json_fields<T: serde::de::DeserializeOwned>(
+    request: Request,
+    maximum: usize,
+) -> Result<T, Problem> {
+    let mime = request
+        .headers()
+        .get("Content-Type")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    if !mime.is_empty()
+        && mime != "application/json"
+        && !(mime.starts_with("application/") && mime.ends_with("+json"))
+    {
+        return Err(Problem::field(
+            "One or more fields are invalid.",
+            "",
+            "Input should be a valid dictionary or object to extract fields from",
+        ));
+    }
+    fields_json(&read_body(request, maximum).await?)
+}
 async fn not_found(request: Request) -> Response {
     failure(&request, Problem::not_found("Not Found"))
 }
@@ -265,7 +326,7 @@ async fn create_recording(State(state): State<ApiState>, request: Request) -> Re
     }
     let (path, trace) = info(&request);
     let result = async {
-        let payload: models::CreateRecording = json(request, 1024 * 1024).await?;
+        let payload: models::CreateRecording = json_fields(request, 1024 * 1024).await?;
         let (record, created) = state.services.create(payload).await?;
         let body = state.services.wire_recording(&record).await?;
         let mut response = (
@@ -321,9 +382,22 @@ async fn upload(
     let (path, trace) = info(&request);
     let headers = request.headers().clone();
     let result = async {
-        let index = index
-            .parse::<u32>()
-            .map_err(|_| Problem::validation("Chunk index must be non-negative."))?;
+        let index = index.parse::<i64>().map_err(|_| {
+            Problem::field(
+                "One or more fields are invalid.",
+                "path.index",
+                "Input should be a valid integer",
+            )
+        })?;
+        if index < 0 {
+            return Err(Problem::field(
+                "Chunk index must be non-negative.",
+                "index",
+                "must be >= 0",
+            ));
+        }
+        let index = u32::try_from(index)
+            .map_err(|_| Problem::validation("Chunk index exceeds supported bounds."))?;
         let wav = body(request, 8 * 1024 * 1024, "audio/wav").await?;
         let checksum = crate::audio::content_digest(
             headers
@@ -332,7 +406,7 @@ async fn upload(
             &wav,
         )?;
         voiceprompt_core::wav::validate_capture_wav(&wav, voiceprompt_core::wav::ParseMode::Legacy)
-            .map_err(|_| Problem::validation("Invalid mono PCM16 16kHz WAV."))?;
+            .map_err(crate::audio::wav_problem)?;
         let integer = |name: &str| -> Result<Option<u64>, Problem> {
             headers
                 .get(name)
@@ -396,7 +470,14 @@ async fn complete(
     }
     let (path, trace) = info(&request);
     let result = async {
-        let payload: models::CompleteRecording = json(request, 1024 * 1024).await?;
+        let payload: models::CompleteRecording = json_fields(request, 1024 * 1024).await?;
+        if payload.chunk_count == 0 {
+            return Err(Problem::field(
+                "One or more fields are invalid.",
+                "chunk_count",
+                "Input should be greater than or equal to 1",
+            ));
+        }
         let (record, status) = state.services.complete(&id, payload.chunk_count).await?;
         Ok::<_, Problem>(
             (
@@ -437,11 +518,26 @@ async fn list_transcripts(State(state): State<ApiState>, request: Request) -> Re
         let mut cursor = None;
         for (name, value) in uri.query_pairs() {
             if name == "limit" {
-                limit = value
-                    .parse::<usize>()
-                    .map_err(|_| Problem::validation("Invalid limit."))?;
+                limit = value.parse::<usize>().map_err(|_| {
+                    Problem::field(
+                        "One or more fields are invalid.",
+                        "query.limit",
+                        "Input should be a valid integer",
+                    )
+                })?;
             } else if name == "cursor" {
                 cursor = Some(value.into_owned());
+            }
+            if !(1..=100).contains(&limit) {
+                return Err(Problem::field(
+                    "One or more fields are invalid.",
+                    "query.limit",
+                    if limit < 1 {
+                        "Input should be greater than or equal to 1"
+                    } else {
+                        "Input should be less than or equal to 100"
+                    },
+                ));
             }
         }
         state
@@ -495,8 +591,7 @@ async fn negotiate(State(state): State<ApiState>, request: Request) -> Response 
     let result = async {
         let bytes = read_body(request, 1024 * 1024).await?;
         if !bytes.is_empty() {
-            let _: Option<models::NegotiateRequest> = serde_json::from_slice(&bytes)
-                .map_err(|_| Problem::validation("Invalid negotiation request."))?;
+            let _: Option<models::NegotiateRequest> = fields_json(&bytes)?;
         }
         let gateway = state
             .realtime
@@ -536,14 +631,18 @@ async fn transcribe(State(state): State<ApiState>, request: Request) -> Response
             }
         }
         if !matches!(language.as_str(), "auto" | "cs" | "en") {
-            return Err(Problem::validation("Unsupported dictation language."));
+            return Err(Problem::field(
+                "One or more fields are invalid.",
+                "query.language",
+                "Input should be 'auto', 'cs' or 'en'",
+            ));
         }
         let wav = body(request, 320000 + 4096, "audio/wav").await?;
         let properties = voiceprompt_core::wav::validate_capture_wav(
             &wav,
             voiceprompt_core::wav::ParseMode::Strict,
         )
-        .map_err(|_| Problem::validation("Invalid dictation WAV."))?;
+        .map_err(crate::audio::wav_problem)?;
         if properties.data_bytes > 320000 {
             return Err(Problem::validation(
                 "Dictation audio must be no longer than ten seconds.",

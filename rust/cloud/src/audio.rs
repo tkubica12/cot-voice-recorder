@@ -19,20 +19,60 @@ pub fn content_digest(header: Option<&str>, data: &[u8]) -> Result<String, Probl
     let encoded = header
         .strip_prefix("sha-256=:")
         .and_then(|value| value.strip_suffix(':'))
-        .ok_or_else(|| Problem::validation("Malformed sha-256 Content-Digest."))?;
+        .ok_or_else(|| {
+            Problem::field(
+                "Content-Digest must use sha-256=:base64: syntax.",
+                "Content-Digest",
+                "malformed sha-256 digest",
+            )
+        })?;
     let digest = base64::engine::general_purpose::STANDARD
         .decode(encoded)
-        .map_err(|_| Problem::validation("Invalid Content-Digest base64."))?;
+        .map_err(|_| {
+            Problem::field(
+                "Content-Digest base64 payload is invalid.",
+                "Content-Digest",
+                "invalid base64",
+            )
+        })?;
     let expected: [u8; 32] = Sha256::digest(data).into();
-    if digest.len() != 32 || !bool::from(digest.as_slice().ct_eq(&expected)) {
-        return Err(Problem::validation(
-            "Request body does not match Content-Digest.",
+    if digest.len() != 32 {
+        return Err(Problem::field(
+            "Content-Digest must be a 32-byte SHA-256 value.",
+            "Content-Digest",
+            "expected 32-byte digest",
         ));
     }
+    if !bool::from(digest.as_slice().ct_eq(&expected)) {
+        return Err(Problem::field(
+            "Request body does not match the Content-Digest.",
+            "Content-Digest",
+            "digest mismatch",
+        ));
+    }
+
     Ok(format!(
         "sha-256=:{}:",
         base64::engine::general_purpose::STANDARD.encode(digest)
     ))
+}
+
+pub fn wav_problem(error: voiceprompt_core::wav::WavError) -> Problem {
+    match error {
+        voiceprompt_core::wav::WavError::FormatMismatch(fields) => {
+            let mut problem =
+                Problem::validation("WAV PCM properties do not match the required capture format.");
+            problem.errors = fields
+                .into_iter()
+                .map(|field| crate::problem::FieldError {
+                    field: field.field.into(),
+                    message: format!("expected {}, got {}", field.expected, field.actual),
+                })
+                .collect();
+            problem
+        }
+        error => Problem::field(error.to_string(), "body", error.to_string()),
+    }
 }
 
 pub fn streaming_samples(

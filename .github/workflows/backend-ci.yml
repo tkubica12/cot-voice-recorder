@@ -57,6 +57,7 @@ jobs:
         run: |
           cargo fetch --manifest-path rust/Cargo.toml --locked
           cargo build --manifest-path rust/Cargo.toml --offline --locked --release -p voiceprompt-cloud --example entity_contract
+          cargo build --manifest-path rust/Cargo.toml --offline --locked --release -p voiceprompt-cloud --example cloud_contract
 
       - name: Bidirectional actual SDK and Python entity parity
         run: uv run --locked python ../rust/cloud/tests/test_entity_parity.py --oracle ../rust/target/release/examples/entity_contract
@@ -72,3 +73,6 @@ jobs:
 
       - name: Actual Python overlap stitching, complete Unicode and deterministic ID parity
         run: uv run --locked python ../rust/cloud/tests/test_pipeline_text_parity.py --oracle ../rust/target/release/examples/entity_contract
+
+      - name: Real signed-token Rust HTTP versus current FastAPI contract
+        run: uv run --locked python ../rust/cloud/tests/test_http_parity.py --oracle ../rust/target/release/examples/cloud_contract
