@@ -7,6 +7,7 @@ import concurrent.futures
 import hashlib
 import json
 import os
+import shutil
 import struct
 import subprocess
 import tempfile
@@ -74,7 +75,7 @@ class RecoveryParityTests(unittest.TestCase):
             environment["VOICEPROMPT_FIXTURE_TARGET"] = str(target)
             created = subprocess.run(
                 [
-                    "powershell.exe",
+                    shutil.which("pwsh") or "powershell.exe",
                     "-NoProfile",
                     "-NonInteractive",
                     "-Command",
@@ -86,10 +87,11 @@ class RecoveryParityTests(unittest.TestCase):
                 ],
                 env=environment,
                 capture_output=True,
-                timeout=15,
+                timeout=60,
                 check=False,
             )
             self.assertEqual(created.returncode, 0, created.stderr)
+            self.assertTrue(os.path.isjunction(junction))
             try:
                 for command, data in [
                     (

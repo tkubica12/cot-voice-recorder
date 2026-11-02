@@ -793,3 +793,10 @@ To neni kompletni QueueWorker/CLI ani finalization/cleanup. Legacy chunked engin
 durable finalization/notification, cleanup/orphans, bootstrap/container wiring,
 full distributed faults a feature-matched/human acceptance nadale zbyvaji.
 Nevykonano zadne produkcni nasazeni ani placene AI.
+
+Windows CI commitu b2e91af odhalilo timeout pri startu powershell.exe pro
+syntetickou junction fixture (15s), nikoli selhani Rust/C# recovery formatu.
+Fixture preferuje dostupny pwsh, ma explicitni 60s setup budget a overuje,
+ze vytvoreny objekt je skutecne junction. Sedm lokalnich recovery parity skupin
+proslo; CI opravy se overuje samostatne. Zadny aplikacni timeout ani acceptance
+prah nebyl zmenen nebo skryt.
