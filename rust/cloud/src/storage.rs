@@ -60,7 +60,93 @@ fn invalid() -> StorageError {
     ))
 }
 
+#[cfg(test)]
+mod loopback_fixture_tests {
+    use super::*;
+
+    #[test]
+    fn fixture_rejects_nonlocal_unverified_or_ambiguous_endpoints_before_any_request() {
+        let credential = Arc::new(ManagedIdentity::fixture("http://127.0.0.1:12345/token"));
+        let valid = url::Url::parse("https://127.0.0.1:12345/devstoreaccount1/").unwrap();
+        for endpoint in [
+            "http://127.0.0.1:12345/devstoreaccount1/",
+            "https://example.invalid:12345/devstoreaccount1/",
+            "https://user@127.0.0.1:12345/devstoreaccount1/",
+            "https://127.0.0.1:12345/devstoreaccount1/?query=value",
+            "https://127.0.0.1:12345/devstoreaccount1/#fragment",
+            "https://127.0.0.1:12345/another-account/",
+        ] {
+            let error = AzureStorage::loopback_fixture(
+                credential.clone(),
+                [
+                    url::Url::parse(endpoint).unwrap(),
+                    valid.clone(),
+                    valid.clone(),
+                ],
+                b"not a certificate",
+            )
+            .err()
+            .unwrap();
+            assert_eq!(
+                error.detail,
+                "Storage fixture requires explicit verified-HTTPS loopback Azurite endpoints."
+            );
+        }
+        let error = AzureStorage::loopback_fixture(
+            credential,
+            [valid.clone(), valid.clone(), valid],
+            b"not a certificate",
+        )
+        .err()
+        .unwrap();
+        assert_eq!(
+            error.detail,
+            "Invalid explicit storage fixture certificate."
+        );
+    }
+}
+
 impl AzureStorage {
+    #[cfg(any(test, feature = "loopback-fixtures"))]
+    pub fn loopback_fixture(
+        credential: Arc<ManagedIdentity>,
+        endpoints: [url::Url; 3],
+        certificate_pem: &[u8],
+    ) -> std::result::Result<Self, Problem> {
+        for endpoint in &endpoints {
+            if endpoint.scheme() != "https"
+                || endpoint.host_str() != Some("127.0.0.1")
+                || endpoint.port().is_none()
+                || !endpoint.username().is_empty()
+                || endpoint.password().is_some()
+                || endpoint.query().is_some()
+                || endpoint.fragment().is_some()
+                || endpoint.path() != "/devstoreaccount1/"
+            {
+                return Err(Problem::validation(
+                    "Storage fixture requires explicit verified-HTTPS loopback Azurite endpoints.",
+                ));
+            }
+        }
+        let certificate = reqwest::Certificate::from_pem(certificate_pem)
+            .map_err(|_| Problem::validation("Invalid explicit storage fixture certificate."))?;
+        let http = reqwest::Client::builder()
+            .no_proxy()
+            .add_root_certificate(certificate)
+            .timeout(Duration::from_secs(60))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|_| Problem::internal())?;
+        let [blob, queue, table] = endpoints;
+        Ok(Self {
+            credential,
+            http,
+            blob,
+            queue,
+            table,
+        })
+    }
+
     pub async fn check_resources(&self, config: &Config) -> Result<()> {
         for container in [
             &config.audio_container,
@@ -71,6 +157,7 @@ impl AzureStorage {
             uri.query_pairs_mut().append_pair("restype", "container");
             self.request(Method::HEAD, uri, None, &[]).await?;
         }
+
         let mut uri = Self::uri(&self.queue, &[&config.queue])?;
         uri.query_pairs_mut().append_pair("comp", "metadata");
         self.request(Method::GET, uri, None, &[]).await?;

@@ -7,6 +7,9 @@ license = "MIT"
 publish = false
 description = "Staged Rust VoicePrompt API, worker and cleanup implementation."
 
+[features]
+loopback-fixtures = []
+
 [[bin]]
 name = "voice-recorder"
 path = "src/main.rs"

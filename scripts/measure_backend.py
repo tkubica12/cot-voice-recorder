@@ -21,6 +21,7 @@ import threading
 import time
 import uuid
 from collections import deque
+from collections.abc import Callable
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -31,6 +32,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 
 ROOT = Path(__file__).resolve().parents[1]
 SCOPE = "authenticated-in-memory-http-no-ai-realtime"
+AZURE_SCOPE = "authenticated-https-azurite-http-no-ai-realtime"
 OPERATIONS = {
     "create",
     "get_recording",
@@ -110,7 +112,9 @@ class Authority:
 
 
 class Fixture:
-    def __init__(self, implementation: str, rust: Path, authority: Authority) -> None:
+    def __init__(
+        self, implementation: str, rust: Path, authority: Authority, azure_root: Path | None = None
+    ) -> None:
         if implementation not in {"python", "rust"} or rust.name not in {
             "cloud_contract",
             "cloud_contract.exe",
@@ -130,6 +134,19 @@ class Fixture:
             for key, value in os.environ.items()
             if not key.upper().startswith(("VR_", "AZURE_", "IDENTITY_", "VOICEPROMPT_", "GOOGLE_"))
         }
+        if azure_root is not None:
+            from azure_api_fixture import load_fixture
+
+            config = load_fixture(azure_root)
+            arguments.extend(["--azure-fixture", str(azure_root)])
+            environment.update(
+                {
+                    "IDENTITY_ENDPOINT": config["identity_endpoint"],
+                    "IDENTITY_HEADER": config["identity_header"],
+                    "AZURE_CLIENT_ID": "synthetic-uami",
+                }
+            )
+        self.storage_backend = "azure" if azure_root is not None else "memory"
         environment["NO_PROXY"] = environment["no_proxy"] = "127.0.0.1,localhost"
         self.started = time.perf_counter()
         self.process = subprocess.Popen(
@@ -161,7 +178,10 @@ class Fixture:
             line = lines.get(timeout=15)
             if not line:
                 raise RuntimeError("Backend fixture exited before publishing its URL.")
-            address = json.loads(line)["url"]
+            marker = json.loads(line)
+            if marker.get("storage_backend") != self.storage_backend:
+                raise RuntimeError("The actual API did not attest its requested storage adapters.")
+            address = marker["url"]
             parsed = httpx.URL(address)
             if (
                 parsed.scheme != "http"
@@ -387,6 +407,8 @@ def fingerprint(rust: Path) -> dict[str, str]:
         ROOT.joinpath("backend", "uv.lock"),
         Path(__file__),
         ROOT.joinpath("scripts", "backend_fixture.py"),
+        ROOT.joinpath("scripts", "azure_api_fixture.py"),
+        ROOT.joinpath("scripts", "test_azure_rest.py"),
     ]
     for path in sorted(paths):
         sources[str(path.relative_to(ROOT))] = hashlib.sha256(path.read_bytes()).hexdigest()
@@ -477,11 +499,22 @@ def check(rust: Path) -> None:
         authority.close()
 
 
-def measure(rust: Path, output: Path, revision: str, trials: int, count: int) -> None:
+def measure(
+    rust: Path,
+    output: Path,
+    revision: str,
+    trials: int,
+    count: int,
+    *,
+    fixture_factory: Callable[[str, Path, Authority], Fixture] = Fixture,
+    scope: str = SCOPE,
+) -> None:
     if not sys.platform.startswith("linux"):
         raise RuntimeError("Backend performance requires Linux.")
     if output.exists():
         raise FileExistsError(output)
+    if scope not in {SCOPE, AZURE_SCOPE}:
+        raise ValueError("An explicit supported protocol/adapter profile scope is required.")
     before = fingerprint(rust)
     authority = Authority()
     startup = {"python": [], "rust": []}
@@ -493,8 +526,10 @@ def measure(rust: Path, output: Path, revision: str, trials: int, count: int) ->
     try:
         for trial in range(trials):
             for implementation in ["python", "rust"] if trial % 2 == 0 else ["rust", "python"]:
-                fixture = Fixture(implementation, rust, authority)
+                fixture = fixture_factory(implementation, rust, authority)
                 try:
+                    if fixture.storage_backend != ("azure" if scope == AZURE_SCOPE else "memory"):
+                        raise RuntimeError("Measured adapter scope does not match the actual API.")
                     startup[implementation].append(fixture.startup_ms)
                     rows.append(
                         {
@@ -509,7 +544,7 @@ def measure(rust: Path, output: Path, revision: str, trials: int, count: int) ->
         fixtures = {}
         try:
             for implementation in ["python", "rust"]:
-                fixture = Fixture(implementation, rust, authority)
+                fixture = fixture_factory(implementation, rust, authority)
                 fixtures[implementation] = fixture
                 load_pids[implementation] = fixture.process.pid
                 controls(fixture, authority)
@@ -547,7 +582,7 @@ def measure(rust: Path, output: Path, revision: str, trials: int, count: int) ->
     result = {
         "schema_version": 1,
         "status": "complete",
-        "scope": SCOPE,
+        "scope": scope,
         "source_revision": revision,
         "binary_source_and_lock_sha256": before,
         "platform": platform.platform(),
@@ -559,6 +594,8 @@ def measure(rust: Path, output: Path, revision: str, trials: int, count: int) ->
         },
         "whole_migration_acceptance": False,
         "measures_azure_private_networking": False,
+        "actual_azure_storage_adapters": scope == AZURE_SCOPE,
+        "real_azure_resources_or_iam": False,
         "measures_models_workers_or_realtime": False,
         "real_rs256_jwks_auth": True,
         "is_deployed_aca_or_container_profile": False,
@@ -593,7 +630,7 @@ def measure(rust: Path, output: Path, revision: str, trials: int, count: int) ->
     print(
         json.dumps(
             {
-                "scope": SCOPE,
+                "scope": scope,
                 "profile_thresholds": verdict,
                 "sufficient_for_this_protocol_profile": result[
                     "sufficient_for_this_protocol_profile"

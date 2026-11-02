@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import socket
 import sys
+from contextlib import ExitStack
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -36,7 +37,7 @@ class UnavailableRealtime:
         raise ServiceUnavailableError("No model worker or realtime delivery runs in this fixture.")
 
 
-def run(jwks: str) -> None:
+def run(jwks: str, azure_root: Path | None = None) -> None:
     endpoint = urlsplit(jwks)
     if (
         endpoint.scheme != "http"
@@ -55,25 +56,36 @@ def run(jwks: str) -> None:
         auth_disabled=False,
         google_allowed_audiences=("fixture",),
         allowlisted_email="fixture@example.invalid",
-        use_fake_storage=True,
+        use_fake_storage=azure_root is None,
         use_fake_ai=False,
         use_fake_realtime=False,
         transcribe_provider="azure_openai",
         foundry_endpoint="",
         dictation_stream_enabled=False,
     )
-    context = ServiceContext(
-        settings=settings,
-        clock=SystemClock(),
-        recordings=InMemoryRecordingRepository(),
-        chunks=InMemoryChunkRepository(),
-        transcripts=InMemoryTranscriptRepository(),
-        blobs=InMemoryBlobStore(),
-        queue=InMemoryWorkQueue(),
-        transcriber=FakeTranscriber(),
-        refiner=FakeRefiner(),
-        realtime=UnavailableRealtime(),
-    )
+    with ExitStack() as resources:
+        if azure_root is not None:
+            from azure_api_fixture import context as azure_context
+
+            context = azure_context(azure_root, settings, UnavailableRealtime(), resources)
+        else:
+            context = ServiceContext(
+                settings=settings,
+                clock=SystemClock(),
+                recordings=InMemoryRecordingRepository(),
+                chunks=InMemoryChunkRepository(),
+                transcripts=InMemoryTranscriptRepository(),
+                blobs=InMemoryBlobStore(),
+                queue=InMemoryWorkQueue(),
+                transcriber=FakeTranscriber(),
+                refiner=FakeRefiner(),
+                realtime=UnavailableRealtime(),
+            )
+        serve(jwks, settings, context, "azure" if azure_root is not None else "memory")
+
+
+def serve(jwks: str, settings: Settings, context: ServiceContext, storage_backend: str) -> None:
+    settings = context.settings
     verifier = GoogleTokenVerifier(
         jwks_uri=jwks,
         allowed_audiences=("fixture",),
@@ -92,7 +104,13 @@ def run(jwks: str) -> None:
                 if not self.started:
                     raise RuntimeError("FastAPI fixture stopped before readiness.")
                 print(
-                    json.dumps({"url": f"http://127.0.0.1:{listener.getsockname()[1]}"}), flush=True
+                    json.dumps(
+                        {
+                            "url": f"http://127.0.0.1:{listener.getsockname()[1]}",
+                            "storage_backend": storage_backend,
+                        }
+                    ),
+                    flush=True,
                 )
 
         server = ReadyServer(
@@ -109,6 +127,9 @@ def run(jwks: str) -> None:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        raise SystemExit("Pass one loopback JWKS fixture URL.")
-    run(sys.argv[1])
+    if len(sys.argv) == 2:
+        run(sys.argv[1])
+    elif len(sys.argv) == 4 and sys.argv[2] == "--azure-fixture":
+        run(sys.argv[1], Path(sys.argv[3]))
+    else:
+        raise SystemExit("Pass a loopback JWKS URL and optional explicit --azure-fixture root.")

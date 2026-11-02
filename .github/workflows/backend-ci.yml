@@ -7,6 +7,8 @@ on:
       - "rust/cloud/**"
       - "scripts/backend_fixture.py"
       - "scripts/measure_backend.py"
+      - "scripts/azure_api_fixture.py"
+      - "scripts/tests/test_azure_api_fixture.py"
       - "scripts/tests/test_backend_measurement_fixture.py"
       - "scripts/test_azure_rest.py"
       - "scripts/tests/test_azure_rest_fixture.py"
@@ -17,6 +19,8 @@ on:
       - "rust/cloud/**"
       - "scripts/backend_fixture.py"
       - "scripts/measure_backend.py"
+      - "scripts/azure_api_fixture.py"
+      - "scripts/tests/test_azure_api_fixture.py"
       - "scripts/tests/test_backend_measurement_fixture.py"
       - "scripts/test_azure_rest.py"
       - "scripts/tests/test_azure_rest_fixture.py"
@@ -107,9 +111,16 @@ jobs:
 
       - name: HTTPS emulator fixture guards, no Azure or personal credentials
         run: |
-          uv run --locked ruff check --config pyproject.toml --ignore E402 ../scripts/test_azure_rest.py ../scripts/tests/test_azure_rest_fixture.py
-          uv run --locked ruff format --check --config pyproject.toml ../scripts/test_azure_rest.py ../scripts/tests/test_azure_rest_fixture.py
+          uv run --locked ruff check --config pyproject.toml --ignore E402 ../scripts/test_azure_rest.py ../scripts/tests/test_azure_rest_fixture.py ../scripts/azure_api_fixture.py ../scripts/tests/test_azure_api_fixture.py
+          uv run --locked ruff format --check --config pyproject.toml ../scripts/test_azure_rest.py ../scripts/tests/test_azure_rest_fixture.py ../scripts/azure_api_fixture.py ../scripts/tests/test_azure_api_fixture.py
           uv run --locked python ../scripts/tests/test_azure_rest_fixture.py
+          uv run --locked python ../scripts/tests/test_azure_api_fixture.py
+
+      - name: Build opt-in loopback-only actual storage API fixture, never production config
+        working-directory: .
+        run: |
+          cargo build --manifest-path rust/Cargo.toml --offline --locked --release -p voiceprompt-cloud --example cloud_contract --features loopback-fixtures
+          cargo clippy --manifest-path rust/Cargo.toml --offline --locked -p voiceprompt-cloud --all-targets --features loopback-fixtures -- -D warnings
 
       - name: Build exact Rust cloud libtest fixture for actual Azure REST contracts
         working-directory: .
@@ -118,11 +129,11 @@ jobs:
           cargo test --manifest-path rust/Cargo.toml -p voiceprompt-cloud --lib --release --no-run --offline --locked --message-format json > "$RUNNER_TEMP/azure-fixture-build.jsonl"
           python -c "import json,os,pathlib; rows=[json.loads(line) for line in pathlib.Path(os.environ['RUNNER_TEMP'],'azure-fixture-build.jsonl').read_text().splitlines()]; paths=[row['executable'] for row in rows if row.get('reason')=='compiler-artifact' and row.get('executable')]; assert len(paths)==1; pathlib.Path(os.environ['RUNNER_TEMP'],'azure-fixture-path.txt').write_text(paths[0])"
 
-      - name: Actual Rust REST and Azure SDK against verified HTTPS OAuth Azurite
-        timeout-minutes: 10
+      - name: Actual REST contracts and adapter-matched authenticated API profile against verified HTTPS Azurite
+        timeout-minutes: 20
         run: |
           mkdir "$RUNNER_TEMP/azure-rest-contract"
-          uv run --locked python ../scripts/test_azure_rest.py --oracle "$(cat "$RUNNER_TEMP/azure-fixture-path.txt")" --output-directory "$RUNNER_TEMP/azure-rest-contract" --source-revision "$GITHUB_SHA"
+          uv run --locked python ../scripts/test_azure_rest.py --oracle "$(cat "$RUNNER_TEMP/azure-fixture-path.txt")" --api-oracle ../rust/target/release/examples/cloud_contract --output-directory "$RUNNER_TEMP/azure-rest-contract" --source-revision "$GITHUB_SHA"
 
       - name: Preserve bounded emulator proof or explicit failure, never ephemeral private keys
         if: always()
@@ -131,6 +142,7 @@ jobs:
           name: azure-rest-contract
           path: |
             ${{ runner.temp }}/azure-rest-contract/azure-rest-contract.json
+            ${{ runner.temp }}/azure-rest-contract/backend-azure-performance.json
             ${{ runner.temp }}/azure-rest-contract/failure.json
             ${{ runner.temp }}/azure-rest-contract/cleanup-failure.json
             ${{ runner.temp }}/azure-rest-contract/native-stdout.txt

@@ -2527,3 +2527,65 @@ stejneho a2d ve snaze vybrat lepsi vysledek.
 
 a2dRustCI41510743527 mezitim dokoncilo Windows/Linux/MSRV1.85/container
 PASS. To neuzavira performance, human/controller ani celou migraci.
+
+### Opraveny Windows profil stale incomplete; bez dalsi tiche serie
+
+Novy frozen3f4d0ee release
+2f6ebd48fb3214bc4282c28b9325ed941d879350e30bf34b3380bc386ef25458
+se stejnym C# bundlem prosel startup10Rust/9CSharp. Dalsi C#PID55000
+prekrocil puvodni15s readiness budget (15208.243900ms). Zadne memory
+serie ani kompletni30+30 verdict: FAILED/INCOMPLETE, zadne PASS.
+Tentokrat se zachovalo vsech19 immutable full-precision samples a
+failure metadata8aecc4b173358994fae53fc260a3fb24d16b35e1486ab3c7d7f89af5d4c33ed1,
+source3f4d0ee. Rust mel i3.740s/5.469s a C#7.819s/12.254s.
+Oboustranne zpomaleni neni zpetne pripsane OS nebo jedne platformni
+operaci bez dukazu. Vsechny owned client procesy absent, zadny
+temporary state root nezustal. Soucasne3f4RustCI41514148488 Windows/
+Linux/MSRV/container PASS, coz tento performance failure nenahrazuje.
+Neprobiha dalsi automaticka serie. Koordinator dostal nejmensi potrebnou
+podminku: klidne merici okno na TOMTO schvalenem pocitaci, nikoli novy
+profil/stroj; acceptance targets i safety budget zustavaji nezmenene.
+
+### Actual Azure-adapter HTTP performance: source/CI fixture, vysledek pending
+
+In-memory Linux HTTP profil zustava oddeleny. Novy opt-in
+loopback-fixtures build example cloud_contract umi skutecne
+Repository/Blobs/Queue Azure adaptery nad verified-HTTPS127.0.0.1
+Azurite; default production binary/config/image graf zustava beze
+zmeny a zadny emulator/shared-key fallback se do nej nevklada.
+Fixture vyzaduje explicitni marked root, private synthetic identity
+header/exactloopbacktoken endpoint, own CA cert a random32hex namespace
+pro KAZDY proces/implementaci. TLS/redirect/proxy/API-version guardy se
+nevypinaji. Stejny GoogleRS256/JWKS/allowlist workload ma puvodni
+Python FastAPI factory se skutecnymi Azure SDK Table/Blob/Queue adaptery.
+Zadne osobni credentials, actual Azure nebo paidAI.
+
+Existing pinned official Azurite runner po actual REST/worker/cleanup/
+continuous/full-replay kontraktu spusti30 starts kazde implementace a
+3x100 matched API flows se stejnym emulatorem, puvodnimi metrics a
+1s/50%readiness,50%RSS,110%APIp95 prahy. Namespace create/delete je
+mimo timed interval; skutecna adapter initialization/probes zustava
+uvnitr process->readiness. API sam attests Azure vsMemory, nezavisly SDK
+reopen po kazdem processu overi recording/chunk/transcript count,
+canonical audit envelope body a queued work. Startup namespaces jsou
+prazdne, obe load namespaces maji301 records/chunks/transcripts.
+Cleanup vsech owned names a emulator/identity/privatekey musi uspet,
+nez se finalni backend-azure-performance.json publikuje.
+
+Lokalne passed97 Rust cloud regular tests/Clippy/default+feature builds,
+all-workspace/all-target/all-feature check a5 Python Azure API guard
+groups vcetne SKUTECNE SDK init pres vlastni verified-HTTPS responder
+(7 owned requests,onecached scoped synthetic token). Dalsich5 existujicich
+TLS/emulator groups a5 authenticated-factory/threshold groups PASS.
+Toto jeste neni actual Azurite performance run: localDocker engine
+zustava nedostupny, novy LinuxCI vysledek musi byt skutecne stazen a
+nezavisle prepocitan. Zadny cloud performance prah se nepovazuje zaPASS
+z existence fixture.
+
+Pri sirsim actual HTTP parity runneru byl navic opakovane zachycen
+Windows10053 connection reset u nekterych requestu odmitnutych pred
+prectenim body (invalidoptionalheaders/encoding); obsahove asserts
+ostatnich scenaru prosly. Pricinu jeste overit a opravit, ne ignorovat/
+maskovat retry nebo oznacit cely runner zaPASS. Nadale jde o otevrenou
+regresi/transportni acceptance mezeru. Zadne nove physical/account
+opravneni tento cloud inkrement nepouziva.

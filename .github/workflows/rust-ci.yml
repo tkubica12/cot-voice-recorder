@@ -63,7 +63,7 @@ jobs:
       - name: Fetch the existing locked approved graph
         run: cargo +1.85.0 fetch --locked
       - name: Check all workspace targets with the declared MSRV
-        run: cargo +1.85.0 check --workspace --all-targets --offline --locked
+        run: cargo +1.85.0 check --workspace --all-targets --all-features --offline --locked
   cloud-container:
     runs-on: ubuntu-latest
     steps:

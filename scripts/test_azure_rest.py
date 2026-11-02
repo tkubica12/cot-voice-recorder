@@ -194,10 +194,25 @@ def native_proof(stdout: bytes) -> dict:
     return proof
 
 
-def run(oracle: Path, output: Path, revision: str) -> None:
+def run(
+    oracle: Path,
+    output: Path,
+    revision: str,
+    api_oracle: Path | None = None,
+    startup_trials: int = 30,
+    flows_per_series: int = 100,
+) -> None:
     if not sys.platform.startswith("linux") or not oracle.name.startswith("voiceprompt_cloud-"):
         raise ValueError(
             "An explicit Linux cloud libtest fixture is required; normal binaries are forbidden."
+        )
+    if api_oracle is not None and (
+        api_oracle.name != "cloud_contract"
+        or not 1 <= startup_trials <= 100
+        or not 1 <= flows_per_series <= 1000
+    ):
+        raise ValueError(
+            "An explicit bounded API example, never the production binary, is required."
         )
     output = output.resolve(strict=True)
     if any(output.iterdir()):
@@ -211,6 +226,7 @@ def run(oracle: Path, output: Path, revision: str) -> None:
         container = None
         clients = []
         result = None
+        api_result = None
         try:
             container = docker(
                 [
@@ -459,6 +475,48 @@ def run(oracle: Path, output: Path, revision: str) -> None:
                 "emulator_validates_token_signatures_or_permissions": False,
                 "whole_migration_acceptance": False,
             }
+            if api_oracle is not None:
+                from azure_api_fixture import AzureProfile
+                from measure_backend import AZURE_SCOPE, measure
+
+                profile = AzureProfile(root, endpoints, identity, blob, queue, table)
+                profile_path = root.joinpath("backend-azure-performance.json")
+                measure(
+                    api_oracle,
+                    profile_path,
+                    revision,
+                    startup_trials,
+                    flows_per_series,
+                    fixture_factory=profile.fixture,
+                    scope=AZURE_SCOPE,
+                )
+                api_result = json.loads(profile_path.read_bytes())
+                observations = profile.observations
+                loads = [item for item in observations if item["recordings"] > 0]
+                if (
+                    len(observations) != startup_trials * 2 + 2
+                    or len(loads) != 2
+                    or {item["implementation"] for item in loads} != {"python", "rust"}
+                    or any(
+                        item["recordings"] != 1 + 3 * flows_per_series
+                        or item["chunks"] != item["recordings"]
+                        or item["transcripts"] != item["recordings"]
+                        or item["queued_messages"] < item["recordings"]
+                        or not item["resources_deleted"]
+                        or item["storage_backend"] != "azure"
+                        for item in loads
+                    )
+                ):
+                    raise ValueError(
+                        "Actual SDK did not verify both measured persistent workloads."
+                    )
+                api_result["emulator_image"] = IMAGE
+                api_result["tls_verification_enabled"] = True
+                api_result["api_version_check_enabled"] = True
+                api_result["resource_observations"] = observations
+                api_result["namespace_setup_and_deletion_outside_timed_interval"] = True
+                api_result["same_emulator_shared_sequential_workload"] = True
+                api_result["synthetic_identity_requests"] = len(identity.resources)
         except BaseException as error:
             create(
                 output.joinpath("failure.json"),
@@ -513,6 +571,13 @@ def run(oracle: Path, output: Path, revision: str) -> None:
     result["owned_emulator_and_identity_stopped"] = True
     result["temporary_private_key_removed"] = True
     create(output.joinpath("azure-rest-contract.json"), json.dumps(result, indent=2).encode())
+    if api_result is not None:
+        api_result["owned_emulator_and_identity_stopped"] = True
+        api_result["temporary_private_key_removed"] = True
+        create(
+            output.joinpath("backend-azure-performance.json"),
+            json.dumps(api_result, indent=2).encode(),
+        )
     print("Actual HTTPS Azurite, native REST and Azure SDK interop contract passed.", flush=True)
 
 
@@ -521,5 +586,15 @@ if __name__ == "__main__":
     parser.add_argument("--oracle", type=Path, required=True)
     parser.add_argument("--output-directory", type=Path, required=True)
     parser.add_argument("--source-revision", required=True)
+    parser.add_argument("--api-oracle", type=Path)
+    parser.add_argument("--startup-trials", type=int, default=30)
+    parser.add_argument("--flows-per-series", type=int, default=100)
     args = parser.parse_args()
-    run(args.oracle.resolve(strict=True), args.output_directory, args.source_revision)
+    run(
+        args.oracle.resolve(strict=True),
+        args.output_directory,
+        args.source_revision,
+        args.api_oracle.resolve(strict=True) if args.api_oracle else None,
+        args.startup_trials,
+        args.flows_per_series,
+    )

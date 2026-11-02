@@ -178,6 +178,28 @@ managed identity or private-endpoint deployment. The normal binary/config has
 no emulator/shared-key fallback. Ordinary tests keep this scenario ignored;
 the bounded Linux runner is `scripts\test_azure_rest.py`.
 
+The opt-in `loopback-fixtures` feature adds a constructor used only by the
+`cloud_contract` example for an **adapter-matched authenticated HTTPS Azurite**
+profile. It requires a fresh explicit fixture root, private synthetic identity
+header, strict `127.0.0.1` endpoints, an explicit trusted ephemeral certificate
+and per-process Blob/Queue/Table namespaces. It does not relax TLS, API-version
+checks or normal production configuration. The actual Python factory uses the
+current Azure SDK adapters with the same synthetic identity and workload, not
+in-memory storage. The existing readiness/RSS/API-p95 thresholds are unchanged.
+Namespaces are created and removed outside the timed interval; ordinary adapter
+initialization/probes remain timed. The SDK independently reopens each load
+process's recording/chunk/transcript/Blob workload before deleting its namespace.
+
+`backend-ci` builds the feature explicitly, runs the existing REST/worker/cleanup
+contract, then collects 30 starts each and three 100-flow API series against the
+same pinned emulator. `backend-azure-performance.json` is published only after
+owned emulator/identity/private-key cleanup succeeds. This fixture is newly
+wired, not yet measured/accepted. Local guard/actual SDK HTTPS-factory tests and
+Rust default/feature compilation do not establish its Linux performance result.
+Neither it nor the older memory profile measures actual Azure IAM/private
+networking, deployed ACA readiness, model inference, worker/cleanup/realtime
+latency or a cutover. The production image does not enable the fixture feature.
+
 The loopback-only server uses real RS256 verification against an in-memory
 generated-key local JWKS. The probe compares live Rust HTTP status/headers,
 structured errors, lifecycle and audit/history shapes with the actual FastAPI
