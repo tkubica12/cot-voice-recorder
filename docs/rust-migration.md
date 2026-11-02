@@ -1019,7 +1019,7 @@ baseline/hodinova acceptance jsou stale neprovedene lidske hranice.
 
 Implementacni povrchy Windows/cloud jsou propojene a synthetic/direct/reference
 checks jsou persistentne v CI. To neni schvaleni cutoveru ani tvrzeni o perfektni
-celkove akceptaci. Nejnovejsi overeny code checkpoint 08f8f44 prosel Windows/
+celkove akceptaci. Nejnovejsi overeny code checkpoint 72a44c3 prosel Windows/
 Linux Rust, obema MSRV1.85 jobs, container build/guards a backend parity CI.
 
 | Check | Stav | Dukaz nebo presna mezera |
@@ -1040,4 +1040,6 @@ opravneni. Cely cil zustava nedokonceny na techto acceptance branach.
 Dodatecny orphan safeguard omezuje novy plain-transcript sweep na znamy
 canonical UUID.txt format. Nezname stare .txt objekty zustavaji nedotcene
 s viditelnym diagnostickym zaznamem. Sedm cleanup testu vcetne unexpected-name
-fixture a strict Clippy/fmt proslo; zadna produkcni data nebyla ctena ani smazana.
+fixture a strict Clippy/fmt proslo; take finalni Windows/Linux/MSRV/container
+a backend CI tohoto safeguard commitu jsou successful. Zadna produkcni data
+nebyla ctena ani smazana.
