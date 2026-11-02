@@ -66,9 +66,14 @@ class FixtureProcess:
         history_count: int,
         epoch: datetime | None = None,
         diagnostics: bool = False,
+        readiness_timeout_seconds: int = 15,
     ) -> None:
         if os.name != "nt":
             raise RuntimeError("Client comparison requires Windows.")
+        if not 1 <= readiness_timeout_seconds <= 60:
+            raise ValueError(
+                "Fixture readiness requires an explicit one-to-sixty-second budget."
+            )
         expected = (
             "VoicePromptClientFixture.exe"
             if implementation == "csharp"
@@ -138,9 +143,9 @@ class FixtureProcess:
                     raise RuntimeError(
                         f"{implementation} fixture failed: {error.decode(errors='replace')}"
                     )
-                if time.perf_counter() - started > 15:
+                if time.perf_counter() - started > readiness_timeout_seconds:
                     raise TimeoutError(
-                        "Full-client fixture readiness exceeded fifteen seconds."
+                        f"Full-client fixture readiness exceeded {readiness_timeout_seconds} seconds."
                     )
                 time.sleep(0.005)
             self.startup_ms = (time.perf_counter() - started) * 1000

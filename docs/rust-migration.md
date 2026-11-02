@@ -1209,3 +1209,26 @@ signed-in traffic, mikrofon readiness, hodinovy capture/return-to-idle,
 physical focus/clipboard/paste, pristupnost/DPI, skutecny installer upgrade/
 rollback a private Azure/UAMI runtime jeste nebyly akceptovany. Oba reporty
 maji nadale whole_migration_acceptance=false. Zadny threshold se nesnizil.
+
+## Oddelene functional-CI a measurement budgety
+
+9e01689 CI znovu zachytilo C# fixture15s timeout, tentokrat s phase evidence:
+validace probehla04:13:06, WPF Application konstrukce04:13:07.703,
+resources04:13:14.995 a startup/instance04:13:16.330. Samotne resources tedy
+trvaly7.292s a postup pokracoval; nebyl to dukaz zaseknuteho auth/network/
+dictation enginu ani missing framework. Presnou OS pricinu pomaleho cold
+loaderu tento trace neurcuje. Vsechny Rust testy, Linux/MSRV a image jobs prosly.
+
+Functional isolation guard omylem sdilel15s merici safety budget s prvnim
+cold WPF startupem na disposable CI stroji. Nyni ma pouze tento C# functional
+test explicitni bounded60s setup budget; native guard zustava15s. Trace a
+stderr se pri chybe stale zachovaji a uspech loguje skutecne elapsed startup.
+Measurement collector nadale pouziva default15s a presne1s/70% a80MiB/50%
+akceptacni prahy. Zadny z techto prahu ani30/3/301 sample count se nemenil.
+Novy test overuje zachovany default a odmitnuti neomezeneho/invalid budgetu
+pred spustenim procesu nebo zapisovanim fixture stavu.
+
+Tri local actual-client guard testy prosly. Meni se pouze functional test setup;
+produkcni runtime, measurement defaults a namerena cisla zustavaji stejna.
+C# rollback baseline nema
+Rust1s startup cil a functional cold-VM guard neni performance acceptance.

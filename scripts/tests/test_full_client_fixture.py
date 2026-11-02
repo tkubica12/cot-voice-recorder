@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import inspect
 import json
 import subprocess
 import sys
@@ -29,9 +30,20 @@ class ClientFixtureTests(unittest.TestCase):
                 ) as directory,
             ):
                 root = Path(directory)
+                budget = 60 if implementation == "csharp" else 15
                 with FixtureProcess(
-                    binary, implementation, root, 5, diagnostics=True
+                    binary,
+                    implementation,
+                    root,
+                    5,
+                    diagnostics=True,
+                    readiness_timeout_seconds=budget,
                 ) as fixture:
+                    print(
+                        f"{implementation} functional full-runtime ready: "
+                        f"{fixture.startup_ms:.3f}ms; safety budget {budget}s",
+                        flush=True,
+                    )
                     recovery = (
                         "dictation-recovery"
                         if implementation == "csharp"
@@ -42,6 +54,29 @@ class ClientFixtureTests(unittest.TestCase):
                     self.assertFalse(fixture.marker["physical_ports_enabled"])
                     self.assertEqual(fixture.marker["history_count"], 5)
                 self.assertEqual(list(root.iterdir()), [])
+
+    def test_functional_budget_cannot_change_the_measurement_default_or_be_unbounded(
+        self,
+    ) -> None:
+        default = (
+            inspect.signature(FixtureProcess)
+            .parameters["readiness_timeout_seconds"]
+            .default
+        )
+        self.assertEqual(default, 15)
+        with tempfile.TemporaryDirectory(
+            prefix="VoicePrompt-fixture-budget-"
+        ) as directory:
+            for value in [0, 61]:
+                with self.subTest(value=value), self.assertRaises(ValueError):
+                    FixtureProcess(
+                        BINARIES["csharp"],
+                        "csharp",
+                        Path(directory),
+                        5,
+                        readiness_timeout_seconds=value,
+                    )
+            self.assertEqual(list(Path(directory).iterdir()), [])
 
     def test_existing_tokens_and_wrong_marker_are_rejected_without_state_mutation(
         self,
