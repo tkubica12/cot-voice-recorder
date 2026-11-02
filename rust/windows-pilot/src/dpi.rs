@@ -133,6 +133,7 @@ pub(crate) fn suggested_bounds(window: HWND, bounds: RECT) -> Result<(), NativeE
     .map_err(|error| NativeError::Api("Apply per-monitor DPI bounds", error))
 }
 
+#[cfg(test)]
 pub(crate) fn scale_children(window: HWND, old_dpi: u32, new_dpi: u32) -> Result<(), NativeError> {
     struct Layout {
         window: HWND,

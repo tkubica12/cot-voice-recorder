@@ -812,6 +812,10 @@ async fn run_client(
                         }
                     }
                             ClientCommand::SaveSettings(next) => {
+                                if options.fixture_runtime || options.auth_only {
+                                    issue(&status, "Validation fixture cannot save Settings.");
+                                    continue;
+                                }
                                 if policy.dictation_busy() {
                                     issue(&status, "Finish dictation before applying Settings.");
                                     continue;
@@ -1038,6 +1042,62 @@ mod tests {
         assert!(!host.policy.allows_auto_copy());
         assert!(!host.policy.can_upload_audit());
         assert_eq!(host.status.borrow().auth, AuthState::NotConfigured);
+        drop(host);
+        assert!(!directory.0.join("tokens.bin").exists());
+    }
+
+    #[test]
+    fn validation_fixture_rejects_save_before_ui_preflight_storage_or_autostart() {
+        let directory = crate::recovery_store::tests::TemporaryRoot::new();
+        std::fs::write(
+            directory.0.join("migration-fixture.json"),
+            serde_json::json!({"scope":crate::fixtures::SCOPE,
+                "instance_key":"0123456789abcdef0123456789abcdef"})
+            .to_string(),
+        )
+        .unwrap();
+        let settings = AppSettings {
+            backend_base_url: "https://fixture.example.invalid".into(),
+            notifications_paused: true,
+            auto_start: false,
+            dictation_enabled: false,
+            ..Default::default()
+        };
+        let path = directory.0.join("settings.json");
+        NativeSettingsStore::new(path.clone())
+            .unwrap()
+            .save(&settings)
+            .unwrap();
+        let original = std::fs::read(&path).unwrap();
+        let mut host = ClientHost::start(ClientOptions {
+            state_directory: directory.0.clone(),
+            oauth_config: None,
+            clipboard_enabled: false,
+            installed: false,
+            fixture_runtime: true,
+            auth_only: false,
+        })
+        .unwrap();
+        host.commands
+            .try_send(ClientCommand::SaveSettings(AppSettings {
+                auto_start: true,
+                ..settings
+            }))
+            .unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while host.status.borrow().issue.is_none() {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(
+            host.status.borrow().issue,
+            Some("Validation fixture cannot save Settings.")
+        );
+        assert!(
+            host.requests.try_recv().is_err(),
+            "Rejected Save cannot reach UI/shortcut preflight."
+        );
+        assert_eq!(std::fs::read(path).unwrap(), original);
         drop(host);
         assert!(!directory.0.join("tokens.bin").exists());
     }

@@ -77,4 +77,6 @@ mod main_theme;
 #[cfg(windows)]
 mod microphone;
 #[cfg(windows)]
+mod settings_layout;
+#[cfg(windows)]
 mod settings_ui;

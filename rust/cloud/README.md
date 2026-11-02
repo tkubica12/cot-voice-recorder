@@ -193,9 +193,13 @@ process's recording/chunk/transcript/Blob workload before deleting its namespace
 `backend-ci` builds the feature explicitly, runs the existing REST/worker/cleanup
 contract, then collects 30 starts each and three 100-flow API series against the
 same pinned emulator. `backend-azure-performance.json` is published only after
-owned emulator/identity/private-key cleanup succeeds. This fixture is newly
-wired, not yet measured/accepted. Local guard/actual SDK HTTPS-factory tests and
-Rust default/feature compilation do not establish its Linux performance result.
+owned emulator/identity/private-key cleanup succeeds. The actual
+[33d04aa Linux run](https://github.com/tkubica12/cot-voice-recorder/actions/runs/41523050769)
+completed with all original scoped thresholds passing: readiness p95
+147.049 ms versus Python809.698 ms; RSS18.887/21.379/23.480 MiB versus
+108.813/117.910/129.207 MiB; worst API-p95 ratio82.160%. All raw samples,
+62 SDK-checked/deleted namespaces and66 source/lock hashes were independently
+verified. These are short post-load RSS observations, not an hour soak.
 Neither it nor the older memory profile measures actual Azure IAM/private
 networking, deployed ACA readiness, model inference, worker/cleanup/realtime
 latency or a cutover. The production image does not enable the fixture feature.

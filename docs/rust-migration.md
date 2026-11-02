@@ -32,7 +32,7 @@ znovu v odpovidajicim scope.
 | Audio jadro a C#/Python parity | Implementovano a overeno |
 | Zdroj externich crates | crates.io vyslovne schvalene jako projektova vyjimka |
 | Nativni Windows zaklad | Tray, izolovana instance a DPAPI implementovany; lokalni self-test a C# DPAPI parity prosly |
-| Mereni Windows klienta | Post-icon/overlay7b4aff4 full-runtime signed-out30+30/3 paired301-point serie PASS: p95Rust455.182ms/meanprivate3.650MiB; source/scope se neprepisuje na pozdejsi input build ani signed-in/physical profile |
+| Mereni Windows klienta | Frozen7b4aff4 full-runtime signed-out30+30/3 paired301-point PASS: p95Rust455.182ms/meanprivate3.650MiB. Aktualni post-main a2d/3f4 profily FAILED/INCOMPLETE na15s readiness, zadne memory serie ani novy verdict; puvodni PASS se neprepisuje na nove binary nebo signed-in/physical scope |
 | Microphone readiness | Jeden actual240ms probe a samostatne schvalena30+30 paired serie prosly; first-PCM p95Rust80.75% C#baseline, bez audio souboru/uploadu |
 | Engine longevity | Actual3600s synthetic PCM/real50min rotation,115200000 exact bytes; worst idle growth1.645MiB<10MiB, engine-only PASS |
 | CI nativniho inkrementu | 7b4aff4 original-icon/reactive-overlay Windows/Linux/MSRV1.85/container RustCI a C#WindowsCI PASS; nasledne observer/input inkrementy maji vlastni CI, nejde o real-world cutover |
@@ -40,8 +40,9 @@ znovu v odpovidajicim scope.
 | Diktovani/recovery UI | Native microphone/hotkeys/overlay/paste controller, oba enginy, journal, polishing a outbox implementovany; real-world a rozsahlejsi fault/E2E akceptace zbyva |
 | History cache | JSON/retence/200 entries, atomicka persistence, native list/text a manual copy latest/selected/original implementovany; C# file parity overena |
 | Settings a instalator | Vsechna C# JSON pole, nativni Settings/History/Recovery, DPI fonty, per-user autostart a kompatibilni IPC; installer sestaven, nebyl instalovan |
-| Original icon a podobne zive popup UI | Original ICO embedded/byte-exact a DPI sizes overeny; actual WPF-matched reactive overlay,15 raster pairs/96-144-192DPI a actual144DPI noactivate/900ms proof PASS ve synthetic scope; dalsi UI/physical/accessibility akceptace zbyva |
+| Original icon a podobne zive popup UI | Original ICO embedded/byte-exact a DPI sizes overeny; WPF-matched reactive overlay15 raster pairs a noactivate/900ms proof, actual144DPI original-themed main/History/Recovery/default/min/lazy presentation overeny. Human keyboard/screen-reader/monitor/physical akceptace stale zbyva |
 | Rust cloud API, worker, cleanup | API/AI/PubSub/live relay, processors/finalization/queue loop, cleanup, bootstrap/CLI a source-only image wiring implementovany; image CI proslo, uplna akceptace zbyva |
+| Cloud adapter-matched performance | 33d04aa actual verified-HTTPS Azurite RustREST/PythonSDK30+30/3x100flows PASS po nezavislem prepocitani; neni actual Azure IAM/PE/ACA/model ani worker-latency acceptance |
 | Hosting | Klasicka ACA zustava: API, KEDA queue worker a hourly cleanup Job; Express byl uzivatelem zrusen |
 
 Puvodni foundation mereni neprokazuje kompletniho klienta a nelze je pouzit
@@ -2619,3 +2620,119 @@ measure_backend a voice_recorder jako backend working-directory CI.
 Specific TYPE_CHECKING import boundary je opravena a exact backend
 CI cwd lint/format prosel. Predchozi failedCI se neprepisuje jakoPASS;
 novy actual profile musi probehnout v naslednem commitu.
+
+### Actual adapter-matched Linux profil: vsechny puvodni scoped prahy PASS
+
+BackendCI [41523050769](https://github.com/tkubica12/cot-voice-recorder/actions/runs/41523050769)
+na source33d04aa27c26a1816a41cf8bbd5833545e6e3f46 skutecne provedlo
+verified-HTTPS OAuth Azurite REST/worker/cleanup/continuous-replay
+kontrakt a actual Azure-adapter HTTP performance. Step20:55:52Z ->
+20:57:28Z skoncil success; nejde o pouhou existenci pipeline.
+Downloaded backend-azure-performance.json SHA256
+4349836d03e61cedd05458554147595c85bdbe90863c4bf8b23aa070f13d7f27
+je v azure-profile-33d04aa artifacts. Samostatny verifier bez importu
+collector metrics znovu vypocetl vsech60 startup samples,4200 API
+observations a60 actualRSS values, kazdou operaci v kazde ze3 serii,
+original thresholds a62 SDK-checked/deleted process namespaces.
+Jeho synthetic selftest take odmitl missing sample, wrong verdict
+a duplicate namespace; selftest se nevydava za actual benchmark.
+
+| Actual HTTPS storage adapter profil | Python SDK/FastAPI | Rust REST/Axum |
+| --- | --- | --- |
+| Process -> actual readiness p95,30 starts | 809.698254ms | 147.049013ms |
+| Mean post-load RSS, serie1 | 108.812500MiB | 18.886719MiB |
+| Mean post-load RSS, serie2 | 117.910156MiB | 21.378906MiB |
+| Mean post-load RSS, serie3 | 129.207031MiB | 23.480469MiB |
+| Nejhorsi Rust/Python API p95 pomer, vsechny operace/serie | baseline | 82.159901% |
+
+Rust readiness <=1s a <=50%baseline, RSS <=50% v KAZDE paired serii
+a APIp95 <=110% kazde operace/serie jsou vsechny PASS bez snizeni
+prahu. RSS je explicitne short post-load10-point observation, nikoli
+hodinovy backend soak ani Windows private bytes. Stejny RS256/JWKS,
+allowlist, inputcorpus a persisted workload se opravdu pouzily pro obe
+implementace. Namespace setup/delete je mimo timed interval, adapter
+init/probes uvnitr. Invalid-auth/model/realtime controls se nepreskocily.
+
+Nezavisle source verification porovnalo vsech66 recorded source/lock
+SHA s Git objects presneho commitu, nikoli s working-tree CRLF kopiemi.
+Linux runtime binary samo neni uploadovane; jeho hash
+b923b8a51c880043ffc456ba308ccf0e05a84c0c6eda4c349c3f876b7752eaf4
+je CI record, ne zpetne lokalne prepocitany Linux executable.
+Cross-check actual storage contract
+56913c9eda2af0addb60c2f940cff4b93f776ad8b4aba618e99ac6b79a06c324
+znovu potvrdil SDK Int64/CAS,Blob lease fencing,Queue receipts,
+legacy finalization/durable delivery,active-lease cleanup a continuous
+single-stream/full replay s audio-retained-until-finalization. Zadny
+failure/cleanup-failure artifact, owned emulator/identity stopped
+a temporary privatekey removed. Normal production binary/config
+stale nema emulator/sharedkey fallback.
+
+Toto uz uzavira konkretni actual-storage HTTP profile gap; NE
+whole migration. Neprokazuje real Azure IAM/UAMI permissions,
+private endpoints, deployed ACA readiness, model inference/worker/
+cleanup/realtime latency, cutover nebo nove Windows measurement.
+Windows current3f4 profil nadale FAILED/INCOMPLETE, zadne third
+serie/physical scope se tim neautorizuje.
+
+Current build-only installer byl znovu sestaven nad actual current
+native3f4 runtime: Setup
+0a05d6dc2750c214ab539c6432934d9eee43ec14c6335159b88454d985eca86c,
+staged/releaseVoicePrompt.exe oba
+2f6ebd48fb3214bc4282c28b9325ed941d879350e30bf34b3380bc386ef25458.
+Installer nebyl spusten, instalovan ani publikovan jako release.
+
+RustCI [41523051022](https://github.com/tkubica12/cot-voice-recorder/actions/runs/41523051022)
+pro stejny33d04aa source nasledne dokoncilo vsechny Windows/Linux/
+MSRV1.85-all-features/container joby SUCCESS, vcetne existing bounded
+accelerated capture-volume regression. Ta nadale neni real hour/full
+controller acceptance. Zadny local watchdog/measurement process nezustal.
+
+### Dalsi skutecna UI mezera: Settings viewport, scroll a save isolation
+
+Source audit nasel pevne570x550DIP Settings bez resize/scroll/work-area
+handling; na male/highDPI plose tedy dolni volby/Save nemusi byt
+dostupne. Novy native layout ponecha wide label/input columns a v uzkem
+okne je sklada pod sebe, vcetne puvodnich10 fields a nezmenenych
+values/JSON. Resizable window ma scrollbar, line/page/thumb/wheel
+navigation respektujici Windows wheel preference. Tab dialog routing
+odkryje nove focused field bez global hotkey/paste. Scroll je ohraniceny
+content/viewport a DPI reflow zachovava logical offset; initial bounds
+a suggested DPI rect se clampnou na owner-monitor work area vcetne
+negative monitor coordinates. Original embedded icon zustava stejny.
+Settings muze designove zustat native/system-font podle vyjimky
+uzivatele; original main/overlay theme se nemeni.
+
+Pure tests pokryvaji4 viewporty pri96/120/144/192/288DPI, label/input
+non-overlap a reveal vsech interactive rects z ruznych scroll offsets;
+separate work-area test kontroluje negative/small monitor rects.
+Existing self-test ted SKUTECNE hidden HWND resizuje na570x550 i340x260,
+scroll/reveal kazdy z10 inputs iSave a overi jeho native coordinates
+uvnitr viewportu, presne values a unchanged foreground/nonvisibility.
+Je pridan jako samostatny existing6-group lifecycle krok do WindowsCI.
+Nejde o proxy "rect math only" ani human keyboard acceptance.
+
+Actual default144DPI Settings855x825px (PID34448) ukazaly vsechny volby,
+original icon a disabledSave. Jediny CUI coordinate drag sice hlasil
+done, ale bounds se nezmenily; toto se NEVYDAVA za resize proof.
+Fresh minimum fixture PID16216 vytvorila Settings510x390px=340x260DIP
+se stacked fields. Jediny indexed scroll zmenil actual scrollbar0->100;
+actual pixels potom ukazaly final wait1500, guidance a cely disabledSave.
+Indexed Close bez Save, zadne field edits/Enter/clipboard/mic/login.
+Obe roots normal bound exit, values/settings/history byte-exact,
+noToken a owned processes absent. Frozen/defaultF736dfbf...,
+minimum0dc8f749... a closed hashes21942d7f.../4c2177e3... jsou v
+native-settings-minimum-33d04aa/visual-observation.json; neni to novy
+physical nebo performance grant.
+
+Save ve validation fixture je explicitne disabled/guarded i v UI method
+a skutecny ClientHost odmita SaveSettings PRED UI shortcut preflight,
+autostart registry a storage. Direct fixture command s auto_start=true
+overil refusal a unchanged files/noToken. Normalni nonfixture klient
+si zachovava dosavadni Save/validation chovani. Source navic odstranuje
+obsolete fixed-y initializer ve prospech jedne geometry definice;
+stary scale_children helper zustava jen pro puvodni DPI tests.
+Lokalne270 regular workspace tests (74native/99cloud), Clippy allfeatures,
+release,7 actual platform/DPAPI/IPC/original-icon parity a6 hidden
+Settings/client lifecycle groups PASS. Novy source potrebuje vlastniCI.
+Real keyboard/screen-reader/monitor transitions a aktualni statisticky
+Windows profil nadale nejsou uzavrene; treti serie nebyla spustena.

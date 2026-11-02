@@ -1010,6 +1010,7 @@ fn client_command(hwnd: HWND, command: usize) -> Result<(), NativeError> {
                     hwnd,
                     host.commands.clone(),
                     host.status.borrow().settings.clone(),
+                    !host.options.fixture_runtime && !host.options.auth_only,
                 )?;
             }
             Ok(())
@@ -3110,6 +3111,7 @@ mod tests {
         let before_history = std::fs::read(root.join("history.json")).unwrap();
         crate::main_presentation::reset_history_format_calls();
         UI_PREVIEW_MINIMUM.with(|value| value.set(minimum));
+        crate::settings_ui::preview_minimum(minimum);
         UI_PREVIEW_ROOT.with(|slot| *slot.borrow_mut() = Some(root.clone()));
         run_tray(TrayOptions {
             instance_key: key,
@@ -3133,6 +3135,7 @@ mod tests {
         assert!(visible_history_formats >= history.len());
         UI_PREVIEW_ROOT.with(|slot| *slot.borrow_mut() = None);
         UI_PREVIEW_MINIMUM.with(|value| value.set(false));
+        crate::settings_ui::preview_minimum(false);
         assert_eq!(
             std::fs::read(root.join("settings.json")).unwrap(),
             before_settings

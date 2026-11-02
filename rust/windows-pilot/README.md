@@ -196,6 +196,18 @@ text toggle do not overlap; section transitions clear previous borders without
 painting over child controls. Fonts/brushes/pens are owned and restored, with a
 separate 1,000-cycle graphics-only resource regression in CI.
 Human screen-reader/high-DPI acceptance remains pending.
+
+Settings is resizable and scrollable instead of a fixed-height form. Wide windows
+keep label/input columns; narrow windows stack them without losing any field.
+Initial placement and DPI suggestions stay inside the owner's monitor work area,
+including monitors with negative coordinates. Native scrollbar/page/thumb/wheel
+navigation uses bounded content geometry and the Windows wheel preference; dialog
+keyboard navigation reveals the newly focused input. DPI reflow preserves the
+logical scroll position and regenerates geometry rather than accumulating scale
+rounding. The existing hidden self-test checks actual HWND positions for every
+input and Save in default/narrow viewports, without showing/focusing or saving.
+Validation fixtures disable Save and reject save commands before shortcut,
+autostart or persistence work; ordinary client Save behavior is unchanged.
 History supports manual cloud Refresh (no autocopy), Clear with confirmation and
 copy latest/selected/original; Recovery supports list/recover/explicit deletion.
 History double-click, Enter/Space and Ctrl+C now invoke the same cached selected
