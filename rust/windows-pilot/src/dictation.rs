@@ -301,6 +301,29 @@ impl Drop for CancelOnDrop {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum UiDeliveryError {
+    Unavailable,
+    TimedOut,
+}
+
+async fn deliver_to_ui(
+    ui: mpsc::Sender<UiRequest>,
+    request: UiRequest,
+    reply: oneshot::Receiver<DeliveryResult>,
+    cancelled: Arc<AtomicBool>,
+) -> Result<DeliveryResult, UiDeliveryError> {
+    let _cancel = CancelOnDrop(cancelled);
+    tokio::time::timeout(Duration::from_secs(3), async {
+        ui.send(request)
+            .await
+            .map_err(|_| UiDeliveryError::Unavailable)?;
+        reply.await.map_err(|_| UiDeliveryError::Unavailable)
+    })
+    .await
+    .map_err(|_| UiDeliveryError::TimedOut)?
+}
+
 impl DictationHost {
     pub async fn run(mut self) {
         loop {
@@ -622,43 +645,42 @@ impl DictationHost {
                                 }
                                 if recovering.is_none() {
                                     let cancel = Arc::new(AtomicBool::new(false));
-                                    let _cancel = CancelOnDrop(cancel.clone());
                                     let (reply, result) = oneshot::channel();
                                     let request = UiRequest::Deliver {
                                         generation,
                                         text,
-                                        cancelled: cancel,
+                                        cancelled: cancel.clone(),
                                         reply,
                                     };
-                                    if self.ui.send(request).await.is_ok() {
-                                        let delivered = tokio::select! {
-                                            biased;
-                                            _ = self.shutdown.changed() => None,
-                                            _ = auth.changed() => None,
-                                            command = self.commands.recv() => {
-                                                discard = matches!(command, Some(DictationCommand::Discard));
-                                                explicit_discard |= discard;
+                                    let delivered = tokio::select! {
+                                        biased;
+                                        _ = self.shutdown.changed() => None,
+                                        _ = auth.changed() => None,
+                                        command = self.commands.recv() => {
+                                            discard = matches!(command, Some(DictationCommand::Discard));
+                                            explicit_discard |= discard;
+                                            None
+                                        },
+                                        result = deliver_to_ui(self.ui.clone(), request, result, cancel) => match result {
+                                            Ok(result) => Some(result),
+                                            Err(error) => {
+                                                eprintln!("Dictation UI delivery: {error:?}");
+                                                report(&self.status, "Dictation is in History; UI delivery failed or timed out.");
                                                 None
                                             },
-                                            result = tokio::time::timeout(Duration::from_secs(3), result) => result.ok().and_then(Result::ok),
-                                        };
-                                        update(
-                                            &self.status,
-                                            generation,
-                                            mode,
-                                            if delivered == Some(DeliveryResult::Pasted) {
-                                                DictationStage::Pasted
-                                            } else {
-                                                DictationStage::Saved
-                                            },
-                                            progress.borrow().preview.clone(),
-                                        );
-                                    } else {
-                                        report(
-                                            &self.status,
-                                            "Dictation is in History; the UI could not receive delivery.",
-                                        );
-                                    }
+                                        },
+                                    };
+                                    update(
+                                        &self.status,
+                                        generation,
+                                        mode,
+                                        if delivered == Some(DeliveryResult::Pasted) {
+                                            DictationStage::Pasted
+                                        } else {
+                                            DictationStage::Saved
+                                        },
+                                        progress.borrow().preview.clone(),
+                                    );
                                 } else {
                                     update(
                                         &self.status,

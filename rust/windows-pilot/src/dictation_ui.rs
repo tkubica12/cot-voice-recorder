@@ -31,6 +31,7 @@ pub(crate) struct DictationUi {
     last_shortcuts: Option<(bool, String, String)>,
     enabled: bool,
     stop_requested: bool,
+    cancel_requested: bool,
     shortcut_error: bool,
     staged_settings: Option<AuthState>,
     font: crate::dpi::DpiFont,
@@ -58,6 +59,7 @@ impl DictationUi {
         self.enabled = enabled;
         self.staged_settings = None;
         self.busy = false;
+        self.cancel_requested = false;
         self.guard = None;
         if let Some(paste) = self.paste.take() {
             paste.cancelled.store(true, Ordering::Release);
@@ -114,6 +116,7 @@ impl DictationUi {
             last_shortcuts: None,
             enabled,
             stop_requested: false,
+            cancel_requested: false,
             shortcut_error: false,
             staged_settings: None,
             font,
@@ -182,6 +185,7 @@ impl DictationUi {
         self.mode = mode;
         self.busy = true;
         self.stop_requested = false;
+        self.cancel_requested = false;
         self.guard = if mode == DictationMode::Hold {
             Some(DesktopGuard::new(Target::capture()))
         } else {
@@ -220,9 +224,13 @@ impl DictationUi {
                     generation: self.generation,
                 })
             }
-            HotkeyEvent::Cancel => {
+            HotkeyEvent::Cancel if self.busy && !self.cancel_requested => {
+                self.cancel_requested = true;
+                self.stop_requested = true;
+                self.guard = None;
                 self.hide();
                 if let Some(paste) = self.paste.take() {
+                    paste.cancelled.store(true, Ordering::Release);
                     let _ = paste.reply.send(DeliveryResult::CopiedOnly);
                 }
                 self.send(DictationCommand::Discard)
@@ -248,6 +256,7 @@ impl DictationUi {
         self.mode = DictationMode::Toggle;
         self.guard = None;
         self.busy = true;
+        self.cancel_requested = false;
         self.stop_requested = true;
         self.shortcuts.enable_cancel(true)?;
         if let Err(error) = self.send(DictationCommand::Recover {
@@ -273,32 +282,46 @@ impl DictationUi {
         }
         if self.generation == status.dictation.generation {
             let view = &status.dictation;
-            match view.stage {
-                DictationStage::Recording => {
-                    let title = if view.mode == DictationMode::Hold {
-                        "Listening - release to finish"
-                    } else {
-                        "Listening - press toggle to finish"
-                    };
-                    self.show(&format!("{title}\r\n{}\r\nEsc discards", view.preview))?;
-                }
-                DictationStage::Finishing => self.show(&format!(
-                    "Finishing transcription - Esc discards\r\n{}",
-                    view.preview
-                ))?,
-                DictationStage::Idle | DictationStage::Pasted => {
+            if self.cancel_requested {
+                if matches!(
+                    view.stage,
+                    DictationStage::Idle
+                        | DictationStage::Pasted
+                        | DictationStage::Saved
+                        | DictationStage::Failed
+                ) {
                     self.busy = false;
                     self.shortcuts.enable_cancel(false)?;
-                    self.hide();
                 }
-                DictationStage::Saved | DictationStage::Failed => {
-                    self.busy = false;
-                    self.shortcuts.enable_cancel(false)?;
-                    self.show(if view.stage == DictationStage::Failed {
+                self.hide();
+            } else {
+                match view.stage {
+                    DictationStage::Recording => {
+                        let title = if view.mode == DictationMode::Hold {
+                            "Listening - release to finish"
+                        } else {
+                            "Listening - press toggle to finish"
+                        };
+                        self.show(&format!("{title}\r\n{}\r\nEsc discards", view.preview))?;
+                    }
+                    DictationStage::Finishing => self.show(&format!(
+                        "Finishing transcription - Esc discards\r\n{}",
+                        view.preview
+                    ))?,
+                    DictationStage::Idle | DictationStage::Pasted => {
+                        self.busy = false;
+                        self.shortcuts.enable_cancel(false)?;
+                        self.hide();
+                    }
+                    DictationStage::Saved | DictationStage::Failed => {
+                        self.busy = false;
+                        self.shortcuts.enable_cancel(false)?;
+                        self.show(if view.stage == DictationStage::Failed {
                         "Dictation failed - open Settings or Recovery.\r\nNothing was pasted."
                     } else { "Saved - paste skipped or transcription pending.\r\nUse History or Recovery." })?;
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
         }
         self.process_paste()?;
@@ -312,7 +335,11 @@ impl DictationUi {
         cancelled: Arc<AtomicBool>,
         reply: oneshot::Sender<DeliveryResult>,
     ) {
-        if generation != self.generation || !self.busy || self.paste.is_some() {
+        if generation != self.generation
+            || !self.busy
+            || self.cancel_requested
+            || self.paste.is_some()
+        {
             let _ = reply.send(DeliveryResult::CopiedOnly);
             return;
         }
@@ -332,6 +359,7 @@ impl DictationUi {
             return Ok(());
         };
         if paste.cancelled.load(Ordering::Acquire)
+            || self.cancel_requested
             || paste.reply.is_closed()
             || !self.busy
             || !self.policy.authenticated()
@@ -485,5 +513,69 @@ mod tests {
         assert!(ui.staged_settings.is_none());
         assert!(!unsafe { IsWindowVisible(ui.overlay) }.as_bool());
         assert_eq!(unsafe { GetForegroundWindow() }, previous_focus);
+    }
+
+    fn pending_ui() -> (DictationUi, mpsc::Receiver<ClientCommand>) {
+        let (commands, receiver) = mpsc::channel(2);
+        let mut ui = DictationUi::new(
+            HWND::default(),
+            commands,
+            Arc::new(DeliveryPolicy::default()),
+            false,
+        )
+        .unwrap();
+        ui.generation = 17;
+        ui.busy = true;
+        (ui, receiver)
+    }
+
+    #[test]
+    fn escape_rejects_late_delivery_before_the_background_actor_observes_discard() {
+        let (mut ui, mut commands) = pending_ui();
+        ui.event(HotkeyEvent::Cancel).unwrap();
+        assert!(matches!(
+            commands.try_recv().unwrap(),
+            ClientCommand::Dictation(DictationCommand::Discard)
+        ));
+        let (reply, mut result) = oneshot::channel();
+        ui.deliver(
+            17,
+            "synthetic must not reach clipboard".into(),
+            Arc::new(AtomicBool::new(false)),
+            reply,
+        );
+        assert!(ui.paste.is_none());
+        assert_eq!(result.try_recv().unwrap(), DeliveryResult::CopiedOnly);
+        assert!(
+            ui.busy,
+            "A new capture must wait for the old actor to finish."
+        );
+        ui.event(HotkeyEvent::Cancel).unwrap();
+        assert!(
+            commands.try_recv().is_err(),
+            "Repeated Escape must not flood the actor."
+        );
+    }
+
+    #[test]
+    fn escape_cancels_already_queued_paste_and_late_finishing_status_cannot_redisplay_it() {
+        let (mut ui, _commands) = pending_ui();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let (reply, mut result) = oneshot::channel();
+        ui.deliver(17, "synthetic".into(), cancelled.clone(), reply);
+        assert!(ui.paste.is_some());
+        ui.event(HotkeyEvent::Cancel).unwrap();
+        assert!(cancelled.load(Ordering::Acquire));
+        assert_eq!(result.try_recv().unwrap(), DeliveryResult::CopiedOnly);
+        let mut status = ClientStatus::default();
+        status.dictation.generation = 17;
+        status.dictation.stage = DictationStage::Finishing;
+        ui.poll(&status).unwrap();
+        assert!(!unsafe { IsWindowVisible(ui.overlay) }.as_bool());
+        assert!(ui.busy);
+        status.dictation.stage = DictationStage::Idle;
+        ui.poll(&status).unwrap();
+        assert!(!ui.busy);
+        assert!(ui.paste.is_none());
     }
 }

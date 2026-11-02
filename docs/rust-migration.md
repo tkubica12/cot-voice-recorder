@@ -1278,3 +1278,30 @@ full_client_profile=false a whole_migration_acceptance=false i pri PASS.
 Nenahrazuje kompletniho signed-in klienta, microphone readiness ani fyzicke
 akceptacni brany. Skutecny hodinovy beh se zahaji oddelene nad frozen binary
 po ulozeni tohoto source checkpointu; smoke nenahrazuje jeho chybejici data.
+
+## Cancellation ordering a bounded native delivery
+
+Dalsi synthetic fault review odhalilo, ze Escape zrusilo jen Paste uz prijaty
+UI, nikoli Deliver cekajici ve fronte nebo teprve odesilany background actorem.
+UI nyni okamzite latchne cancellation pro aktualni generation, zrusi existujici
+token a odmitne vsechny late Deliver. Stale zustava busy do terminalniho stavu
+actora, takze nelze spustit druhy engine; late Recording/Finishing status uz
+nezobrazi zruseny overlay. Opakovany Escape nezaplni command queue.
+
+Native actor mel3s timeout pouze na UI odpoved, zatimco ui.send mohl cekat
+neomezene na plnou frontu a nepozoroval auth/discard/shutdown.3s limit nyni
+zahrnuje enqueue i acknowledgement a stejny select sleduje cancellation po
+celou dobu. Timeout/closed queue je viditelna chyba, History zustava fallback
+a CancelOnDrop invaliduje token drive, nez muze late UI zapsat clipboard.
+
+Delivery/audit policy je explicitne inactive uz pred spustenim runtime threadu.
+Spawned outbox task tak nema startup okno se zdedenym active default pred prvni
+auth publikaci; normalni signed-in stav ji pozdeji zapne stejnou cestou jako driv.
+
+Dva hidden native UI testy overuji Escape/late delivery/overlay bez system
+clipboard nebo SendInput; tri virtual-clock/channel testy overuji full queue,
+late reply a closed receiver; actual isolated ClientHost test overuje signed-out
+startup policy bez OAuth/network/device/autostart. Proslo229 regularnich Windows
+Rust testu a strict fmt/Clippy; jeden hour fixture zustava ignored v beznem runu.
+Frozen09bc686 real-hour engine-only mereni bezi oddelene a neni temito buildy
+meneno. Zadne z teto coverage nenahrazuje stale nepovolene fyzicke testy.

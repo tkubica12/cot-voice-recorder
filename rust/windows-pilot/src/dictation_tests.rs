@@ -79,3 +79,69 @@ async fn persistence_failure_is_not_reported_as_success_and_no_more_writes_are_a
     assert!(matches!(result, Err(SessionError::Storage(_))));
     assert_eq!(attempts, 1);
 }
+
+fn delivery() -> (
+    UiRequest,
+    oneshot::Receiver<DeliveryResult>,
+    Arc<AtomicBool>,
+) {
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let (reply, result) = oneshot::channel();
+    (
+        UiRequest::Deliver {
+            generation: 1,
+            text: "synthetic never access system clipboard".into(),
+            cancelled: cancelled.clone(),
+            reply,
+        },
+        result,
+        cancelled,
+    )
+}
+
+#[tokio::test(start_paused = true)]
+async fn ui_queue_backpressure_is_part_of_the_delivery_budget() {
+    let (sender, mut receiver) = mpsc::channel(1);
+    sender.send(UiRequest::AuditWarning).await.unwrap();
+    let (request, reply, cancelled) = delivery();
+    let result = deliver_to_ui(sender, request, reply, cancelled.clone()).await;
+    assert_eq!(result, Err(UiDeliveryError::TimedOut));
+    assert!(cancelled.load(Ordering::Acquire));
+    assert!(matches!(
+        receiver.try_recv().unwrap(),
+        UiRequest::AuditWarning
+    ));
+    assert!(receiver.try_recv().is_err());
+}
+
+#[tokio::test(start_paused = true)]
+async fn timeout_invalidates_a_queued_unacknowledged_delivery_before_late_ui_processing() {
+    let (sender, mut receiver) = mpsc::channel(1);
+    let (request, reply, cancelled) = delivery();
+    let pending = tokio::spawn(deliver_to_ui(sender, request, reply, cancelled.clone()));
+    let UiRequest::Deliver {
+        cancelled: token,
+        reply,
+        ..
+    } = receiver.recv().await.unwrap()
+    else {
+        panic!("Expected an explicit synthetic delivery.");
+    };
+    assert!(!token.load(Ordering::Acquire));
+    tokio::time::advance(Duration::from_secs(3)).await;
+    assert_eq!(pending.await.unwrap(), Err(UiDeliveryError::TimedOut));
+    assert!(token.load(Ordering::Acquire));
+    assert!(reply.send(DeliveryResult::Pasted).is_err());
+}
+
+#[tokio::test]
+async fn unavailable_ui_is_a_visible_failure_and_not_a_successful_delivery() {
+    let (sender, receiver) = mpsc::channel(1);
+    drop(receiver);
+    let (request, reply, cancelled) = delivery();
+    assert_eq!(
+        deliver_to_ui(sender, request, reply, cancelled.clone()).await,
+        Err(UiDeliveryError::Unavailable)
+    );
+    assert!(cancelled.load(Ordering::Acquire));
+}

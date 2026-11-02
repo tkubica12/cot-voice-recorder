@@ -260,6 +260,8 @@ impl ClientHost {
         let (status_sender, status) = watch::channel(ClientStatus::default());
         let (stop, shutdown) = watch::channel(false);
         let policy = Arc::new(DeliveryPolicy::default());
+        // Spawned outbox/UI tasks must not see an active policy before auth is published.
+        policy.set_active(false);
         policy.set_paused(settings.notifications_paused);
         let thread_policy = policy.clone();
         let (initialized, result) = std::sync::mpsc::sync_channel(1);
@@ -863,5 +865,34 @@ mod tests {
             })
             .is_err()
         );
+    }
+
+    #[test]
+    fn signed_out_startup_never_exposes_an_initially_active_delivery_or_audit_policy() {
+        let directory = crate::recovery_store::tests::TemporaryRoot::new();
+        NativeSettingsStore::new(directory.0.join("settings.json"))
+            .unwrap()
+            .save(&AppSettings {
+                backend_base_url: "https://fixture.example.invalid".into(),
+                notifications_paused: true,
+                auto_start: false,
+                dictation_enabled: false,
+                ..Default::default()
+            })
+            .unwrap();
+        let host = ClientHost::start(ClientOptions {
+            state_directory: directory.0.clone(),
+            oauth_config: None,
+            clipboard_enabled: false,
+            installed: false,
+            fixture_runtime: false,
+        })
+        .unwrap();
+        assert!(!host.policy.authenticated());
+        assert!(!host.policy.allows_auto_copy());
+        assert!(!host.policy.can_upload_audit());
+        assert_eq!(host.status.borrow().auth, AuthState::NotConfigured);
+        drop(host);
+        assert!(!directory.0.join("tokens.bin").exists());
     }
 }
