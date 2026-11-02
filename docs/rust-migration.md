@@ -2746,3 +2746,47 @@ Build-only7a installer byl skutecne vytvoren bez spusteni:
 b3c0c122f74b2de474d5d12d5e5e163ec051b1d9ae1b374e9c99317ad66787ad,
 staged/release native
 feaec416a8a8a4e5d7a5ad1fa7de3e8705e3ea5943f88fc42fee3758f078fbbc.
+
+### Overeny konec Settings inkrementu, zbyvajici hranice
+
+Opravny [0713037 RustCI41530436878](https://github.com/tkubica12/cot-voice-recorder/actions/runs/41530436878)
+skutecne dokoncil vsech5 jobs SUCCESS: Windows/Linux offline tests,
+MSRV1.85-all-features na obou OS a cloud-container. Explicitni actual
+hidden Settings viewport/lifecycle step na Windows21:50:52Z->21:50:56Z
+je SUCCESS (na Linuxu spravne skipped); Windows job dokoncil take
+existing bounded capture checks. Zadna predchozi format failure
+nebyla zakryta a zadny watchdog/fixture proces nezustal bezet.
+
+Automaticky backend rerun7a0bfd3
+[41529528649](https://github.com/tkubica12/cot-voice-recorder/actions/runs/41529528649)
+take dokoncil actual Azure-adapter profil. Samostatne stazeni a
+nezavisly prepocet opet overil60 starts/4200API/60RSS/62SDK namespaces/
+66 source-lock hashes a vsechny original thresholds PASS:
+readiness p95Rust137.427558ms/Python817.270737ms; RustRSS
+19.191406/21.628906/23.863281MiB proti109.281250/118.406250/
+129.734375MiB; worstAPIp95 ratio82.794933%.
+Report7322190d6e0f66d13fb3d23d34907d1e446c780260a37c64626a98725b2d8399
+a contract98bf4d66bcb664fff1e05adb1caf973120d5d96ff5d9a42863e1e5d0cec30ff1
+jsou oddelene od prvni33d04aa evidence. Linux cloud binary ma stejny
+recorded hashb923b8a5... jako33d04aa; Windows-only UI zmeny se tak
+neprepisuji na novy cloud runtime. Ani tento druhy scoped PASS neni
+realIAM/PE/deployedACA/model/workerlatency/whole-migration acceptance.
+
+Finalni0713037 build-only installer:
+729e3805fc51dca46c06bb0a7edef6ff470336198e60d1a371584984e4362f35,
+staged/release native oba
+76e3b043db1d533a3b17e8946f7b29c69acacb3d4932ccc8aca461cb01c8ade2.
+Sestaven, nikdy nespusten/instalovan/upgradeovan ani releasovan.
+
+Aktualne implementovana povolena Settings oprava i jeji CI/NoPorts
+dukazy jsou uzavrene. Cele dokonceni zustava NEUZAVRENE: current Windows
+statisticke profilya2d/3f4 jsou FAILED/INCOMPLETE, zadna memory serie
+nebyla dokoncena a treti serie nebyla schvalena/spustena. Parentuv
+dotaz na klidne~40min okno byl prerusen bez odpovedi; samotne resume
+nereprezentuje takovy souhlas. Dale chybi human keyboard/screen-reader/
+monitor transitions, automatic guarded-paste/full-controller/physical
+akceptace, skutecny installer upgrade/rollback a real private Azure/
+IAM/cutover akceptace. Tyto hranice nelze nahradit synthetic PASS.
+Starsimic/Google/clipboard approvals jsou spotrebovane a45788 je pouze
+assisted/manual-CtrlV partial. Zadne nove personal cache, Azure zmeny,
+paidAI, install nebo dalsi fyzicky pokus se neprovedly.
