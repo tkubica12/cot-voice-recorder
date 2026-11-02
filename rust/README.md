@@ -21,8 +21,9 @@ clipboard commands and native dictation/recovery/settings/installer surfaces.
 The real-device, accessibility and upgrade acceptance is still incomplete.
 Cargo.lock is committed. Fetch its locked packages once, then run checks offline.
 [`cloud`](cloud/README.md) now adds the staged strict OIDC/UAMI and storage REST
-foundation, HTTP services and batch AI/PubSub adapters. It is not yet the complete
-API/relay/worker/cleanup or a deployable replacement.
+foundation plus runnable API/relay/worker/cleanup, batch AI/PubSub adapters and
+source-only classical ACA image selection. Full contract/performance/human
+acceptance remains incomplete; it is not an accepted production replacement.
 Python/npm/NuGet feeds remain unchanged. Never use GitHub source dependencies or
 disable security controls as a workaround.
 
@@ -38,9 +39,9 @@ cargo clippy --manifest-path rust\Cargo.toml --workspace --offline --locked --al
 cargo build --manifest-path rust\Cargo.toml --offline --locked --release --example audio_contract
 ```
 
-The manifest declares Rust 1.85 or newer (edition 2024). The initial increment is
-checked with the installed Rust 1.99.1; the minimum compiler is not separately
-verified yet. A compiler version is not an SDK crate availability guarantee.
+The manifest declares Rust 1.85 or newer (edition 2024). The installed Rust1.99.1
+runs local checks; disposable Windows/Linux CI also compiles all targets on1.85.
+A compiler version is not an SDK crate availability guarantee.
 `rust-ci` fetches locked approved crates, then runs offline workspace checks on
 Windows/Linux. Windows adds process-sampler safeguards and native DPAPI parity.
 Windows also checks client-contract and encrypted token-store compatibility.

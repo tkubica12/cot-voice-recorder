@@ -982,3 +982,35 @@ MSRV1.85 all-targets checks prosly ve Windows i Linux CI na9619b20; jde o
 compiler validation, ne tvrzeni o real-world device/production akceptaci.
 Backend/container/Ubuntu CI tohoto commitu take prosly, Windows full conclusion
 se overuje zvlast. Zadna lokalni toolchain instalace se nekonala.
+
+## Synthetic native-to-cloud E2E
+
+Tri Windows E2E testy nyni propojuji real NativeRecoveryStore + legacy/streaming
+engines, BoundBatchBackend/ApiClient, Axum HTTP/WS router, MAI batch/stream REST/WS
+adapters a audit endpoint. Audio/model/JWT vstupy jsou explicitne synteticke;
+zadny mikrofon, clipboard, instalace, osobni store ani Azure/placeny model.
+Native sample bytes jsou overene na model transportu i v zachovanem DPAPI
+recovery po odhlaseni. Frozen original/final audit ma fixed48h expiry a zadny
+normalni completion queue event.
+
+Pouze Windows cloud dev-dependency aktivuje opt-in loopback-fixtures feature.
+Factory povoluje jen explicitni http127.0.0.1:port bez credentials/query;
+normalni ApiClient constructor stale vyzaduje HTTPS a system TLS trust.
+Normalni native/installer dependency graph tuto feature neobsahuje. Nejde
+o produkcni fallback, TLS bypass ani vypnuti cloud signature verifikace;
+skutecny RS256 path zustava samostatne overen externim HTTP/JWKS probe.
+
+E2E odhalilo, ze relay po finish prestal sledovat client disconnect a drzel
+model/slot az do30s drain timeoutu. Nyni stale sleduje close; dalsi audio/control
+po finish je odmitnute, potvrzeni se po chybe nevymysli a slot/upstream se
+pri auth cancellation zavre promptne. Samostatny direct-socket test overuje
+stejny close-after-finish scenar i na Linuxu.
+
+Proslo 213 Windows workspace testu (94 cloud library +2 CLI,57 client library),
+locked release/fmt/Clippy a externi actual Python relay/HTTP/audit parity.
+Tri native E2E ani tento pocet nejsou feature-matched performance mereni.
+Posledni build-only installer ma SHA256
+02FC4F81057772371FE98BE963CAA75089AF562C6B9F36AD103347F797EE7BA8.
+Predchozi deb0980 ma potvrzene Windows/Linux, obe MSRV1.85 kontroly,
+container build a backend CI. Fyzicke Windows/Google/install/Azure testy a
+baseline/hodinova acceptance jsou stale neprovedene lidske hranice.

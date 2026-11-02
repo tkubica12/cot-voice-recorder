@@ -1,7 +1,7 @@
-# Native Windows foundation
+# Native Windows migration client
 
-This is an isolated **native migration client**, not a dictation client or a
-production replacement. Its default mode remains the platform-only foundation.
+This is an isolated **native migration client**, not an accepted production
+replacement. Its default mode remains the platform-only foundation.
 Closing the window or pressing Esc hides it. A second ordinary launch activates
 the existing pilot; benchmark launches with a readiness path reject duplicates.
 
@@ -12,7 +12,7 @@ directory. `--oauth-config` is also explicit. Isolated mode refuses the real
 installed state directory and its descendants; no installed tokens/history/audio
 are discovered. Its
 `Local\VoicePrompt.RustPilot.*` mutexes and window classes are separate from C#.
-It uses a stock system icon until the client packaging stage.
+Isolated mode uses a stock system icon; installed mode loads the packaged app.ico.
 
 Windows code is isolated in `src\platform.rs`; the audio core still forbids unsafe
 code. The Windows crate version was queried in the user-approved crates.io source,
@@ -128,7 +128,8 @@ Pause does not block explicit manual copy or audit upload; account/backend chang
 `<lowercase-session-id>\manifest.enc` path. They use the existing DPAPI entropy,
 bounded decrypt/parse and atomic publication; corrupt input leaves the old file
 intact. Reparse points in any ancestor are refused. These are codec/parity hooks,
-not a quota-aware, leased recovery journal; the tray does not discover Recovery.
+not the quota-aware recovery runtime. The connected tray's separate Recovery UI
+and real journal are described below.
 
 The fixture suite reads real C# v3/v4 journals (including pending and frozen audit
 state), compares plaintext byte-for-byte and reopens Rust output through the actual

@@ -182,7 +182,7 @@ pub(crate) async fn connect<P: TokenPersistence>(
     {
         return Err(failure(ApiErrorKind::BadRequest, None, false));
     }
-    let loopback = cfg!(test)
+    let loopback = (cfg!(test) || cfg!(feature = "loopback-fixtures"))
         && base.scheme() == "http"
         && base.host_str() == Some("127.0.0.1")
         && base.port().is_some();

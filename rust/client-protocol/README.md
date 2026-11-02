@@ -53,7 +53,8 @@ Implemented:
   Streaming gaps/overlap/odd cursors, malformed lengths/flags and conflicting
   confirmations/audits are rejected. Checkpoint planning validates before native
   audio publication. The native crate now supplies the durable journal; dictation
-  engines and interactive recovery wiring remain separate unfinished work.
+  engines and interactive recovery are wired in the native crate; real-device
+  and complete performance/accessibility acceptance remain separate.
 - Authenticated dictation WAV, bounded literal-edit polishing and immutable audit
   APIs. A real proxy WebSocket client validates readiness/cursors, sends bounded
   PCM/commit/finish, separates provisional/confirmed messages and invalidates both
@@ -63,6 +64,12 @@ Implemented:
   .NET 8-compatible profile rather than the newest tables. Direct reference parity
   covers valid BMP scalars, representative supplementary compatibility characters,
   invariant casing, short-word overlap and empty adjacency.
+
+The optional `loopback-fixtures` feature is used only by the Windows cloud
+dev-dependency to run native-engine -> real client -> real Rust router -> model
+fixture/audit E2E. It allows only explicit `http://127.0.0.1:port` fixture URLs.
+The normal constructor still requires HTTPS, system TLS verification is unchanged,
+and the normal app/installer dependency graph does not enable this feature.
 
 Token/config/PKCE/claims/frame Debug output is redacted. Parsing errors do not
 embed input bodies. Invalid callback security fields, config endpoints, JWT

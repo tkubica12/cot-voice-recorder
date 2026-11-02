@@ -64,7 +64,7 @@ actual HTTP handlers, multipart/provider contracts, physical-call cancellation,
 ordered PCM relay, actual 15-second/30-second timeout boundaries, lease takeover/
 late-publication fencing, exact contiguous/legacy continuous model replay,
 receipt rotation and graceful producer/heartbeat shutdown.
-The current workspace has 208 passing tests, including 90 cloud library tests and
+The current Windows workspace has 213 passing tests, including 94 cloud library tests and
 two CLI guards. Read-only resource probes and active-writer-safe cleanup use
 synthetic local fixtures.
 No Azure, paid model, production data or credentials are used. These are not
@@ -163,6 +163,13 @@ structured errors, lifecycle and audit/history shapes with the actual FastAPI
 factory. No real account, cloud, model, database or credentials are involved.
 This is a bounded contract corpus, not exhaustive Pydantic coercion/message-text
 or distributed-fault parity.
+
+Windows cloud tests additionally connect the actual native DPAPI recovery journal,
+both dictation engines and authenticated client transports to the real Rust router
+and synthetic model peers. These require no microphone or clipboard. A finishing
+relay still observes disconnect/signout and releases its model/slot immediately;
+it never converts provisional text into confirmed output. The loopback transport
+feature is confined to the Windows dev-dependency, not the normal app/image graph.
 
 Cleanup fault checks cover deletion failure and durable resumption: an expired
 body delete must not first discard its retry metadata; orphan plain bodies are

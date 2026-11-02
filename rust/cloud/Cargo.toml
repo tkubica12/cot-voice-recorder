@@ -43,3 +43,7 @@ unicode_names2 = "2.0.0"
 [dev-dependencies]
 tower = { version = "0.5.3", features = ["util"] }
 rsa = { version = "0.9.10", default-features = false, features = ["std", "getrandom"] }
+
+[target.'cfg(windows)'.dev-dependencies]
+voiceprompt-client-protocol = { path = "../client-protocol", features = ["loopback-fixtures"] }
+voiceprompt-windows-pilot = { path = "../windows-pilot" }

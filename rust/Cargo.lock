@@ -1942,7 +1942,9 @@ dependencies = [
  "unicode-normalization",
  "unicode_names2",
  "url",
+ "voiceprompt-client-protocol",
  "voiceprompt-core",
+ "voiceprompt-windows-pilot",
 ]
 
 [[package]]

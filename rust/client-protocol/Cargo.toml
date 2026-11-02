@@ -10,6 +10,9 @@ description = "Authentication and realtime contracts for the VoicePrompt Rust cl
 [lints]
 workspace = true
 
+[features]
+loopback-fixtures = []
+
 [dependencies]
 voiceprompt-core = { path = ".." }
 base64 = "0.23.1"

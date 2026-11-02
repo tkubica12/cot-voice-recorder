@@ -112,6 +112,25 @@ pub(crate) async fn make_client_with_token_endpoint(
     )
 }
 
+#[cfg(feature = "loopback-fixtures")]
+#[tokio::test]
+async fn fixture_transport_is_opt_in_loopback_only_and_does_not_change_default_https_validation() {
+    let (client, _) = make_client("http://127.0.0.1:1234/".parse().unwrap()).await;
+    for endpoint in [
+        "https://127.0.0.1:1234/",
+        "http://example.invalid:1234/",
+        "http://127.0.0.1/",
+        "http://127.0.0.1:1234/?token=bad",
+    ] {
+        assert!(
+            ApiClient::for_loopback_fixture(endpoint.parse().unwrap(), client.auth.clone())
+                .is_err()
+        );
+    }
+    let base = "http://127.0.0.1:1234/".parse().unwrap();
+    assert!(ApiClient::new(base, client.auth.clone()).is_err());
+}
+
 pub(crate) fn transcript() -> String {
     let now = OffsetDateTime::now_utc();
     serde_json::json!({

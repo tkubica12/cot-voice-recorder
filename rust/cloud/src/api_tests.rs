@@ -5,6 +5,96 @@ use base64::Engine;
 use sha2::{Digest, Sha256};
 use tower::ServiceExt;
 
+#[cfg(windows)]
+#[path = "native_e2e_tests.rs"]
+mod native_e2e_tests;
+
+#[tokio::test]
+async fn client_disconnect_after_finish_releases_upstream_and_capacity_without_waiting_for_final_drain()
+ {
+    use crate::http_fixture::{config, serve, token};
+    use futures_util::SinkExt;
+    use tokio_tungstenite::tungstenite::Message;
+    let identity = serve(vec![token()]).await;
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let resource: url::Url = format!("http://{}/", listener.local_addr().unwrap())
+        .parse()
+        .unwrap();
+    let mut state = fixture();
+    let slots = state.stream_slots.clone();
+    state.streaming = Some(Arc::new(
+        crate::streaming::MaiStreamingProvider::new(
+            &config(&resource),
+            Arc::new(crate::identity::ManagedIdentity::fixture(
+                identity.endpoint.as_str(),
+            )),
+            "synthetic-model",
+        )
+        .unwrap(),
+    ));
+    let (committed, commit_seen) = tokio::sync::oneshot::channel();
+    let upstream = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+        socket
+            .send(Message::Text(r#"{"type":"session.created"}"#.into()))
+            .await
+            .unwrap();
+        socket.next().await.unwrap().unwrap();
+        socket
+            .send(Message::Text(r#"{"type":"session.updated"}"#.into()))
+            .await
+            .unwrap();
+        let mut committed = Some(committed);
+        while let Some(Ok(message)) = socket.next().await {
+            match message {
+                Message::Text(data) => {
+                    if serde_json::from_str::<serde_json::Value>(&data).unwrap()["type"]
+                        == "input_audio_buffer.commit"
+                    {
+                        if let Some(committed) = committed.take() {
+                            committed.send(()).unwrap();
+                        }
+                    }
+                }
+                Message::Close(_) => return,
+                _ => {}
+            }
+        }
+    });
+    let (endpoint, server) = serve_ws(state).await;
+    let mut socket = connect_ws(&endpoint, "", true).await;
+    assert_eq!(ws_json(&mut socket).await["type"], "ready");
+    socket
+        .send(Message::Binary(vec![1; 640].into()))
+        .await
+        .unwrap();
+    socket
+        .send(Message::Text(r#"{"type":"finish"}"#.into()))
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), commit_seen)
+        .await
+        .unwrap()
+        .unwrap();
+    socket.close(None).await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), upstream)
+        .await
+        .unwrap()
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while slots.available_permits() != 4 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    identity.finish().await;
+    server.abort();
+}
+
 fn fixture() -> ApiState {
     ApiState {
         services: Arc::new(crate::services::tests::fixture()),

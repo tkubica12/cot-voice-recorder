@@ -173,7 +173,7 @@ pub async fn relay(
         tokio::select! {
             _ = tokio::time::sleep_until(deadline) => return Err(invalid()),
             _ = tokio::time::sleep_until(drain_deadline), if state.finished => return Err(invalid()),
-            message = client.recv(), if !state.finished => {
+            message = client.recv() => {
                 match message {
                     Some(Ok(Message::Binary(audio))) => upstream.send(state.audio(&audio)?).await?,
                     Some(Ok(Message::Text(control))) => {

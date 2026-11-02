@@ -476,6 +476,27 @@ impl<P: TokenPersistence> ApiClient<P> {
         {
             return Err(Self::failure(ApiErrorKind::BadRequest, None, false));
         }
+        Self::with_transport(base, auth)
+    }
+
+    #[cfg(feature = "loopback-fixtures")]
+    pub fn for_loopback_fixture(
+        base: url::Url,
+        auth: Arc<AuthRuntime<P>>,
+    ) -> Result<Self, ApiError> {
+        if base.scheme() != "http"
+            || base.host_str() != Some("127.0.0.1")
+            || base.port().is_none()
+            || !base.username().is_empty()
+            || base.password().is_some()
+            || base.query().is_some()
+            || base.fragment().is_some()
+        {
+            return Err(Self::failure(ApiErrorKind::BadRequest, None, false));
+        }
+        Self::with_transport(base, auth)
+    }
+    fn with_transport(base: url::Url, auth: Arc<AuthRuntime<P>>) -> Result<Self, ApiError> {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(60))
             .connect_timeout(Duration::from_secs(15))
