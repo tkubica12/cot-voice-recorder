@@ -51,6 +51,38 @@ pub struct DesktopGuard {
     clipboard: u32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PasteBlock {
+    FocusChanged,
+    ModifiersHeld,
+    ClipboardNotPublished,
+    ClipboardChanged { expected: u32, actual: u32 },
+}
+
+impl PasteBlock {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::FocusChanged => "focus_window_thread_or_process_changed",
+            Self::ModifiersHeld => "modifiers_not_released",
+            Self::ClipboardNotPublished => "clipboard_sequence_not_recorded",
+            Self::ClipboardChanged { .. } => "clipboard_sequence_changed",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PasteOutcome {
+    Blocked(PasteBlock),
+    Sent {
+        events: u32,
+    },
+    Incomplete {
+        events: u32,
+        expected: u32,
+        release_events: Option<u32>,
+    },
+}
+
 impl DesktopGuard {
     pub fn new(target: Target) -> Self {
         Self {
@@ -60,7 +92,10 @@ impl DesktopGuard {
         }
     }
     pub fn observe(&mut self) -> bool {
-        self.changed |= !target_matches(self.target, Target::capture());
+        self.observe_target(Target::capture())
+    }
+    fn observe_target(&mut self, current: Target) -> bool {
+        self.changed |= !target_matches(self.target, current);
         !self.changed
     }
     pub fn mark_clipboard(&mut self, sequence: u32) {
@@ -72,27 +107,91 @@ impl DesktopGuard {
             .all(|key| !key_down(*key))
     }
     pub fn try_paste(&mut self) -> bool {
-        if !self.observe()
-            || !Self::modifiers_released()
-            || self.clipboard == 0
-            || self.clipboard != unsafe { GetClipboardSequenceNumber() }
-        {
-            return false;
+        matches!(self.try_paste_detailed(), PasteOutcome::Sent { .. })
+    }
+    fn preflight(
+        &mut self,
+        current: Target,
+        read_modifiers_released: impl FnOnce() -> bool,
+        read_sequence: impl FnOnce() -> u32,
+    ) -> Result<(), PasteBlock> {
+        if !self.observe_target(current) {
+            return Err(PasteBlock::FocusChanged);
         }
-        let input = paste_inputs();
-        let sent = unsafe { SendInput(&input, size_of::<INPUT>() as i32) };
-        if sent == input.len() as u32 {
-            return true;
+        if !read_modifiers_released() {
+            return Err(PasteBlock::ModifiersHeld);
         }
-        eprintln!("Paste SendInput was incomplete; clipboard and History remain available.");
-        if sent > 0 {
-            let release = [key(0x56, true), key(0x11, true)];
-            let released = unsafe { SendInput(&release, size_of::<INPUT>() as i32) };
-            if released != release.len() as u32 {
-                eprintln!("Paste modifier release failed.");
+        if self.clipboard == 0 {
+            return Err(PasteBlock::ClipboardNotPublished);
+        }
+        let sequence = read_sequence();
+        if self.clipboard != sequence {
+            return Err(PasteBlock::ClipboardChanged {
+                expected: self.clipboard,
+                actual: sequence,
+            });
+        }
+        Ok(())
+    }
+    pub(crate) fn try_paste_detailed(&mut self) -> PasteOutcome {
+        let outcome = self.attempt_with(
+            Target::capture(),
+            Self::modifiers_released,
+            || unsafe { GetClipboardSequenceNumber() },
+            |input| unsafe { SendInput(input, size_of::<INPUT>() as i32) },
+        );
+        match outcome {
+            PasteOutcome::Blocked(reason) => eprintln!("Paste suppressed: {}.", reason.label()),
+            PasteOutcome::Incomplete {
+                events,
+                expected,
+                release_events,
+            } => {
+                eprintln!(
+                    "Paste SendInput accepted {events}/{expected} events; clipboard and History remain available."
+                );
+                if let Some(released) = release_events {
+                    if released != 2 {
+                        eprintln!("Paste modifier release accepted {released}/2 events.");
+                    }
+                }
             }
+            PasteOutcome::Sent { .. } => {}
         }
-        false
+        outcome
+    }
+
+    fn attempt_with(
+        &mut self,
+        current: Target,
+        read_modifiers_released: impl FnOnce() -> bool,
+        read_sequence: impl FnOnce() -> u32,
+        send: impl FnMut(&[INPUT]) -> u32,
+    ) -> PasteOutcome {
+        if let Err(reason) = self.preflight(current, read_modifiers_released, read_sequence) {
+            return PasteOutcome::Blocked(reason);
+        }
+        emit_paste_with(send)
+    }
+}
+
+fn emit_paste_with(mut send: impl FnMut(&[INPUT]) -> u32) -> PasteOutcome {
+    let input = paste_inputs();
+    let sent = send(&input);
+    if sent == input.len() as u32 {
+        return PasteOutcome::Sent { events: sent };
+    }
+    let release_events = if sent > 0 {
+        let release = [key(0x56, true), key(0x11, true)];
+        let released = send(&release);
+        Some(released)
+    } else {
+        None
+    };
+    PasteOutcome::Incomplete {
+        events: sent,
+        expected: input.len() as u32,
+        release_events,
     }
 }
 
@@ -141,6 +240,173 @@ mod manual_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn typed_guard_reasons_use_no_ports_and_preserve_lazy_order_and_sticky_focus() {
+        let target = Target {
+            window: 1,
+            focus: 2,
+            thread: 3,
+            process: 4,
+        };
+        let mut guard = DesktopGuard::new(target);
+        assert_eq!(
+            guard.preflight(
+                target,
+                || true,
+                || panic!("No published sequence: never read clipboard metadata.")
+            ),
+            Err(PasteBlock::ClipboardNotPublished)
+        );
+        guard.mark_clipboard(12);
+        assert_eq!(
+            guard.preflight(
+                target,
+                || false,
+                || panic!("Held modifiers: never read clipboard metadata.")
+            ),
+            Err(PasteBlock::ModifiersHeld)
+        );
+        assert_eq!(
+            guard.preflight(target, || true, || 13),
+            Err(PasteBlock::ClipboardChanged {
+                expected: 12,
+                actual: 13
+            })
+        );
+        assert_eq!(guard.preflight(target, || true, || 12), Ok(()));
+        let changed = Target { focus: 9, ..target };
+        assert_eq!(
+            guard.preflight(
+                changed,
+                || panic!("Focus changed: never query modifiers."),
+                || panic!("Focus changed: no clipboard query.")
+            ),
+            Err(PasteBlock::FocusChanged)
+        );
+        assert_eq!(
+            guard.preflight(target, || true, || 12),
+            Err(PasteBlock::FocusChanged)
+        );
+        assert_eq!(
+            PasteBlock::FocusChanged.label(),
+            "focus_window_thread_or_process_changed"
+        );
+        assert_eq!(PasteBlock::ModifiersHeld.label(), "modifiers_not_released");
+        assert_eq!(
+            PasteBlock::ClipboardNotPublished.label(),
+            "clipboard_sequence_not_recorded"
+        );
+        assert_eq!(
+            PasteBlock::ClipboardChanged {
+                expected: 12,
+                actual: 13
+            }
+            .label(),
+            "clipboard_sequence_changed"
+        );
+        for (current, released, published, sequence, reason) in [
+            (changed, true, true, 12, PasteBlock::FocusChanged),
+            (target, false, true, 12, PasteBlock::ModifiersHeld),
+            (target, true, false, 12, PasteBlock::ClipboardNotPublished),
+            (
+                target,
+                true,
+                true,
+                13,
+                PasteBlock::ClipboardChanged {
+                    expected: 12,
+                    actual: 13,
+                },
+            ),
+        ] {
+            let mut gate = DesktopGuard::new(target);
+            if published {
+                gate.mark_clipboard(12);
+            }
+            assert_eq!(
+                gate.attempt_with(
+                    current,
+                    || released,
+                    || sequence,
+                    |_| panic!("A rejected guard must never reach an input emitter.")
+                ),
+                PasteOutcome::Blocked(reason)
+            );
+        }
+    }
+
+    #[test]
+    fn incomplete_native_emission_is_not_a_guard_rejection_or_complete_paste() {
+        for accepted in 0..=4 {
+            let mut calls = Vec::new();
+            let outcome = emit_paste_with(|inputs| {
+                calls.push(
+                    inputs
+                        .iter()
+                        .map(|input| unsafe {
+                            (input.Anonymous.ki.wVk.0, input.Anonymous.ki.dwFlags)
+                        })
+                        .collect::<Vec<_>>(),
+                );
+                if calls.len() == 1 {
+                    accepted
+                } else {
+                    inputs.len() as u32
+                }
+            });
+            assert_eq!(
+                calls[0].iter().map(|(key, _)| *key).collect::<Vec<_>>(),
+                [0x11, 0x56, 0x56, 0x11]
+            );
+            match accepted {
+                4 => {
+                    assert_eq!(outcome, PasteOutcome::Sent { events: 4 });
+                    assert_eq!(calls.len(), 1);
+                }
+                0 => {
+                    assert_eq!(
+                        outcome,
+                        PasteOutcome::Incomplete {
+                            events: 0,
+                            expected: 4,
+                            release_events: None
+                        }
+                    );
+                    assert_eq!(calls.len(), 1);
+                }
+                _ => {
+                    assert_eq!(
+                        outcome,
+                        PasteOutcome::Incomplete {
+                            events: accepted,
+                            expected: 4,
+                            release_events: Some(2)
+                        }
+                    );
+                    assert_eq!(calls.len(), 2);
+                    assert_eq!(calls[1], [(0x56, KEYEVENTF_KEYUP), (0x11, KEYEVENTF_KEYUP)]);
+                }
+            }
+        }
+        let mut count = 0;
+        let cleanup_failed = emit_paste_with(|_| {
+            count += 1;
+            if count == 1 { 3 } else { 1 }
+        });
+        assert_eq!(
+            cleanup_failed,
+            PasteOutcome::Incomplete {
+                events: 3,
+                expected: 4,
+                release_events: Some(1)
+            }
+        );
+        assert_eq!(
+            count, 2,
+            "Cleanup must not retry the paste or release indefinitely."
+        );
+    }
     #[test]
     fn paste_has_exactly_one_ctrl_v_no_enter_and_missing_or_changed_focus_is_rejected() {
         let input = paste_inputs();

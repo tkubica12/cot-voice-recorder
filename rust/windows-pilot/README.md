@@ -162,6 +162,16 @@ parent out of desktop Z-order; hidden alone was not a sufficient activation
 boundary in parallel regression. It verifies own PID/thread/parent/focus and nonactivation, not the
 full foreground/clipboard/SendInput guard or an actual paste acceptance.
 
+Guard diagnostics now distinguish a focus/modifier/missing-sequence/changed-sequence
+rejection from a native input attempt. Native event counts and any release-only
+cleanup counts are explicit; the ordinary client's Boolean API still succeeds
+only for the complete four-event Ctrl+V batch. Synthetic callbacks exercise zero,
+partial, complete and incomplete-cleanup outcomes without calling native sensors,
+clipboard or SendInput. A false legacy Boolean alone must not be interpreted as
+"no native events", and an unattempted field observation is not a blank-field proof.
+The physical fixture explicitly prohibits manual paste; a marker later pasted by
+the user is assisted evidence, not an automatic-paste PASS.
+
 Clipboard writes use immediate `CF_UNICODETEXT` publication from moveable global
 memory, transferring ownership only after successful `SetClipboardData`.
 Bounded retries apply only to a busy clipboard. Pause, suspended/sign-out state

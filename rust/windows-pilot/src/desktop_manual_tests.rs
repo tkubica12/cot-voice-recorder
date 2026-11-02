@@ -35,7 +35,15 @@ struct Report {
     clipboard_marker_published: bool,
     clipboard_changed: bool,
     input_sent: bool,
+    guard_rejection: Option<&'static str>,
+    clipboard_sequence_expected: Option<u32>,
+    clipboard_sequence_at_guard: Option<u32>,
+    native_emission_invoked: bool,
+    native_events: u32,
+    native_expected: u32,
+    native_release_events: Option<u32>,
     marker_observed: bool,
+    marker_observation_attempted: bool,
     finished: bool,
     closed: bool,
 }
@@ -52,6 +60,11 @@ impl Report {
             "clipboard_marker_published":self.clipboard_marker_published,
             "clipboard_changed":self.clipboard_changed,"input_sent":self.input_sent,
             "marker_observed":self.marker_observed,"finished":self.finished,
+            "marker_observation_attempted":self.marker_observation_attempted,
+            "guard_rejection":self.guard_rejection,"native_emission_invoked":self.native_emission_invoked,
+            "clipboard_sequence_expected":self.clipboard_sequence_expected,"clipboard_sequence_at_guard":self.clipboard_sequence_at_guard,
+            "native_events":self.native_events,"native_expected":self.native_expected,
+            "native_release_events":self.native_release_events,
             "closed":self.closed,"old_clipboard_read":false,"microphone_or_hotkeys":false,
             "account_or_backend":false,"whole_migration_acceptance":false,
         }))
@@ -308,7 +321,7 @@ fn create_fixture_window(observer_only: bool) -> Result<FixtureWindow, Box<dyn s
                 )
             } else {
                 w!(
-                    "One authorized clipboard overwrite + automatic Ctrl+V.\r\nClick Run once personally, then do not change focus or keys for one second.\r\nNo microphone, accounts, backend, Enter or Save. No retry."
+                    "AUTOMATIC paste test: one authorized marker overwrite + native Ctrl+V.\r\nClick Run once personally, then keep focus and keys unchanged for one second.\r\nDO NOT press Ctrl+V or paste manually, even if blocked. No retry.\r\nNo microphone, accounts, backend, Enter or Save."
                 )
             },
             WS_CHILD | WS_VISIBLE,
@@ -512,14 +525,51 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                             report.clipboard_marker_published = true;
                             pending.mark_clipboard(sequence);
                             report.operation = "invoke DesktopGuard once";
-                            report.input_sent = pending.try_paste();
+                            match pending.try_paste_detailed() {
+                                PasteOutcome::Blocked(reason) => {
+                                    report.guard_rejection = Some(reason.label());
+                                    if let PasteBlock::ClipboardChanged { expected, actual } =
+                                        reason
+                                    {
+                                        report.clipboard_sequence_expected = Some(expected);
+                                        report.clipboard_sequence_at_guard = Some(actual);
+                                    }
+                                }
+                                PasteOutcome::Sent { events } => {
+                                    report.native_emission_invoked = true;
+                                    report.native_events = events;
+                                    report.native_expected = 4;
+                                    report.input_sent = true;
+                                }
+                                PasteOutcome::Incomplete {
+                                    events,
+                                    expected,
+                                    release_events,
+                                } => {
+                                    report.native_emission_invoked = true;
+                                    report.native_events = events;
+                                    report.native_expected = expected;
+                                    report.native_release_events = release_events;
+                                }
+                            }
                             if report.input_sent {
                                 timer(window.window, 2, 250)?;
                             } else {
                                 report.finished = true;
+                                let detail = match report.guard_rejection {
+                                    Some(reason) => format!("guard: {reason}"),
+                                    None => format!(
+                                        "native input accepted {}/{} events; release {:?}",
+                                        report.native_events,
+                                        report.native_expected,
+                                        report.native_release_events
+                                    ),
+                                };
                                 text(
                                     status,
-                                    "Marker copied, automatic paste blocked. No retry; marker remains on clipboard.",
+                                    &format!(
+                                        "Marker published, automatic paste incomplete ({detail}). DO NOT paste manually or retry. Leave the field unchanged; marker remains on clipboard."
+                                    ),
                                 )?;
                             }
                         }
@@ -538,6 +588,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
             (WM_TIMER, 2) if !report.finished => {
                 report.operation = "observe marker only in the owned synthetic field";
+                report.marker_observation_attempted = true;
                 unsafe { KillTimer(Some(window.window), 2) }?;
                 let mut value = [0; 256];
                 let count = unsafe { GetWindowTextW(edit, &mut value) };

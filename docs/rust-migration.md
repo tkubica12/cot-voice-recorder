@@ -2254,3 +2254,42 @@ se nikdy nezamenuje za konecny stav. Trvala aktualni omezeni:
 NoPorts neprokazuje real foreground guard/clipboard/SendInput a
 nevytvari dalsi live consent. Zadny live retry po techto opravach
 nebyl proveden; dalsi uzivatelsky krok vyzaduje vyslovne rozhodnuti.
+
+### Opraveny focus v real case, ale automatic paste stale NEPROKAZAN
+
+Po dalsim NOVEM souhlasu byl jednou otevren fixed PID45788/HWND2166528,
+frozen564b26bfa99a1a1d5e3e4a7fa18b6cbfacb875c0952eb155d02d7c3d97156a1b.
+Drive nez agent dokoncil readiness, existoval jeden accepted Run,
+focus-preflight/focused/delivering/result. Agent proto NEZADAL dalsi
+klik. Nullable Focus oprava skutecne dosahla own target focus pri
+projectionHRESULT0; target_matched=true a marker se jednou publikoval.
+DesktopGuard vsak vratil false a fixture own observation nebyla
+provedena. CUI sice videlo presny marker ve vlastnim poli, ale uzivatel
+na jedinou upresnujici otazku vyslovne odpovedel:
+"Klik na Run once a potom rucni Ctrl+V".
+
+Vysledek je pouze assisted/partial, NIKOLI automatic-paste PASS.
+Legacy Boolean nerozlisuje guard rejection od incomplete SendInput,
+takze false se nepreklada na "zadne native input API nebylo volano".
+Own field po rucnim paste tento rozdil nerozhodne. Case se normalne
+uzavrel, process skoncilo a launcher se odstranil; dalsi retry neprobehlo.
+Result SHA256ee02c3ff60e15b49289ce40c4a1f32e6b74b77246069971373c0dd114865fb59,
+closed6fb62b815be8d3f813297064916c41563dd66deb666f57d63b53152de5475178.
+Original clipboard se nikdy necetl/neobnovoval; fixni marker zustal.
+
+Nasledna diagnostika zachovava VSECHNY puvodni guardy a jejich poradi:
+sticky target/focus -> released modifiers -> publication sequence ->
+unchanged sequence -> jediny4-event Ctrl+V. Typed outcomes ted rozlisi
+presnou guard reason (vcetne expected/actual sequence METADATA, ne obsahu),
+native emission invoked/events/expected a pripadny release-only cleanup.
+Wrapper pro normalniho klienta nadale vraci true jen pro plny Ctrl+V batch.
+Fixture navic zaznamena, zda own-field observation vubec probehla, a
+viditelne zakazuje manualni Ctrl+V i po blocked vysledku.
+
+Prime NoPorts unit cases pouzivaji STEJNY production decision/emission
+algorithm s fake snapshots/callbacks: vsechny4 guard reasons nikdy
+nedosahnou ani synthetic emitteru, order je lazy a focus latch sticky;
+accepted counts0/1/2/3/4 i partial release se rozlisuji a cleanup muze
+poslat jen V-up/Control-up, nikdy dalsi V-down/Enter nebo nekonecny retry.
+Zadne nativni clipboard/sensor/SendInput volani v techto testech neni.
+Dosavadni case evidence se temito novymi reason fields zpetne nedoplnuje.
