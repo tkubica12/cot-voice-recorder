@@ -363,6 +363,7 @@ class HttpParityTests(unittest.TestCase):
                             field: "invalid-synthetic-header",
                         },
                     )
+
         self.compare(
             "PUT",
             "/v1/recordings/missing/chunks/not-an-index",
@@ -374,6 +375,26 @@ class HttpParityTests(unittest.TestCase):
                 "X-Audio-Sample-Count": "bad",
             },
         )
+
+    def test_rejected_bodies_do_not_reset_the_next_authenticated_keepalive_request(self) -> None:
+        for index in range(40):
+            with self.subTest(iteration=index):
+                self.compare(
+                    "PUT",
+                    "/v1/recordings/missing/chunks/0",
+                    content=make_wav(),
+                    headers={
+                        "Content-Type": "audio/wav",
+                        "X-Chunk-Started-At": "invalid-synthetic-header",
+                    },
+                )
+                self.compare(
+                    "POST",
+                    "/v1/dictation/refine",
+                    json={"text": "synthetic"},
+                    headers={"Content-Encoding": "gzip"},
+                )
+                self.compare("GET", "/v1/transcripts")
 
 
 if __name__ == "__main__":

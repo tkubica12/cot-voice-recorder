@@ -130,7 +130,14 @@ async fn trace(mut request: Request, next: Next) -> Response {
         });
     let dictation = request.uri().path().starts_with("/v1/dictation/");
     request.extensions_mut().insert(id.clone());
+    // Keep an unread rejected body alive until the response's connection policy is decided.
+    let (request, pending) = crate::request_body::PendingBody::retain(request);
     let mut response = next.run(request).await;
+    if !pending.finish().await {
+        response
+            .headers_mut()
+            .insert("Connection", HeaderValue::from_static("close"));
+    }
     if let Ok(header) = HeaderValue::from_str(&id) {
         response.headers_mut().insert("X-Request-Id", header);
     }

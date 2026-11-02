@@ -2589,3 +2589,33 @@ ostatnich scenaru prosly. Pricinu jeste overit a opravit, ne ignorovat/
 maskovat retry nebo oznacit cely runner zaPASS. Nadale jde o otevrenou
 regresi/transportni acceptance mezeru. Zadne nove physical/account
 opravneni tento cloud inkrement nepouziva.
+
+### Rejected HTTP body: bounded connection lifecycle oprava
+
+Windows actual HTTP parity opakovane vracelo10053 u nasledujiciho
+keepalive requestu po invalid headers/encoding s neprectenym body.
+Handlers odmitaji metadata pred body zamerne; validation precedence
+se NESMI opravit tim, ze se nejdrive neomezene nacte audio.
+Novy internal request-body owner proto drzi puvodni HTTP stream
+az do rozhodnuti connection policy po handler response. Uz zpracovane
+body nema dalsi drain/copy. Pouze unread body s explicitnim
+Content-Length<=64KiB muze byt bounded drain do100ms; chyby/limit/
+timeout nebo unknown/velka delka znamenaji viditelny redacted log
+a Connection:close, nikoli novy request/retry nebo jiny HTTP problem.
+Unknown-length malformed-upload test stale NEPOLLNE audio stream
+a nadale vraci vsechny puvodni422 fields ve stejnem poradi.
+
+Direct error/lifecycle/headers parity a novy40x sequence
+invalid-upload -> encoded-refine -> authenticated-GET prosly bez
+retry/resetu; original pred-fix failed runs zustavaji priznanou
+evidenci, ne backend-acceptance PASS. Dalsi unit cases proveruji
+spotrebovane/male/stalled/oversized unread body a100ms bound.
+99 cloud regular tests/Clippy feature graph a4 external HTTP groups
+lokalne PASS; cela workspace/CI a actual Azure profile nasleduji.
+
+Prvni ecd7fdc backendCI41521519937 skoncil na Ruff import classification,
+nikoli na emulator performance: local command z repo root nerozdelil
+measure_backend a voice_recorder jako backend working-directory CI.
+Specific TYPE_CHECKING import boundary je opravena a exact backend
+CI cwd lint/format prosel. Predchozi failedCI se neprepisuje jakoPASS;
+novy actual profile musi probehnout v naslednem commitu.

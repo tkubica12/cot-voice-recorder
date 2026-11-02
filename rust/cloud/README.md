@@ -200,6 +200,15 @@ Neither it nor the older memory profile measures actual Azure IAM/private
 networking, deployed ACA readiness, model inference, worker/cleanup/realtime
 latency or a cutover. The production image does not enable the fixture feature.
 
+Rejected HTTP request bodies now have an explicit bounded connection lifecycle.
+Small unread bodies with a known length may drain up to 64 KiB/100 ms after the
+handler chooses its original problem response. Unknown-length, oversized, failed
+or stalled unread bodies close the connection without unbounded polling.
+Already-consumed requests incur no second read. Validation order, status/problem
+shapes, bearer checks and audio bounds remain unchanged; no retry masks a reset.
+Direct Windows keepalive tests cover repeated rejected-body/following-request
+sequences as well as the existing no-poll invalid-metadata invariant.
+
 The loopback-only server uses real RS256 verification against an in-memory
 generated-key local JWKS. The probe compares live Rust HTTP status/headers,
 structured errors, lifecycle and audit/history shapes with the actual FastAPI

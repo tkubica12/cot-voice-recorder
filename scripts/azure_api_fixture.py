@@ -22,6 +22,7 @@ from azure.storage.queue import QueueClient, TextBase64DecodePolicy, TextBase64E
 
 if TYPE_CHECKING:
     from measure_backend import Authority, Fixture
+
     from voice_recorder.config import Settings
     from voice_recorder.realtime.protocols import RealtimeGateway
     from voice_recorder.services.context import ServiceContext

@@ -119,6 +119,7 @@ async fn invalid_upload_metadata_collects_all_fields_before_polling_the_audio_bo
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(response.headers()["Connection"], "close");
     let payload = json_body(response).await;
     let fields: Vec<_> = payload["errors"]
         .as_array()
