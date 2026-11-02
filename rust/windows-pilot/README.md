@@ -162,6 +162,37 @@ checks the clipboard sequence captured inside the publication lock and sends
 exactly one Ctrl+V without Enter. Stale/cancelled/auth-invalidated UI jobs cannot
 paste. The overlay does not activate a foreground app. Real paste has not been tested.
 
+The native overlay now follows the actual WPF `Views\DictationIndicator.cs`:
+440x112 DIPs, a dark rounded-17 panel, the half-opacity OrangeRed recording dot
+and blue finishing dot, Segoe UI 12/14 text, a three-line/20-DIP preview with
+character ellipsis, and primary-work-area bottom-center placement. The elapsed
+clock and growing preview update live; confirmed-but-unpasted completion dismisses
+once after 900ms. Pending/error recovery is not mislabelled as that completed
+state. The layered window is click-through/nonactivating, and drawing resources
+are lazy and released on hide. Direct2D software rendering/DirectWrite replace
+the old default-font bordered STATIC rectangle; there is no WebView.
+
+The opt-in ignored `dictation_ui::visual_tests::manual_reference_overlay_visual_fixture`
+is **visual-only**, not a microphone, shortcut, account, clipboard or paste test.
+It requires a fresh working directory containing only `overlay-fixture.json`
+with `{"scope":"native-overlay-visual-fixture"}`. It uses the real UI/controller
+presentation path, process-only per-monitor-v2 awareness and five bounded synthetic
+states, exports its own Pbgra32 rasters at 96/144/192 DPI, and closes normally.
+Launch visible fixtures through the approved app UI tooling, not a foreground
+shell workaround. No Run/paste control exists in this fixture.
+
+The existing C# ClientFixture's `--overlay-visual-fixture <absolute-root>` requires
+the analogous `reference-overlay-visual-fixture` marker. It creates only the actual
+original `DictationIndicator`, **not** AppHost/device/authentication composition.
+`scripts\compare_overlay_visuals.py` exports these owned rasters as PNG comparisons
+and checks exact frame semantics and completion; it does not capture the desktop,
+claim pixel identity or replace visual review, actual monitor/DPI transition,
+screen-reader, performance or physical dictation acceptance.
+
+The tray also retains the original Open(default)/Copy latest/Pause notifications/
+Exit menu, live connection tooltip and double-click/keyboard/balloon activation.
+Reconnect remains in the main window rather than adding a different tray popup.
+
 Polishing remains opt-in, single physical request, bounded rolling windows and
 literal unique nonoverlapping edits against the original text. Stop freezes late
 responses and leaves unprocessed tails raw; failures stay in diagnostics/History.

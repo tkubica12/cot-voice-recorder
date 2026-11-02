@@ -17,8 +17,10 @@ popupy a stavove indikace maji vychazet ze skutecneho puvodniho WPF
 UI/source vzhledem, interakcemi a zivymi/reaktivnimi prechody, ne z noveho
 domysleneho stylu. Settings smi byt designove jine. Funkcni/data parity
 bez vizualniho overeni tuto novou akceptacni podminku NESPLNUJE.
-Aktualni native vizualni parity zatim neni prokazana; je nutny audit a
-oprava proti referenci. Drive namerene performance dukazy nad puvodnimi
+Original icon resource parity a prvni actual native/WPF reactive-overlay
+vizualni srovnani jsou nyni overene v nize vymezenem synthetic scope.
+Cele UI/physical/DPI/accessibility acceptance tim neni uzavrene.
+Drive namerene performance dukazy nad puvodnimi
 binary se neprepisuji na budoucni UI zmeny; relevantni regrese se zmeri
 znovu v odpovidajicim scope.
 
@@ -30,15 +32,15 @@ znovu v odpovidajicim scope.
 | Audio jadro a C#/Python parity | Implementovano a overeno |
 | Zdroj externich crates | crates.io vyslovne schvalene jako projektova vyjimka |
 | Nativni Windows zaklad | Tray, izolovana instance a DPAPI implementovany; lokalni self-test a C# DPAPI parity prosly |
-| Mereni Windows klienta | Full-runtime signed-out30+30 startu a3 paired301-point idle serie overeny; current p95Rust496.905ms a meanprivate3.484MiB, vsechny scoped cile PASS |
+| Mereni Windows klienta | Predchozi f572599 full-runtime signed-out30+30/3 paired301-point serie PASS: p95Rust496.905ms/meanprivate3.484MiB; original-icon/overlay build vyzaduje nove mereni |
 | Microphone readiness | Jeden actual240ms probe a samostatne schvalena30+30 paired serie prosly; first-PCM p95Rust80.75% C#baseline, bez audio souboru/uploadu |
 | Engine longevity | Actual3600s synthetic PCM/real50min rotation,115200000 exact bytes; worst idle growth1.645MiB<10MiB, engine-only PASS |
-| CI nativniho inkrementu | Current Windows/Linux, MSRV1.85, non-root container a pure telemetry guards prosly; nejde o schvaleni real-world cutoveru |
-| OAuth/token-store/PubSub klient | Native sign-in/out, realtime/history/clipboard a explicit installed-mode wiring implementovany; skutecny Google/clipboard E2E zbyva |
+| CI nativniho inkrementu | 8cd3a26 original-icon Windows/Linux/MSRV1.85/container CI PASS; nove reactive-overlay CI zatim zbyva, nejde o real-world cutover |
+| OAuth/token-store/PubSub klient | Native flow implementovany; samostatny live Google auth-only/local-signout a assisted manual clipboard probe PASS, full signed-in backend/automatic dictation paste stale chybi |
 | Diktovani/recovery UI | Native microphone/hotkeys/overlay/paste controller, oba enginy, journal, polishing a outbox implementovany; real-world a rozsahlejsi fault/E2E akceptace zbyva |
 | History cache | JSON/retence/200 entries, atomicka persistence, native list/text a manual copy latest/selected/original implementovany; C# file parity overena |
 | Settings a instalator | Vsechna C# JSON pole, nativni Settings/History/Recovery, DPI fonty, per-user autostart a kompatibilni IPC; installer sestaven, nebyl instalovan |
-| Original icon a podobne zive popup UI | Original ICO embedded v EXE a DPI window/tray/Settings, source installer/shortcut wiring a byte-exact resource parity overeny; actual reactive overlay/vizualni akceptace stale chybi |
+| Original icon a podobne zive popup UI | Original ICO embedded/byte-exact a DPI sizes overeny; actual WPF-matched reactive overlay,15 raster pairs/96-144-192DPI a actual144DPI noactivate/900ms proof PASS ve synthetic scope; dalsi UI/physical/accessibility akceptace zbyva |
 | Rust cloud API, worker, cleanup | API/AI/PubSub/live relay, processors/finalization/queue loop, cleanup, bootstrap/CLI a source-only image wiring implementovany; image CI proslo, uplna akceptace zbyva |
 | Hosting | Klasicka ACA zustava: API, KEDA queue worker a hourly cleanup Job; Express byl uzivatelem zrusen |
 
@@ -2017,3 +2019,58 @@ se na tyto budouci zmeny neprepisuje.
 
 da1c6eb Windows/Linux/MSRV/container RustCI41441386069 a predchozi
 fa27f86 RustCI41439973457 nasledne PASS. Cela migrace zustava nehotova.
+
+### Puvodni zivy dictation popup: actual native/WPF vizualni srovnani
+
+Plain bordered STATIC byl nahrazen native layered/click-through cardem
+pres Direct2D software/DirectWrite, bez WebView. Geometrie, rounded17,
+dark(30,30,34),8px OrangeRed dot pri recording opacity0.5 a blue dot
+pri finishing,12/14px Segoe UI,20px line spacing, placeholder a primary
+work-area bottom-center18 vychazeji primo z original DictationIndicator.
+Clock mm:ss a rostouci preview se aktualizuji; po genuine final completion
+bez paste se jednou zobrazi "Saved - paste skipped" s FINAL confirmed
+preview a900ms dismiss. Pending/recovery/error nejsou timto completed
+stavem maskovany; zustava bezpecny tray warning a Recovery bez autopaste.
+Escape latch, delivery cancellation/focus/clipboard guards zustaly zachovany.
+
+Actual original C# DictationIndicator a actual Rust UI renderer byly
+spusteny pouze v bounded visual-only fixturech s fresh marked roots,
+bez AppHost/device/account/backend/clipboard/hotkeys/paste portu.
+15 paired rasters pokryva empty/growing/wrapped-ellipsis/finishing/saved
+stavy pri96/144/192DPI. Visual review odhalil1DIP preview baseline rozdil
+a final-word wrapping pred ellipsis; obe odchylky opraveny proti actual
+WPF rasteru, nikoli novym stylem. Posledni comparison report
+overlay-visual-8cd3a26-c/comparison/comparison.json
+SHA25651d3e946451026d51270e99e3f09c4d15e8b3a1b8b6180eac2c4e76b2cab1f52.
+Obrazky jsou velmi podobne, ne pixel-identicke: zbyvaji drobne rozdily
+font/edge antialiasingu a v96DPI muze last fitting character pred
+ellipsis vyjit jinak mezi WPF a DirectWrite.
+
+Prvni native preview fixture nepovolil process DPI awareness; jeho
+virtualized96DPI placement se NEVYDAVA za product DPI proof. Opraveny
+fixture nastavi stejny process-only per-monitor-v2 jako actual klient.
+Nasledne5 native stavu maji actual144DPI bounds[870,1333,1530,1501],
+stejne jako reference; kazdy Present zachoval foreground, terminal
+se skryl po900ms a neobnovil se na nezmenenem statusu.
+Vsechny own visual procesy byly overene ukoncene a own HWND zaniklo.
+Ani tento proof nezastupuje real monitor-switch, keyboard/screen-reader
+nebo automatic guarded-paste akceptaci. Stary paste case se NEOTEVREL.
+
+Drawing surface/font resources jsou lazy a na hide se uvolni; nezmeneny
+frame se znovu nerenderuje. Samostatny nonvisible graphics-only regression
+po20 warmup a1000 render/hide cyklech: GDI handles10 ->10,17.56s.
+Neni to hodinovy workload ani memory acceptance. Native source stale
+neaktivuje okno a pri physical-disabled composition nema clipboard cestu.
+Tray popup je original Open(default)/Copy latest/Pause notifications/Exit
+s live realtime tooltipem, checked pause, empty-copy disabled a puvodni
+double-click/keyboard/balloon aktivaci; Reconnect zustava v main Settings.
+
+249 regular workspace Rust tests/fmt/Clippy/release,7 release platform
+parity groups a3 pure raster export guard groups PASS. Native icon test
+nove overuje actual bitmap rozmery pro obe velikosti pri96/120/144/192/
+288DPI, nejen shodu WM_GETICON handle. C# visual-only reference build ma
+0 warnings/errors. Installer opet pouze SESTAVEN, nikdy instalovan:
+SHA256d6602eaf0877ae3afeb1b44aeadc83475974c47aa662baac61805a63e1050f3e.
+8cd3a26 full RustCI41451827924 PASS vcetne actual MSRV1.85 noveho
+winresource graph. Reactive-overlay CI a nove post-UI startup/idle
+mereni teprve nasleduji; stara f572599 cisla se na novy build neprepisuji.

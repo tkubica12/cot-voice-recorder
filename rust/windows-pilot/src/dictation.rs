@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tokio::sync::{mpsc, oneshot, watch};
 use voiceprompt_client_protocol::api::ApiClient;
@@ -33,6 +33,7 @@ pub enum DictationStage {
     Recording,
     Finishing,
     Saved,
+    PasteSkipped,
     Pasted,
     Failed,
 }
@@ -43,6 +44,8 @@ pub struct DictationView {
     pub mode: DictationMode,
     pub stage: DictationStage,
     pub preview: String,
+    pub recording_started: Option<Instant>,
+    pub issue: Option<&'static str>,
 }
 
 impl Default for DictationView {
@@ -52,6 +55,8 @@ impl Default for DictationView {
             mode: DictationMode::Hold,
             stage: DictationStage::Idle,
             preview: String::new(),
+            recording_started: None,
+            issue: None,
         }
     }
 }
@@ -169,18 +174,36 @@ fn update(
     preview: String,
 ) {
     status.send_modify(|status| {
+        let previous = &status.dictation;
+        let same_generation = previous.generation == generation;
+        let recording_started = if same_generation {
+            previous.recording_started
+        } else {
+            None
+        };
+        let issue = if same_generation {
+            previous.issue
+        } else {
+            None
+        };
         status.dictation = DictationView {
             generation,
             mode,
             stage,
             preview,
+            recording_started: recording_started
+                .or_else(|| (stage == DictationStage::Recording).then(Instant::now)),
+            issue,
         }
     });
 }
 
 fn report(status: &watch::Sender<ClientStatus>, issue: &'static str) {
     eprintln!("Dictation: {issue}");
-    status.send_modify(|status| status.issue = Some(issue));
+    status.send_modify(|status| {
+        status.issue = Some(issue);
+        status.dictation.issue = Some(issue);
+    });
 }
 
 async fn load_session(
@@ -644,6 +667,7 @@ impl DictationHost {
                                     }
                                 }
                                 if recovering.is_none() {
+                                    let final_preview = preview_tail(&text);
                                     let cancel = Arc::new(AtomicBool::new(false));
                                     let (reply, result) = oneshot::channel();
                                     let request = UiRequest::Deliver {
@@ -677,9 +701,9 @@ impl DictationHost {
                                         if delivered == Some(DeliveryResult::Pasted) {
                                             DictationStage::Pasted
                                         } else {
-                                            DictationStage::Saved
+                                            DictationStage::PasteSkipped
                                         },
-                                        progress.borrow().preview.clone(),
+                                        final_preview,
                                     );
                                 } else {
                                     update(

@@ -67,10 +67,31 @@ impl AppIcons {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use windows::Win32::Graphics::Gdi::{BITMAP, DeleteObject, GetObjectW};
     use windows::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DestroyWindow, WINDOW_EX_STYLE, WM_GETICON, WS_POPUP,
     };
     use windows::core::w;
+
+    fn size(icon: HICON) -> (i32, i32) {
+        let mut info = windows::Win32::UI::WindowsAndMessaging::ICONINFO::default();
+        unsafe { windows::Win32::UI::WindowsAndMessaging::GetIconInfo(icon, &mut info) }.unwrap();
+        let mut bitmap = BITMAP::default();
+        let read = unsafe {
+            GetObjectW(
+                info.hbmColor.into(),
+                std::mem::size_of::<BITMAP>() as i32,
+                Some((&mut bitmap as *mut BITMAP).cast()),
+            )
+        };
+        for handle in [info.hbmColor, info.hbmMask] {
+            if !handle.0.is_null() {
+                assert!(unsafe { DeleteObject(handle.into()) }.as_bool());
+            }
+        }
+        assert!(read > 0);
+        (bitmap.bmWidth, bitmap.bmHeight)
+    }
 
     #[test]
     fn original_icons_bind_both_window_sizes_at_each_supported_scale() {
@@ -95,6 +116,19 @@ mod tests {
         for dpi in [96, 120, 144, 192, 288] {
             let icons = AppIcons::for_dpi(dpi).unwrap();
             icons.apply(window);
+            assert_eq!(
+                size(icons.small),
+                (
+                    unsafe { GetSystemMetricsForDpi(SM_CXSMICON, dpi) },
+                    unsafe { GetSystemMetricsForDpi(SM_CYSMICON, dpi) }
+                )
+            );
+            assert_eq!(
+                size(icons.large),
+                (unsafe { GetSystemMetricsForDpi(SM_CXICON, dpi) }, unsafe {
+                    GetSystemMetricsForDpi(SM_CYICON, dpi)
+                })
+            );
             for (size, expected) in [(ICON_SMALL, icons.small), (ICON_BIG, icons.large)] {
                 let actual =
                     unsafe { SendMessageW(window, WM_GETICON, Some(WPARAM(size as usize)), None) };

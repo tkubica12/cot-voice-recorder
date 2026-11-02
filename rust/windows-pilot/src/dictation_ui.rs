@@ -7,18 +7,23 @@ use voiceprompt_client_protocol::delivery::{ClipboardError, DeliveryPolicy};
 use voiceprompt_client_protocol::settings::AppSettings;
 use voiceprompt_client_protocol::state::AuthState;
 use windows::Win32::Foundation::HWND;
-use windows::Win32::Graphics::Gdi::{DEFAULT_GUI_FONT, GetStockObject};
+#[cfg(test)]
 use windows::Win32::UI::WindowsAndMessaging::*;
-use windows::core::{PCWSTR, w};
 
 use crate::NativeError;
 use crate::client::{ClientCommand, ClientStatus};
 use crate::desktop::{DesktopGuard, Target};
 use crate::dictation::{DeliveryResult, DictationCommand, DictationMode, DictationStage};
+use crate::dictation_overlay::{Frame, Overlay};
 use crate::hotkeys::{HotkeyEvent, Hotkeys};
 
+#[cfg(test)]
+#[path = "dictation_ui_visual_tests.rs"]
+mod visual_tests;
+
 pub(crate) struct DictationUi {
-    overlay: HWND,
+    overlay: Overlay,
+    owner: HWND,
     shortcuts: Hotkeys,
     commands: mpsc::Sender<ClientCommand>,
     policy: Arc<DeliveryPolicy>,
@@ -27,14 +32,14 @@ pub(crate) struct DictationUi {
     busy: bool,
     guard: Option<DesktopGuard>,
     paste: Option<Paste>,
-    last_overlay: String,
+    last_stage: Option<(u64, DictationStage)>,
+    dismiss_at: Option<Instant>,
     last_shortcuts: Option<(bool, String, String)>,
     enabled: bool,
     stop_requested: bool,
     cancel_requested: bool,
     shortcut_error: bool,
     staged_settings: Option<AuthState>,
-    font: crate::dpi::DpiFont,
 }
 
 struct Paste {
@@ -61,6 +66,8 @@ impl DictationUi {
         self.busy = false;
         self.cancel_requested = false;
         self.guard = None;
+        self.last_stage = None;
+        self.dismiss_at = None;
         if let Some(paste) = self.paste.take() {
             paste.cancelled.store(true, Ordering::Release);
         }
@@ -73,37 +80,10 @@ impl DictationUi {
         policy: Arc<DeliveryPolicy>,
         enabled: bool,
     ) -> Result<Self, NativeError> {
-        let font = crate::dpi::DpiFont::create(crate::dpi::window_dpi(owner))?;
-        let overlay = unsafe {
-            CreateWindowExW(
-                WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
-                w!("STATIC"),
-                PCWSTR::null(),
-                WS_POPUP | WS_BORDER,
-                0,
-                0,
-                440,
-                120,
-                None,
-                None,
-                None,
-                None,
-            )
-        }
-        .map_err(|error| NativeError::Api("Create nonactivating dictation overlay", error))?;
-        unsafe {
-            let _ = SendMessageW(
-                overlay,
-                WM_SETFONT,
-                Some(windows::Win32::Foundation::WPARAM(
-                    GetStockObject(DEFAULT_GUI_FONT).0 as usize,
-                )),
-                None,
-            );
-        }
-        font.apply(overlay);
+        let overlay = Overlay::new()?;
         Ok(Self {
             overlay,
+            owner,
             shortcuts: Hotkeys::new(owner),
             commands,
             policy,
@@ -112,14 +92,14 @@ impl DictationUi {
             busy: false,
             guard: None,
             paste: None,
-            last_overlay: String::new(),
+            last_stage: None,
+            dismiss_at: None,
             last_shortcuts: None,
             enabled,
             stop_requested: false,
             cancel_requested: false,
             shortcut_error: false,
             staged_settings: None,
-            font,
         })
     }
 
@@ -186,6 +166,8 @@ impl DictationUi {
         self.busy = true;
         self.stop_requested = false;
         self.cancel_requested = false;
+        self.dismiss_at = None;
+        self.hide();
         self.guard = if mode == DictationMode::Hold {
             Some(DesktopGuard::new(Target::capture()))
         } else {
@@ -201,7 +183,6 @@ impl DictationUi {
             self.policy.set_dictation_busy(false);
             return Err(error);
         }
-        self.show("Starting microphone...\r\n\r\nEsc discards")?;
         Ok(())
     }
 
@@ -267,9 +248,17 @@ impl DictationUi {
             self.shortcuts.enable_cancel(false)?;
             return Err(error);
         }
-        self.show("Recovering saved audio...\r\nNo automatic paste. Esc cancels recovery.")
+        self.show(
+            "Recovering saved audio - Esc cancels",
+            "No automatic paste.",
+            false,
+        )
     }
     pub fn poll(&mut self, status: &ClientStatus) -> Result<(), NativeError> {
+        self.poll_at(status, Instant::now())
+    }
+
+    fn poll_at(&mut self, status: &ClientStatus, now: Instant) -> Result<(), NativeError> {
         if self.shortcuts.needs_poll() {
             if let Some(event) = self.shortcuts.poll() {
                 self.event(event)?;
@@ -282,12 +271,17 @@ impl DictationUi {
         }
         if self.generation == status.dictation.generation {
             let view = &status.dictation;
+            let changed = self.last_stage != Some((view.generation, view.stage));
+            if changed {
+                self.dismiss_at = None;
+            }
             if self.cancel_requested {
                 if matches!(
                     view.stage,
                     DictationStage::Idle
                         | DictationStage::Pasted
                         | DictationStage::Saved
+                        | DictationStage::PasteSkipped
                         | DictationStage::Failed
                 ) {
                     self.busy = false;
@@ -296,18 +290,32 @@ impl DictationUi {
                 self.hide();
             } else {
                 match view.stage {
+                    DictationStage::Starting => self.hide(),
                     DictationStage::Recording => {
-                        let title = if view.mode == DictationMode::Hold {
-                            "Listening - release to finish"
+                        let elapsed = view
+                            .recording_started
+                            .map_or(Duration::ZERO, |start| now.saturating_duration_since(start))
+                            .as_secs();
+                        let instruction = if view.mode == DictationMode::Hold {
+                            "release to finish"
                         } else {
-                            "Listening - press toggle to finish"
+                            "press toggle to finish"
                         };
-                        self.show(&format!("{title}\r\n{}\r\nEsc discards", view.preview))?;
+                        self.show(
+                            &format!(
+                                "Listening {:02}:{:02} - {instruction}",
+                                elapsed / 60,
+                                elapsed % 60
+                            ),
+                            &view.preview,
+                            true,
+                        )?;
                     }
-                    DictationStage::Finishing => self.show(&format!(
-                        "Finishing transcription - Esc discards\r\n{}",
-                        view.preview
-                    ))?,
+                    DictationStage::Finishing => self.show(
+                        "Finishing transcription - Esc discards",
+                        &view.preview,
+                        false,
+                    )?,
                     DictationStage::Idle | DictationStage::Pasted => {
                         self.busy = false;
                         self.shortcuts.enable_cancel(false)?;
@@ -316,13 +324,37 @@ impl DictationUi {
                     DictationStage::Saved | DictationStage::Failed => {
                         self.busy = false;
                         self.shortcuts.enable_cancel(false)?;
-                        self.show(if view.stage == DictationStage::Failed {
-                        "Dictation failed - open Settings or Recovery.\r\nNothing was pasted."
-                    } else { "Saved - paste skipped or transcription pending.\r\nUse History or Recovery." })?;
+                        self.hide();
                     }
-                    _ => {}
+                    DictationStage::PasteSkipped => {
+                        self.busy = false;
+                        self.shortcuts.enable_cancel(false)?;
+                        if changed {
+                            self.show("Saved - paste skipped", &view.preview, false)?;
+                            self.dismiss_at = Some(now + Duration::from_millis(900));
+                        }
+                    }
+                }
+                if changed
+                    && matches!(
+                        view.stage,
+                        DictationStage::Idle
+                            | DictationStage::Saved
+                            | DictationStage::Failed
+                            | DictationStage::PasteSkipped
+                            | DictationStage::Pasted
+                    )
+                {
+                    if let Some(issue) = view.issue {
+                        crate::platform::notify(self.owner, "VoicePrompt", issue, true)?;
+                    }
                 }
             }
+            self.last_stage = Some((view.generation, view.stage));
+        }
+        if self.dismiss_at.is_some_and(|deadline| now >= deadline) {
+            self.hide();
+            self.dismiss_at = None;
         }
         self.process_paste()?;
         Ok(())
@@ -376,7 +408,7 @@ impl DictationUi {
                 return Ok(());
             }
             paste.attempts += 1;
-            match crate::clipboard::write_with_sequence(self.overlay, &paste.text) {
+            match crate::clipboard::write_with_sequence(self.overlay.window, &paste.text) {
                 Ok(sequence) => {
                     paste.copied = true;
                     paste.until = Instant::now() + Duration::from_millis(750);
@@ -431,39 +463,12 @@ impl DictationUi {
             && self.policy.authenticated()
     }
 
-    fn show(&mut self, text: &str) -> Result<(), NativeError> {
-        if self.last_overlay != text {
-            let encoded: Vec<_> = text.encode_utf16().chain(std::iter::once(0)).collect();
-            unsafe { SetWindowTextW(self.overlay, PCWSTR(encoded.as_ptr())) }
-                .map_err(|error| NativeError::Api("Update dictation overlay", error))?;
-            self.last_overlay = text.into();
-        }
-        let dpi = crate::dpi::window_dpi(self.overlay);
-        if self.font.dpi != dpi {
-            self.font = crate::dpi::DpiFont::create(dpi)?;
-            self.font.apply(self.overlay);
-        }
-        let scale = |value: i32| value * dpi as i32 / 96;
-        let x = (unsafe { GetSystemMetrics(SM_CXSCREEN) } - scale(460)).max(0);
-        let y = (unsafe { GetSystemMetrics(SM_CYSCREEN) } - scale(200)).max(0);
-        unsafe {
-            SetWindowPos(
-                self.overlay,
-                Some(HWND_TOPMOST),
-                x,
-                y,
-                scale(440),
-                scale(120),
-                SWP_NOACTIVATE | SWP_SHOWWINDOW,
-            )
-        }
-        .map_err(|error| NativeError::Api("Show nonactivating dictation overlay", error))
+    fn show(&mut self, header: &str, preview: &str, recording: bool) -> Result<(), NativeError> {
+        self.overlay.present(Frame::new(header, preview, recording))
     }
 
-    pub fn hide(&self) {
-        unsafe {
-            let _ = ShowWindow(self.overlay, SW_HIDE);
-        }
+    pub fn hide(&mut self) {
+        self.overlay.hide();
     }
 
     pub fn shortcut_error(&self) -> bool {
@@ -471,7 +476,10 @@ impl DictationUi {
     }
 
     pub fn fast_poll(&self) -> bool {
-        self.busy || self.paste.is_some() || self.shortcuts.needs_poll()
+        self.busy
+            || self.paste.is_some()
+            || self.dismiss_at.is_some()
+            || self.shortcuts.needs_poll()
     }
 }
 
@@ -479,9 +487,6 @@ impl Drop for DictationUi {
     fn drop(&mut self) {
         if let Some(paste) = self.paste.take() {
             paste.cancelled.store(true, Ordering::Release);
-        }
-        if let Err(error) = unsafe { DestroyWindow(self.overlay) } {
-            eprintln!("Overlay cleanup failed: {error}");
         }
     }
 }
@@ -515,7 +520,7 @@ mod tests {
         ui.validate_settings(&AppSettings::default(), AuthState::SignedIn, false)
             .unwrap();
         assert!(ui.staged_settings.is_none());
-        assert!(!unsafe { IsWindowVisible(ui.overlay) }.as_bool());
+        assert!(!unsafe { IsWindowVisible(ui.overlay.window) }.as_bool());
         assert_eq!(unsafe { GetForegroundWindow() }, previous_focus);
     }
 
@@ -531,6 +536,73 @@ mod tests {
         ui.generation = 17;
         ui.busy = true;
         (ui, receiver)
+    }
+
+    #[test]
+    fn live_clock_preview_and_single_terminal_dismiss_match_reference_without_physical_ports() {
+        let (mut ui, _commands) = pending_ui();
+        ui.overlay.suppress_presentation = true;
+        let mut status = ClientStatus::default();
+        let started = Instant::now();
+        status.dictation.generation = 17;
+        status.dictation.recording_started = Some(started);
+        status.dictation.stage = DictationStage::Recording;
+        ui.poll_at(&status, started).unwrap();
+        assert_eq!(
+            ui.overlay.fixture_frame().unwrap().header,
+            "Listening 00:00 - release to finish"
+        );
+        assert_eq!(
+            ui.overlay.fixture_frame().unwrap().preview,
+            crate::dictation_overlay::PLACEHOLDER
+        );
+        status.dictation.mode = DictationMode::Toggle;
+        status.dictation.preview = "Synthetic growing preview".into();
+        ui.poll_at(&status, started + Duration::from_secs(61))
+            .unwrap();
+        assert_eq!(
+            ui.overlay.fixture_frame().unwrap().header,
+            "Listening 01:01 - press toggle to finish"
+        );
+        assert_eq!(
+            ui.overlay.fixture_frame().unwrap().preview,
+            "Synthetic growing preview"
+        );
+        assert!(ui.overlay.fixture_frame().unwrap().recording);
+        status.dictation.stage = DictationStage::Finishing;
+        ui.poll_at(&status, started + Duration::from_secs(62))
+            .unwrap();
+        assert_eq!(
+            ui.overlay.fixture_frame().unwrap().header,
+            "Finishing transcription - Esc discards"
+        );
+        assert!(!ui.overlay.fixture_frame().unwrap().recording);
+        status.dictation.stage = DictationStage::PasteSkipped;
+        status.dictation.preview = "Only confirmed final text.".into();
+        let terminal = started + Duration::from_secs(63);
+        ui.poll_at(&status, terminal).unwrap();
+        assert_eq!(
+            ui.overlay.fixture_frame().unwrap().header,
+            "Saved - paste skipped"
+        );
+        assert_eq!(
+            ui.overlay.fixture_frame().unwrap().preview,
+            "Only confirmed final text."
+        );
+        ui.poll_at(&status, terminal + Duration::from_millis(899))
+            .unwrap();
+        assert!(ui.overlay.fixture_frame().is_some());
+        ui.poll_at(&status, terminal + Duration::from_millis(900))
+            .unwrap();
+        assert!(ui.overlay.fixture_frame().is_none());
+        ui.poll_at(&status, terminal + Duration::from_secs(5))
+            .unwrap();
+        assert!(
+            ui.overlay.fixture_frame().is_none(),
+            "Unchanged terminal state must not rearm the dismiss timer."
+        );
+        assert!(ui.paste.is_none());
+        assert!(!ui.enabled);
     }
 
     #[test]
@@ -575,7 +647,7 @@ mod tests {
         status.dictation.generation = 17;
         status.dictation.stage = DictationStage::Finishing;
         ui.poll(&status).unwrap();
-        assert!(!unsafe { IsWindowVisible(ui.overlay) }.as_bool());
+        assert!(!unsafe { IsWindowVisible(ui.overlay.window) }.as_bool());
         assert!(ui.busy);
         status.dictation.stage = DictationStage::Idle;
         ui.poll(&status).unwrap();
@@ -595,7 +667,7 @@ mod tests {
         );
         assert!(ui.paste.is_some());
         assert!(!ui.can_process_paste(ui.paste.as_ref().unwrap()));
-        assert!(!unsafe { IsWindowVisible(ui.overlay) }.as_bool());
+        assert!(!unsafe { IsWindowVisible(ui.overlay.window) }.as_bool());
         drop(ui);
         assert!(result.blocking_recv().is_err());
     }

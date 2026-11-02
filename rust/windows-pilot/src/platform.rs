@@ -33,8 +33,8 @@ use windows::Win32::UI::HiDpi::{
 use windows::Win32::UI::Input::KeyboardAndMouse::EnableWindow;
 use windows::Win32::UI::Shell::{
     NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIIF_INFO, NIIF_WARNING, NIM_ADD,
-    NIM_DELETE, NIM_MODIFY, NIM_SETFOCUS, NIM_SETVERSION, NIN_SELECT, NOTIFYICON_VERSION_4,
-    NOTIFYICONDATAW, Shell_NotifyIconW,
+    NIM_DELETE, NIM_MODIFY, NIM_SETFOCUS, NIM_SETVERSION, NIN_BALLOONUSERCLICK, NIN_SELECT,
+    NINF_KEY, NOTIFYICON_VERSION_4, NOTIFYICONDATAW, Shell_NotifyIconW,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::{PCWSTR, w};
@@ -43,6 +43,7 @@ const ENTROPY: &[u8] = b"VoicePrompt.DPAPI.v1";
 const MAX_PLAINTEXT_BYTES: usize = 16 * 1024 * 1024;
 const MAX_CIPHERTEXT_BYTES: usize = MAX_PLAINTEXT_BYTES + 64 * 1024;
 const TRAY_MESSAGE: u32 = WM_APP + 1;
+const TRAY_KEY_SELECT: u32 = NIN_SELECT | NINF_KEY;
 const ACTIVATE_MESSAGE: u32 = WM_APP + 2;
 const QUIT_MESSAGE: u32 = WM_APP + 3;
 const FIXTURE_READY_MESSAGE: u32 = WM_APP + 4;
@@ -692,9 +693,7 @@ impl Tray {
             hIcon: icon,
             ..Default::default()
         };
-        let tip: Vec<u16> = "VoicePrompt - Rust migration client"
-            .encode_utf16()
-            .collect();
+        let tip: Vec<u16> = "VoicePrompt".encode_utf16().collect();
         data.szTip[..tip.len()].copy_from_slice(&tip);
         api(
             "Shell_NotifyIconW (add)",
@@ -740,38 +739,74 @@ fn show_status(hwnd: HWND) {
     }
 }
 
-fn context_menu(hwnd: HWND) -> Result<(), NativeError> {
+thread_local! {
+    static TRAY_STATUS_TEXT: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+fn tray_status_text(status: &crate::client::ClientStatus) -> String {
+    let state = if status.auth == voiceprompt_client_protocol::state::AuthState::NotConfigured {
+        "Not configured".into()
+    } else {
+        format!("{:?}", status.realtime)
+    };
+    format!("VoicePrompt \u{2014} {state}")
+}
+
+fn update_tray_status(hwnd: HWND, status: &crate::client::ClientStatus) -> Result<(), NativeError> {
+    let text = tray_status_text(status);
+    if TRAY_STATUS_TEXT.with(|slot| slot.borrow().as_ref() == Some(&text)) {
+        return Ok(());
+    }
+    let mut data = NOTIFYICONDATAW {
+        cbSize: size_of::<NOTIFYICONDATAW>() as u32,
+        hWnd: hwnd,
+        uID: 1,
+        uFlags: NIF_TIP | NIF_SHOWTIP,
+        ..Default::default()
+    };
+    let tip: Vec<_> = text.encode_utf16().take(63).collect();
+    data.szTip[..tip.len()].copy_from_slice(&tip);
+    api(
+        "Update live VoicePrompt tray status",
+        unsafe { Shell_NotifyIconW(NIM_MODIFY, &data) }.ok(),
+    )?;
+    TRAY_STATUS_TEXT.with(|slot| *slot.borrow_mut() = Some(text));
+    Ok(())
+}
+
+fn context_menu_items(
+    connected: bool,
+    paused: bool,
+    can_copy: bool,
+) -> Result<OwnedMenu, NativeError> {
     let menu = OwnedMenu(api("CreatePopupMenu", unsafe { CreatePopupMenu() })?);
-    let mut position = POINT::default();
     unsafe {
         api(
             "AppendMenuW",
-            AppendMenuW(menu.0, MF_STRING, MENU_OPEN, w!("Open VoicePrompt")),
+            AppendMenuW(menu.0, MF_STRING, MENU_OPEN, w!("&Open")),
         )?;
-        let connected = CLIENT.with(|client| client.borrow().is_some());
+        api(
+            "Set default Open tray action",
+            SetMenuDefaultItem(menu.0, MENU_OPEN as u32, 0),
+        )?;
         if connected {
             api(
                 "AppendMenuW",
-                AppendMenuW(menu.0, MF_STRING, COPY_LATEST, w!("Copy latest")),
+                AppendMenuW(
+                    menu.0,
+                    MF_STRING | if can_copy { MF_ENABLED } else { MF_GRAYED },
+                    COPY_LATEST,
+                    w!("&Copy latest"),
+                ),
             )?;
-            let paused = CLIENT.with(|client| {
-                client
-                    .borrow()
-                    .as_ref()
-                    .is_some_and(|host| host.policy.paused())
-            });
             api(
                 "AppendMenuW",
                 AppendMenuW(
                     menu.0,
                     MF_STRING | if paused { MF_CHECKED } else { MF_UNCHECKED },
                     PAUSE,
-                    w!("Pause automatic copy and notifications"),
+                    w!("&Pause notifications"),
                 ),
-            )?;
-            api(
-                "AppendMenuW",
-                AppendMenuW(menu.0, MF_STRING, RECONNECT, w!("Reconnect")),
             )?;
         }
         api(
@@ -780,8 +815,35 @@ fn context_menu(hwnd: HWND) -> Result<(), NativeError> {
         )?;
         api(
             "AppendMenuW",
-            AppendMenuW(menu.0, MF_STRING, MENU_EXIT, w!("Exit VoicePrompt")),
+            AppendMenuW(menu.0, MF_STRING, MENU_EXIT, w!("E&xit")),
         )?;
+    }
+    Ok(menu)
+}
+
+fn tray_activation(event: u32) -> bool {
+    matches!(
+        event,
+        WM_LBUTTONDBLCLK | TRAY_KEY_SELECT | NIN_BALLOONUSERCLICK
+    )
+}
+
+fn context_menu(hwnd: HWND) -> Result<(), NativeError> {
+    let (connected, paused, can_copy) = CLIENT.with(|client| {
+        client
+            .borrow()
+            .as_ref()
+            .map_or((false, false, false), |host| {
+                (
+                    true,
+                    host.policy.paused(),
+                    host.clipboard_enabled && !host.status.borrow().history.is_empty(),
+                )
+            })
+    });
+    let menu = context_menu_items(connected, paused, can_copy)?;
+    let mut position = POINT::default();
+    unsafe {
         api("GetCursorPos", GetCursorPos(&mut position))?;
         if !SetForegroundWindow(hwnd).as_bool() {
             return Err(NativeError::Verification(
@@ -988,7 +1050,12 @@ fn set_text(hwnd: HWND, id: usize, text: &str) -> Result<(), NativeError> {
     })
 }
 
-fn notify(hwnd: HWND, title: &str, body: &str, warning: bool) -> Result<(), NativeError> {
+pub(crate) fn notify(
+    hwnd: HWND,
+    title: &str,
+    body: &str,
+    warning: bool,
+) -> Result<(), NativeError> {
     let mut data = NOTIFYICONDATAW {
         cbSize: size_of::<NOTIFYICONDATAW>() as u32,
         hWnd: hwnd,
@@ -997,6 +1064,7 @@ fn notify(hwnd: HWND, title: &str, body: &str, warning: bool) -> Result<(), Nati
         dwInfoFlags: if warning { NIIF_WARNING } else { NIIF_INFO },
         ..Default::default()
     };
+    data.Anonymous.uTimeout = 4000;
     let title = wide(OsStr::new(title))?;
     let body = wide(OsStr::new(body))?;
     if title.len() > data.szInfoTitle.len() || body.len() > data.szInfo.len() {
@@ -1130,6 +1198,7 @@ fn refresh_client_ui(hwnd: HWND) -> Result<(), NativeError> {
             return Ok(());
         }
         let status = host.status.borrow_and_update().clone();
+        update_tray_status(hwnd, &status)?;
         let shortcut_error = DICTATION_UI.with(|slot| slot.borrow().as_ref().is_some_and(|ui| ui.shortcut_error()));
         let recovery_changed = UI_RECOVERY.with(|slot| slot.borrow().as_ref().is_none_or(|old| !std::sync::Arc::ptr_eq(old, &status.recovery)));
         if recovery_changed {
@@ -1553,7 +1622,7 @@ fn dispatch(
         TRAY_MESSAGE => {
             match lparam.0 as u32 & 0xffff {
                 WM_CONTEXTMENU => context_menu(hwnd)?,
-                WM_LBUTTONDBLCLK | NIN_SELECT | 1025 => show_status(hwnd),
+                event if tray_activation(event) => show_status(hwnd),
                 _ => {}
             }
             Ok(LRESULT(0))
@@ -2016,6 +2085,62 @@ pub fn run_tray(options: TrayOptions) -> Result<(), NativeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tray_matches_reference_menu_state_and_default_action_without_showing_ui() {
+        for paused in [false, true] {
+            for can_copy in [false, true] {
+                let menu = context_menu_items(true, paused, can_copy).unwrap();
+                unsafe {
+                    assert_eq!(GetMenuItemCount(Some(menu.0)), 5);
+                    assert_eq!(
+                        GetMenuDefaultItem(menu.0, 0, GET_MENU_DEFAULT_ITEM_FLAGS::default()),
+                        MENU_OPEN as u32
+                    );
+                    assert_eq!(GetMenuItemID(menu.0, 4), MENU_EXIT as u32);
+                    assert_eq!(
+                        GetMenuState(menu.0, COPY_LATEST as u32, MF_BYCOMMAND) & MF_GRAYED.0 == 0,
+                        can_copy
+                    );
+                    assert_eq!(
+                        GetMenuState(menu.0, PAUSE as u32, MF_BYCOMMAND) & MF_CHECKED.0 != 0,
+                        paused
+                    );
+                    let mut label = [0; 64];
+                    let length =
+                        GetMenuStringW(menu.0, PAUSE as u32, Some(&mut label), MF_BYCOMMAND);
+                    assert_eq!(
+                        String::from_utf16(&label[..length as usize]).unwrap(),
+                        "&Pause notifications"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn live_tray_status_and_activation_match_reference_without_input() {
+        let mut status = crate::client::ClientStatus::default();
+        assert_eq!(
+            tray_status_text(&status),
+            "VoicePrompt \u{2014} Not configured"
+        );
+        status.auth = voiceprompt_client_protocol::state::AuthState::SignedIn;
+        status.realtime = voiceprompt_client_protocol::websocket::RealtimeState::Reconnecting;
+        assert_eq!(
+            tray_status_text(&status),
+            "VoicePrompt \u{2014} Reconnecting"
+        );
+        assert!(tray_status_text(&status).encode_utf16().count() <= 63);
+        assert!(tray_activation(WM_LBUTTONDBLCLK));
+        assert!(tray_activation(TRAY_KEY_SELECT));
+        assert!(tray_activation(NIN_BALLOONUSERCLICK));
+        assert!(
+            !tray_activation(NIN_SELECT),
+            "A single click must not open the window."
+        );
+        assert!(!tray_activation(WM_CONTEXTMENU));
+    }
 
     #[test]
     fn dpapi_roundtrips_synthetic_data_and_rejects_corruption() {

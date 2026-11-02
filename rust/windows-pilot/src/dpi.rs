@@ -42,16 +42,6 @@ impl DpiFont {
         }
         Ok(Self { handle: font, dpi })
     }
-    pub fn apply(&self, window: HWND) {
-        unsafe {
-            let _ = SendMessageW(
-                window,
-                WM_SETFONT,
-                Some(WPARAM(self.handle.0 as usize)),
-                Some(LPARAM(1)),
-            );
-        }
-    }
     pub fn apply_children(&self, window: HWND) -> Result<(), NativeError> {
         unsafe extern "system" fn apply(window: HWND, parameter: LPARAM) -> windows::core::BOOL {
             unsafe {

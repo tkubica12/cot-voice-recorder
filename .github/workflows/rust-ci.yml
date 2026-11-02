@@ -13,6 +13,8 @@ on:
       - "scripts/measure_synthetic_capture.py"
       - "scripts/tests/test_synthetic_capture.py"
       - "scripts/tests/test_full_client_fixture.py"
+      - "scripts/compare_overlay_visuals.py"
+      - "scripts/tests/test_overlay_visuals.py"
       - ".cargo/config.toml"
       - "scripts/Measure-VoicePromptProcess.ps1"
       - "scripts/Measure-RustNativePilot.ps1"
@@ -31,6 +33,8 @@ on:
       - "scripts/measure_synthetic_capture.py"
       - "scripts/tests/test_synthetic_capture.py"
       - "scripts/tests/test_full_client_fixture.py"
+      - "scripts/compare_overlay_visuals.py"
+      - "scripts/tests/test_overlay_visuals.py"
       - ".cargo/config.toml"
       - "scripts/Measure-VoicePromptProcess.ps1"
       - "scripts/Measure-RustNativePilot.ps1"
@@ -101,6 +105,10 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --offline --locked --all-targets -- -D warnings
 
+      - name: Pure overlay raster export safeguards
+        working-directory: .
+        run: python -m unittest discover -s scripts/tests -p test_overlay_visuals.py -v
+
       - name: Build audio contract probe
         run: cargo build --offline --locked --release --example audio_contract
 
@@ -119,6 +127,13 @@ jobs:
       - name: Build native Windows pilot
         if: runner.os == 'Windows'
         run: cargo build --offline --locked --release -p voiceprompt-windows-pilot
+
+      - name: Synthetic overlay render-hide resource regression without visible UI
+        if: runner.os == 'Windows'
+        run: >
+          cargo test --offline --locked -p voiceprompt-windows-pilot --lib
+          dictation_overlay::tests::synthetic_render_hide_cycles_release_all_gdi_handles
+          -- --exact --ignored --nocapture --test-threads=1
 
       - name: Build existing C# DPAPI reference
         if: runner.os == 'Windows'
