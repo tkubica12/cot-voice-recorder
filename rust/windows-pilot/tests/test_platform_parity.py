@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import uuid
 from pathlib import Path
@@ -25,17 +26,37 @@ def native(mode: str, data: bytes) -> subprocess.CompletedProcess[bytes]:
     )
 
 
-def reference(mode: str, data: bytes) -> subprocess.CompletedProcess[bytes]:
+def reference(
+    mode: str, data: bytes, *, timeout_seconds: int = 20
+) -> subprocess.CompletedProcess[bytes]:
     return subprocess.run(
         ["dotnet", str(REFERENCE), mode],
         input=data,
         capture_output=True,
-        timeout=20,
+        timeout=timeout_seconds,
         check=False,
     )
 
 
 class PlatformParityTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        started = time.perf_counter()
+        prepared = reference(
+            "protect",
+            b"VoicePrompt synthetic CLR-DPAPI fixture preparation",
+            timeout_seconds=60,
+        )
+        if prepared.returncode or not prepared.stdout:
+            raise RuntimeError(
+                f"C# CLR/DPAPI fixture preparation failed: {prepared.stderr!r}"
+            )
+        print(
+            f"C# functional CLR/DPAPI preparation: "
+            f"{(time.perf_counter() - started) * 1000:.3f}ms; bounded60s, operation budget20s",
+            flush=True,
+        )
+
     def test_installed_modes_reject_fixture_flags_before_personal_startup(self) -> None:
         with tempfile.TemporaryDirectory(
             prefix="VoicePrompt-installed-plan-"

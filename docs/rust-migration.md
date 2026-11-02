@@ -1755,3 +1755,25 @@ pred workerem. Devet native storage tests a strict Clippy/fmt proslo.
 Reference je [Put Blob required headers](https://learn.microsoft.com/rest/api/storageservices/put-blob).
 Nove actual worker/cleanup E2E se musi dokoncit v CI, prvni failed run
 zustava zachovany a neni vydavan za completed proof.
+
+5060751 actual worker/cleanup rerun ted prosel:
+[backend-ci41430865698](https://github.com/tkubica12/cot-voice-recorder/actions/runs/41430865698).
+Azure SDK precetl skutecne completed recording/delivery flag, transcript
+body a typed dates s presnym48h rozdilem. Native scenar overil presne
+model WAV bytes, settled replay bez dalsiho model request a active-Blob-lease
+cleanup fencing v realnem emulator service. Empty-lock create/get/delete
+tak neprosel jen HTTP mockem, ale i pres HTTPS Azurite. Report
+azure-worker-5060751/azure-rest-contract.json SHA256
+5dac41fecf0cd3dc4745b1a8b40e756e2612863ef03535fb1bb4af8b6e7799b1
+byl nezavisle overen spolu s typed native proof, server status logs a absenci
+privatekey/failure artifacts. Model/PubSub zustaly synthetic loopback;
+real Azure/IAM/private endpoints a paid AI to neprokazuje.
+
+Nezavisly5ed21b6 Windows parity job jednou prekrocil20s pri uplne prvnim
+cold C#reference unprotect(empty); pozdejsi bidirectional DPAPI cases prosly.
+Exact OS/CLR pricina bez startup trace neni prokazana. Funkcni priprava
+reference je nyni samostatny bounded60s protect nad znamymi synthetic bytes
+s elapsed logem; dalsi crypto operations stale maji20s. Zadny runtime,
+parity expectation nebo mereny startup/performance threshold se nemenil.
+Sest actual DPAPI/IPC/startup parity groups proslo lokalne, bez osobnich
+token/history/recovery nebo dalsiho microphone/clipboard testu.
