@@ -43,9 +43,7 @@ class HttpParityTests(unittest.TestCase):
 
         def encoded(value: int) -> str:
             return (
-                base64.urlsafe_b64encode(
-                    value.to_bytes((value.bit_length() + 7) // 8, "big")
-                )
+                base64.urlsafe_b64encode(value.to_bytes((value.bit_length() + 7) // 8, "big"))
                 .decode()
                 .rstrip("=")
             )
@@ -76,9 +74,7 @@ class HttpParityTests(unittest.TestCase):
                 pass
 
         cls.authority = ThreadingHTTPServer(("127.0.0.1", 0), Authority)
-        cls.authority_thread = threading.Thread(
-            target=cls.authority.serve_forever, daemon=True
-        )
+        cls.authority_thread = threading.Thread(target=cls.authority.serve_forever, daemon=True)
         cls.authority_thread.start()
         cls.addClassCleanup(cls.authority.server_close)
         cls.addClassCleanup(cls.authority.shutdown)
@@ -344,6 +340,40 @@ class HttpParityTests(unittest.TestCase):
         self.assertEqual(set(actual.json()), set(expected.json()))
         actual, expected = self.compare("GET", "/v1/transcripts")
         self.assertEqual(len(actual.json()["items"]), len(expected.json()["items"]))
+
+    def test_optional_upload_headers_have_the_same_structured_errors_and_validation_order(
+        self,
+    ) -> None:
+        for field in [
+            "X-Chunk-Duration-Ms",
+            "X-Chunk-Overlap-Ms",
+            "X-Chunk-Started-At",
+            "X-Audio-Start-Sample",
+            "X-Audio-Sample-Count",
+        ]:
+            for content in [make_wav(), b"invalid synthetic wav"]:
+                with self.subTest(field=field, valid_wav=content.startswith(b"RIFF")):
+                    self.compare(
+                        "PUT",
+                        "/v1/recordings/missing/chunks/0",
+                        content=content,
+                        headers={
+                            "Content-Type": "audio/wav",
+                            "Content-Digest": compute_content_digest(content),
+                            field: "invalid-synthetic-header",
+                        },
+                    )
+        self.compare(
+            "PUT",
+            "/v1/recordings/missing/chunks/not-an-index",
+            content=b"synthetic invalid body",
+            headers={
+                "Content-Type": "text/plain",
+                "X-Chunk-Duration-Ms": "bad",
+                "X-Chunk-Started-At": "bad",
+                "X-Audio-Sample-Count": "bad",
+            },
+        )
 
 
 if __name__ == "__main__":

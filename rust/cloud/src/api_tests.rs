@@ -95,6 +95,49 @@ async fn client_disconnect_after_finish_releases_upstream_and_capacity_without_w
     server.abort();
 }
 
+#[tokio::test]
+async fn invalid_upload_metadata_collects_all_fields_before_polling_the_audio_body() {
+    let polled = Arc::new(AtomicBool::new(false));
+    let observed = polled.clone();
+    let stream = futures_util::stream::once(async move {
+        observed.store(true, Ordering::Release);
+        Ok::<_, std::io::Error>(axum::body::Bytes::from_static(b"synthetic unread audio"))
+    });
+    let response = router(fixture())
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PUT")
+                .uri("/v1/recordings/missing/chunks/not-an-index")
+                .header("Authorization", "Bearer synthetic-token")
+                .header("Content-Type", "text/plain")
+                .header("X-Chunk-Duration-Ms", "bad")
+                .header("X-Chunk-Started-At", "bad")
+                .header("X-Audio-Sample-Count", "bad")
+                .body(Body::from_stream(stream))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let payload = json_body(response).await;
+    let fields: Vec<_> = payload["errors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|error| error["field"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        fields,
+        [
+            "path.index",
+            "header.X-Chunk-Duration-Ms",
+            "header.X-Chunk-Started-At",
+            "header.X-Audio-Sample-Count",
+        ]
+    );
+    assert!(!polled.load(Ordering::Acquire));
+}
+
 fn fixture() -> ApiState {
     ApiState {
         services: Arc::new(crate::services::tests::fixture()),

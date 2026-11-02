@@ -1305,3 +1305,19 @@ startup policy bez OAuth/network/device/autostart. Proslo229 regularnich Windows
 Rust testu a strict fmt/Clippy; jeden hour fixture zustava ignored v beznem runu.
 Frozen09bc686 real-hour engine-only mereni bezi oddelene a neni temito buildy
 meneno. Zadne z teto coverage nenahrazuje stale nepovolene fyzicke testy.
+
+## Upload header error parity
+
+Rozsirena actual FastAPI versus Rust HTTP matice odhalila10 konkretnich
+odchylek: invalid optional upload headers vracely chybejici RFC9457 errors
+nebo byly prekryte driv provedenou WAV/body validaci. Nyni Rust sesbira path
+index a vsech pet optional header errors ve stejnem poradi jako framework
+reference, zachova header alias ve field path a vrati je pred ctenim body.
+Validni upload data/queue/storage flow zustava stejne.
+
+Deset single-header + WAV/bad-body pripadu a combined invalid path/headers/
+media pripad prosly proti actual referenci. Dalsi prime Axum test pouziva
+sledovany streaming body a prokazuje, ze pri chybne metadata validaci nebyl
+ani pollnuty. Proslo230 regularnich Windows Rust testu (95 cloud library),
+strict fmt/Clippy a vsechny tri externi HTTP parity groups. Nejde o tvrzeni
+uplne shody vsech Pydantic coercions nebo kazdeho message wording.

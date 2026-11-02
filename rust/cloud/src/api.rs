@@ -306,6 +306,25 @@ async fn json_fields<T: serde::de::DeserializeOwned>(
     }
     fields_json(&read_body(request, maximum).await?)
 }
+fn optional_header<T>(
+    headers: &HeaderMap,
+    name: &str,
+    message: &str,
+    parse: impl FnOnce(&str) -> Option<T>,
+) -> Result<Option<T>, Problem> {
+    headers
+        .get(name)
+        .map(|value| {
+            value.to_str().ok().and_then(parse).ok_or_else(|| {
+                Problem::field(
+                    "One or more fields are invalid.",
+                    format!("header.{name}"),
+                    message,
+                )
+            })
+        })
+        .transpose()
+}
 async fn not_found(request: Request) -> Response {
     failure(&request, Problem::not_found("Not Found"))
 }
@@ -388,7 +407,50 @@ async fn upload(
                 "path.index",
                 "Input should be a valid integer",
             )
-        })?;
+        });
+        let integer_error = "Input should be a valid integer, unable to parse string as an integer";
+        let duration_ms =
+            optional_header(&headers, "X-Chunk-Duration-Ms", integer_error, |value| {
+                value.trim().parse::<u32>().ok()
+            });
+        let overlap_ms = optional_header(&headers, "X-Chunk-Overlap-Ms", integer_error, |value| {
+            value.trim().parse::<u32>().ok()
+        });
+        let started_at = optional_header(
+            &headers,
+            "X-Chunk-Started-At",
+            "Input should be a valid datetime",
+            |value| {
+                time::OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339)
+                    .ok()
+            },
+        );
+        let start_sample =
+            optional_header(&headers, "X-Audio-Start-Sample", integer_error, |value| {
+                value.trim().parse::<u64>().ok()
+            });
+        let sample_count =
+            optional_header(&headers, "X-Audio-Sample-Count", integer_error, |value| {
+                value.trim().parse::<u64>().ok()
+            });
+        let errors: Vec<_> = [
+            index.as_ref().err(),
+            duration_ms.as_ref().err(),
+            overlap_ms.as_ref().err(),
+            started_at.as_ref().err(),
+            start_sample.as_ref().err(),
+            sample_count.as_ref().err(),
+        ]
+        .into_iter()
+        .flatten()
+        .flat_map(|problem| problem.errors.iter().cloned())
+        .collect();
+        if !errors.is_empty() {
+            let mut problem = Problem::validation("One or more fields are invalid.");
+            problem.errors = errors;
+            return Err(problem);
+        }
+        let index = index?;
         if index < 0 {
             return Err(Problem::field(
                 "Chunk index must be non-negative.",
@@ -407,43 +469,15 @@ async fn upload(
         )?;
         voiceprompt_core::wav::validate_capture_wav(&wav, voiceprompt_core::wav::ParseMode::Legacy)
             .map_err(crate::audio::wav_problem)?;
-        let integer = |name: &str| -> Result<Option<u64>, Problem> {
-            headers
-                .get(name)
-                .map(|value| {
-                    value
-                        .to_str()
-                        .map_err(|_| Problem::validation("Invalid chunk metadata."))?
-                        .parse::<u64>()
-                        .map_err(|_| Problem::validation("Invalid chunk metadata."))
-                })
-                .transpose()
-        };
-        let started_at = headers
-            .get("X-Chunk-Started-At")
-            .map(|value| {
-                let value = value
-                    .to_str()
-                    .map_err(|_| Problem::validation("Invalid chunk timestamp."))?;
-                time::OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339)
-                    .map_err(|_| Problem::validation("Invalid chunk timestamp."))
-            })
-            .transpose()?;
         let upload = ChunkUpload {
             index,
             wav,
             checksum,
-            duration_ms: integer("X-Chunk-Duration-Ms")?
-                .map(u32::try_from)
-                .transpose()
-                .map_err(|_| Problem::validation("Invalid chunk duration."))?,
-            overlap_ms: integer("X-Chunk-Overlap-Ms")?
-                .map(u32::try_from)
-                .transpose()
-                .map_err(|_| Problem::validation("Invalid chunk overlap."))?,
-            started_at,
-            start_sample: integer("X-Audio-Start-Sample")?,
-            sample_count: integer("X-Audio-Sample-Count")?,
+            duration_ms: duration_ms?,
+            overlap_ms: overlap_ms?,
+            started_at: started_at?,
+            start_sample: start_sample?,
+            sample_count: sample_count?,
         };
         let (accepted, status) = state.services.upload(&id, upload).await?;
         Ok::<_, Problem>(
