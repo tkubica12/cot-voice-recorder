@@ -132,58 +132,84 @@ impl Services {
             return Ok(previous);
         }
         let path = format!("windows-dictation/{id}/{digest}.json");
-        self.blobs
-            .put(
+        match self
+            .blobs
+            .put_if_absent(
                 &self.config.transcript_container,
                 &path,
                 bytes,
                 "application/json",
             )
             .await
-            .map_err(storage)?;
-        let transcript = domain::Transcript {
-            transcript_id: id.clone(),
-            recording_id: id.clone(),
-            preview: preview(&data.text, 140),
-            language: data.language,
-            refine_model: if data.polished {
-                self.config.refinement.clone()
-            } else {
-                "none".into()
-            },
-            completed_at: completed,
-            expires_at: expires,
-            character_count: data.text.chars().count(),
-            body_path: path,
-            source: "windows_dictation".into(),
-            transcribe_model: Some(data.transcribe_model),
-            content_digest: Some(digest.clone()),
-            etag: String::new(),
-        };
-        let saved = match self
-            .repository
-            .insert(
-                &self.config.transcripts_table,
-                transcript.entity().map_err(codec)?,
-            )
-            .await
         {
-            Ok(entity) => domain::Transcript::from_entity(&entity).map_err(codec)?,
-            Err(StorageError::Conflict) => {
-                let entity = self
-                    .repository
-                    .get(&self.config.transcripts_table, "transcript", &id)
-                    .await
-                    .map_err(storage)?
-                    .ok_or_else(Problem::internal)?;
-                domain::Transcript::from_entity(&entity).map_err(codec)?
-            }
+            Ok(()) | Err(StorageError::Conflict) => {}
             Err(error) => return Err(storage(error)),
-        };
-        if saved.content_digest.as_deref() != Some(digest.as_str()) {
-            return Err(Problem::conflict("A different dictation won publication."));
         }
-        Ok(saved)
+        let lease = crate::ports::BlobLease::existing(
+            self.blobs.clone(),
+            self.config.transcript_container.clone(),
+            path.clone(),
+        )
+        .await
+        .map_err(|error| match error {
+            StorageError::Conflict => {
+                Problem::unavailable("Audit publication is currently owned by another operation.")
+            }
+            error => storage(error),
+        })?;
+        let result = async {
+            let transcript = domain::Transcript {
+                transcript_id: id.clone(),
+                recording_id: id.clone(),
+                preview: preview(&data.text, 140),
+                language: data.language,
+                refine_model: if data.polished {
+                    self.config.refinement.clone()
+                } else {
+                    "none".into()
+                },
+                completed_at: completed,
+                expires_at: expires,
+                character_count: data.text.chars().count(),
+                body_path: path,
+                source: "windows_dictation".into(),
+                transcribe_model: Some(data.transcribe_model),
+                content_digest: Some(digest.clone()),
+                etag: String::new(),
+            };
+            let saved = match self
+                .repository
+                .insert(
+                    &self.config.transcripts_table,
+                    transcript.entity().map_err(codec)?,
+                )
+                .await
+            {
+                Ok(entity) => domain::Transcript::from_entity(&entity).map_err(codec)?,
+                Err(StorageError::Conflict) => {
+                    let entity = self
+                        .repository
+                        .get(&self.config.transcripts_table, "transcript", &id)
+                        .await
+                        .map_err(storage)?
+                        .ok_or_else(Problem::internal)?;
+                    domain::Transcript::from_entity(&entity).map_err(codec)?
+                }
+                Err(error) => return Err(storage(error)),
+            };
+            if saved.content_digest.as_deref() != Some(digest.as_str()) {
+                return Err(Problem::conflict("A different dictation won publication."));
+            }
+            Ok(saved)
+        }
+        .await;
+        if let Err(error) = lease.release().await {
+            eprintln!("Audit publication lease release failed: {error}");
+            if result.is_ok() {
+                return Err(storage(error));
+            }
+        }
+        result
     }
 
     pub fn new(

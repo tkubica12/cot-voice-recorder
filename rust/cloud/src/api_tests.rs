@@ -29,6 +29,7 @@ fn fixture() -> ApiState {
         )),
         streaming: None,
         stream_slots: Arc::new(tokio::sync::Semaphore::new(4)),
+        shutdown: tokio::sync::watch::channel(false).0,
     }
 }
 async fn json_body(response: Response) -> serde_json::Value {
@@ -639,6 +640,72 @@ async fn missing_confirmation_times_out_at_thirty_seconds_without_done_or_provis
         panic!("Missing failed-stream close");
     };
     assert_eq!(u16::from(close.code), 1011);
+    tokio::time::timeout(std::time::Duration::from_secs(5), upstream)
+        .await
+        .unwrap()
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while slots.available_permits() != 4 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    identity.finish().await;
+    server.abort();
+}
+
+#[tokio::test]
+async fn server_shutdown_cancels_an_active_websocket_without_confirming_partial_audio_or_leaking_capacity()
+ {
+    use crate::http_fixture::{config, serve, token};
+    use futures_util::SinkExt;
+    use tokio_tungstenite::tungstenite::Message;
+    let identity = serve(vec![token()]).await;
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let endpoint: url::Url = format!("http://{}/", listener.local_addr().unwrap())
+        .parse()
+        .unwrap();
+    let mut state = fixture();
+    let shutdown = state.shutdown.clone();
+    let slots = state.stream_slots.clone();
+    state.streaming = Some(Arc::new(
+        crate::streaming::MaiStreamingProvider::new(
+            &config(&endpoint),
+            Arc::new(crate::identity::ManagedIdentity::fixture(
+                identity.endpoint.as_str(),
+            )),
+            "fixture-model",
+        )
+        .unwrap(),
+    ));
+    let upstream = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+        socket
+            .send(Message::Text(r#"{"type":"session.created"}"#.into()))
+            .await
+            .unwrap();
+        socket.next().await.unwrap().unwrap();
+        socket
+            .send(Message::Text(r#"{"type":"session.updated"}"#.into()))
+            .await
+            .unwrap();
+        while let Some(Ok(message)) = socket.next().await {
+            if matches!(message, Message::Close(_)) {
+                break;
+            }
+        }
+    });
+    let (endpoint, server) = serve_ws(state).await;
+    let mut socket = connect_ws(&endpoint, "", true).await;
+    assert_eq!(ws_json(&mut socket).await["type"], "ready");
+    shutdown.send_replace(true);
+    let message = ws_json(&mut socket).await;
+    assert_eq!(message["type"], "error");
+    assert_eq!(message["code"], "stream_failed");
     tokio::time::timeout(std::time::Duration::from_secs(5), upstream)
         .await
         .unwrap()

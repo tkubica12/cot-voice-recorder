@@ -21,7 +21,7 @@ zustat u klasicke ACA; na ACA Express se v teto migraci neprechazi.
 | Diktovani/recovery UI | Native microphone/hotkeys/overlay/paste controller, oba enginy, journal, polishing a outbox implementovany; real-world a rozsahlejsi fault/E2E akceptace zbyva |
 | History cache | JSON/retence/200 entries, atomicka persistence, native list/text a manual copy latest/selected/original implementovany; C# file parity overena |
 | Settings a instalator | Vsechna C# JSON pole, nativni Settings/History/Recovery, DPI fonty, per-user autostart a kompatibilni IPC; installer sestaven, nebyl instalovan |
-| Rust cloud API, worker, cleanup | API/AI/PubSub/live relay, continuous/legacy processors, canonical finalization a queue loop implementovany; cleanup, bootstrap/container a uplna akceptace zbyvaji |
+| Rust cloud API, worker, cleanup | API/AI/PubSub/live relay, processors/finalization/queue loop, cleanup, bootstrap/CLI a source-only image wiring implementovany; image CI a uplna akceptace zbyvaji |
 | Hosting | Klasicka ACA zustava: API, KEDA queue worker a hourly cleanup Job; Express byl uzivatelem zrusen |
 
 Nativni zaklad neni kompletni klient. Jeho rychlost a pamet nelze porovnat
@@ -865,3 +865,48 @@ work a permanent notification retry, vcetne zachovani continuous audia do ACK.
 Predchozi 6fcb639 ma potvrzene Windows/Linux Rust CI a backend CI.
 Cleanup/orphans/active-work fencing, production bootstrap, source-only ACA image
 wiring a uplna acceptance jsou stale aktivni casti celeho cile.
+
+## Cleanup, cloud CLI a source-only container wiring
+
+Cleanup ma bounded/plne paginated Blob enumeration a conditional metadata.
+Expired recording se nejprve CAS-fencuje do terminalniho cleanup stavu se
+starym updated_at, aby preruseny uklid mohl resume; metadata se nemazou pred
+resource cleanup. Active continuous lease, legacy audio Blob lease nebo
+finalizer lock zablokuje cely recording cleanup. Audio/chunk/raw/index deletes
+nesmi implicitne obejit vlastnictvi. Po uspesnem uklidu se maze i cleanup lock.
+
+Expired audit a orphan envelopes zachovavaji fixed completion expiry; invalid
+orphan pouziva visible error a modified_at retention. Audit publication drzi
+vlastni envelope lease do Table publikace. Cerstve unpublished audio se
+nepovazuje automaticky za orphan jen kvuli dosud chybejici recording row.
+To je zamerne konzervativni ochrana proti aktivnimu uploaderu; neznamy orphan
+je odstranen po 48h objektove retenci, nikoli okamzite jako ve starsim cleanup.
+Failed continuous source zustava do retence, ne do pouheho model failure.
+
+Cloud binary voice-recorder ma api/worker/cleanup/check-config, finite HTTP/WS
+probes, SIGTERM/Ctrl+C a explicitni startup errors. Startup necreateuje Azure
+resources; kontroluje existujici containers, queue a Table metadata pres UAMI.
+Readiness je true az po probes a bindu; shutdown ji shazuje a zrusi live relay
+bez potvrzeni provisional textu. check-config je bez network/identity resource
+volani; production fake/default-missing config failuje.
+
+Source-only Rust Dockerfile zachovava api8000/worker/cleanup entrypoint, nonroot
+UID10001 a OpenSSL CA trust. Dockerfile-specific ignore posila jen Rust source/
+manifests a schvaleny Cargo config, ne user state, .git, target, C# outputs nebo
+credentials. infra/deploy.ps1 ma explicitni BackendRuntime Rust switch, ale
+Python zustava default. ACA API min1, KEDA worker min0, hourly Job, VNet/PE/UAMI
+topologie se nemeni. Deployment script byl pouze parsovan, ne spusten.
+
+Proslo 201 workspace testu (83 cloud library +2 CLI), locked release/fmt/Clippy
+a existing Python audit/relay/SDK parity po publication-lease zmene.
+Cleanup testy overuji expired/idempotent deletes, tri druhy active ownership,
+fixed audit expiry/orphans a ochranu fresh audio. Prime REST testy overuji plnou
+pagination/repeated-marker failure i read-only startup probes. Zadne Azure,
+placene AI, real user state nebo resource changes se nekonaly.
+
+Docker CLI29.6.2 je pritomny a rust:1.99-slim-bookworm manifest existuje, ale
+lokalni daemon neni dostupny. Build image a nonroot/CLI guards jsou proto
+zapojeny do CI bez push/deploy a zatim nejsou vydavany za uspesne overene.
+Predchozi 885ca36 ma potvrzene Windows/Linux Rust i backend CI.
+Full HTTP/OpenAPI/config edge parity, distributed fault cases, feature-matched
+performance, MSRV a lidska real-world akceptace stale zbyvaji.

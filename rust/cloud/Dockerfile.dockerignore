@@ -1,0 +1,10 @@
+**
+!rust/
+!rust/**
+!.cargo/
+!.cargo/config.toml
+rust/target/
+rust/**/bin/
+rust/**/obj/
+rust/**/__pycache__/
+rust/**/*.pyc

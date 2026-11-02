@@ -36,6 +36,7 @@ pub struct ApiState {
     refinement_pool: Arc<crate::ai::ExecutionPool>,
     pub streaming: Option<Arc<crate::streaming::MaiStreamingProvider>>,
     stream_slots: Arc<tokio::sync::Semaphore>,
+    pub shutdown: tokio::sync::watch::Sender<bool>,
 }
 impl ApiState {
     pub fn new(services: Arc<Services>, verifier: Arc<GoogleVerifier>) -> Self {
@@ -55,6 +56,7 @@ impl ApiState {
             )),
             streaming: None,
             stream_slots: Arc::new(tokio::sync::Semaphore::new(4)),
+            shutdown: tokio::sync::watch::channel(false).0,
         }
     }
     async fn user(&self, headers: &HeaderMap) -> Result<User, Problem> {
@@ -685,7 +687,9 @@ async fn stream(
                 reject_stream(&mut client, "invalid_request", 4400).await;
                 return;
             };
-            let result = async {
+            let mut shutdown=state.shutdown.subscribe();
+            let result={
+            let work = async {
                 let mut upstream = provider.session(&language).await?;
                 let result = async {
                     crate::relay::send(
@@ -700,8 +704,11 @@ async fn stream(
                     eprintln!("MAI streaming close was interrupted.");
                 }
                 result
+            };
+            if *shutdown.borrow(){Err(Problem::unavailable("Server is shutting down."))}else{
+                tokio::select!{result=work=>result,_=shutdown.changed()=>Err(Problem::unavailable("Server is shutting down."))}
             }
-            .await;
+            };
             if result.is_err() {
                 eprintln!("Dictation stream failed; saved audio remains replayable.");
                 if crate::relay::send(

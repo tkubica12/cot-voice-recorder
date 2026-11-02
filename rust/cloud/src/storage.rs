@@ -22,6 +22,11 @@ pub struct Entity {
     pub values: serde_json::Map<String, serde_json::Value>,
     pub etag: String,
 }
+#[derive(Clone)]
+pub struct BlobEntry {
+    pub name: String,
+    pub modified_at: time::OffsetDateTime,
+}
 
 #[derive(Clone)]
 pub struct QueueMessage {
@@ -56,6 +61,35 @@ fn invalid() -> StorageError {
 }
 
 impl AzureStorage {
+    pub async fn check_resources(&self, config: &Config) -> Result<()> {
+        for container in [
+            &config.audio_container,
+            &config.transcript_container,
+            &config.raw_container,
+        ] {
+            let mut uri = Self::uri(&self.blob, &[container])?;
+            uri.query_pairs_mut().append_pair("restype", "container");
+            self.request(Method::HEAD, uri, None, &[]).await?;
+        }
+        let mut uri = Self::uri(&self.queue, &[&config.queue])?;
+        uri.query_pairs_mut().append_pair("comp", "metadata");
+        self.request(Method::GET, uri, None, &[]).await?;
+        for table in [
+            &config.recordings_table,
+            &config.chunks_table,
+            &config.transcripts_table,
+        ] {
+            let uri = Self::uri(&self.table, &[&format!("Tables('{}')", odata_key(table)?)])?;
+            self.request(
+                Method::GET,
+                uri,
+                None,
+                &[("Accept", "application/json;odata=nometadata")],
+            )
+            .await?;
+        }
+        Ok(())
+    }
     pub fn new(
         config: &Config,
         credential: Arc<ManagedIdentity>,
@@ -199,6 +233,75 @@ impl AzureStorage {
         )
         .await?;
         Ok(())
+    }
+    pub async fn list_blobs(&self, container: &str, prefix: &str) -> Result<Vec<BlobEntry>> {
+        #[derive(Deserialize)]
+        struct Listing {
+            #[serde(rename = "Blobs", default)]
+            blobs: Items,
+            #[serde(rename = "NextMarker", default)]
+            next: String,
+        }
+        #[derive(Deserialize, Default)]
+        struct Items {
+            #[serde(rename = "Blob", default)]
+            blobs: Vec<Item>,
+        }
+        #[derive(Deserialize)]
+        struct Item {
+            #[serde(rename = "Name")]
+            name: String,
+            #[serde(rename = "Properties")]
+            properties: Properties,
+        }
+        #[derive(Deserialize)]
+        struct Properties {
+            #[serde(rename = "Last-Modified")]
+            modified: String,
+        }
+        let mut marker = String::new();
+        let mut seen = std::collections::HashSet::new();
+        let mut result = Vec::new();
+        for _ in 0..10000 {
+            let mut uri = Self::uri(&self.blob, &[container])?;
+            uri.query_pairs_mut()
+                .append_pair("restype", "container")
+                .append_pair("comp", "list")
+                .append_pair("prefix", prefix)
+                .append_pair("maxresults", "5000");
+            if !marker.is_empty() {
+                uri.query_pairs_mut().append_pair("marker", &marker);
+            }
+            let response = self.request(Method::GET, uri, None, &[]).await?;
+            let bytes = Self::bytes(response, 16 * 1024 * 1024).await?;
+            let listing: Listing =
+                quick_xml::de::from_reader(bytes.as_slice()).map_err(|_| error())?;
+            for item in listing.blobs.blobs {
+                if item.name.is_empty() || !item.name.starts_with(prefix) {
+                    return Err(error());
+                }
+                let modified_at = time::OffsetDateTime::parse(
+                    &item.properties.modified,
+                    &time::format_description::well_known::Rfc2822,
+                )
+                .map_err(|_| error())?;
+                result.push(BlobEntry {
+                    name: item.name,
+                    modified_at,
+                });
+                if result.len() > 1_000_000 {
+                    return Err(error());
+                }
+            }
+            if listing.next.is_empty() {
+                return Ok(result);
+            }
+            if listing.next.len() > 64 * 1024 || !seen.insert(listing.next.clone()) {
+                return Err(error());
+            }
+            marker = listing.next;
+        }
+        Err(error())
     }
     pub async fn put_leased_blob(
         &self,
@@ -978,6 +1081,80 @@ mod tests {
             .release_blob_lease("transcripts", "fixture.txt", &lease)
             .await
             .unwrap();
+        server.await.unwrap();
+        identity_server.await.unwrap();
+    }
+    #[tokio::test]
+    async fn blob_enumeration_is_complete_and_repeated_markers_cannot_be_a_truncated_success() {
+        use tokio::io::AsyncWriteExt;
+        let (identity, identity_server) = identity_fixture().await;
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            for index in 0..4 {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let (headers, _) = read_request(&mut stream).await;
+                assert!(headers.contains("comp=list") && headers.contains("prefix=fixture"));
+                if index % 2 == 1 {
+                    assert!(headers.contains("marker=next"));
+                }
+                let marker = if index == 1 { "" } else { "next" };
+                let name = if index == 1 {
+                    "fixture/second.wav"
+                } else {
+                    "fixture/first.wav"
+                };
+                let body = format!(
+                    "<EnumerationResults><Blobs><Blob><Name>{name}</Name><Properties><Last-Modified>Sun, 01 Nov 2026 10:00:00 GMT</Last-Modified></Properties></Blob></Blobs><NextMarker>{marker}</NextMarker></EnumerationResults>"
+                );
+                stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
+            }
+        });
+        let storage = fixture(port, identity);
+        let entries = storage.list_blobs("audio", "fixture").await.unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[1].name, "fixture/second.wav");
+        assert_eq!(entries[0].modified_at.hour(), 10);
+        assert!(storage.list_blobs("audio", "fixture").await.is_err());
+        server.await.unwrap();
+        identity_server.await.unwrap();
+    }
+    #[tokio::test]
+    async fn bootstrap_probes_only_existing_resources_and_never_creates_them_or_reads_user_bodies()
+    {
+        use tokio::io::AsyncWriteExt;
+        let (identity, identity_server) = identity_fixture().await;
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            for index in 0..7 {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let (headers, body) = read_request(&mut stream).await;
+                assert!(body.is_empty());
+                if index < 3 {
+                    assert!(headers.starts_with("HEAD ") && headers.contains("restype=container"));
+                } else if index == 3 {
+                    assert!(headers.starts_with("GET ") && headers.contains("comp=metadata"));
+                } else {
+                    assert!(
+                        headers.starts_with("GET ")
+                            && headers.contains("Tables(")
+                            && !headers.contains("%24top")
+                    );
+                }
+                stream
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    .await
+                    .unwrap();
+            }
+        });
+        let storage = fixture(port, identity);
+        let config = crate::services::tests::fixture().config.clone();
+        storage.check_resources(&config).await.unwrap();
         server.await.unwrap();
         identity_server.await.unwrap();
     }

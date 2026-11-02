@@ -28,6 +28,9 @@ param(
     [string] $ProjectName = 'cot-voice-recorder',
     [string] $ImageRepository = 'voice-recorder-backend',
     [string] $ImageTag = '',
+    # Source-only migration switch; Python remains the rollback/default image.
+    [ValidateSet('Python','Rust')]
+    [string] $BackendRuntime = 'Python',
     # Public, unauthenticated Microsoft package feed proxy (direct PyPI TLS is
     # broken on this workstation; the committed uv.lock references it). Passed as a
     # Docker build-arg to the cloud `az acr build`. No credentials are involved.
@@ -118,15 +121,17 @@ $imageRef = "$acrLoginServer/$ImageRepository`:$ImageTag"
 # ----------------------------------------------------------------- Build
 if (-not $SkipBuild) {
     Write-Host "`n--- Build & push image via az acr build ---" -ForegroundColor Cyan
-    Push-Location $BackendDir
+    $buildContext = if ($BackendRuntime -eq 'Rust') { $RepoRoot } else { $BackendDir }
+    $dockerfile = if ($BackendRuntime -eq 'Rust') { 'rust/cloud/Dockerfile' } else { 'Dockerfile' }
+    Push-Location $buildContext
     try {
         $buildArgs = @(
             'acr','build',
             '--registry', $acrName,
             '--image', "$ImageRepository`:$ImageTag",
-            '--file','Dockerfile'
+            '--file', $dockerfile
         )
-        if ($PackageFeedProxy) {
+        if ($BackendRuntime -eq 'Python' -and $PackageFeedProxy) {
             $buildArgs += @('--build-arg', "UV_DEFAULT_INDEX=$PackageFeedProxy")
             $buildArgs += @('--build-arg', "PIP_INDEX_URL=$PackageFeedProxy")
         }

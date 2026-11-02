@@ -2,6 +2,8 @@ pub mod ai;
 pub mod api;
 pub mod audio;
 pub mod auth;
+pub mod bootstrap;
+pub mod cleanup;
 pub mod config;
 pub mod continuous;
 pub mod domain;

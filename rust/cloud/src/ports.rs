@@ -12,6 +12,7 @@ pub enum Blobs {
 }
 pub struct MemoryBlobs {
     data: BlobData,
+    modified: HashMap<(String, String), time::OffsetDateTime>,
     leases: HashMap<(String, String), MemoryBlobLease>,
 }
 struct MemoryBlobLease {
@@ -22,6 +23,7 @@ impl Blobs {
     pub fn memory() -> Self {
         Self::Memory(Arc::new(Mutex::new(MemoryBlobs {
             data: HashMap::new(),
+            modified: HashMap::new(),
             leases: HashMap::new(),
         })))
     }
@@ -45,6 +47,7 @@ impl Blobs {
                     return Err(StorageError::Conflict);
                 }
                 memory.leases.remove(&key);
+                memory.modified.insert(key.clone(), crate::services::now());
                 memory.data.insert(key, data);
                 Ok(())
             }
@@ -87,6 +90,7 @@ impl Blobs {
                     return Err(StorageError::Conflict);
                 }
                 memory.leases.remove(&key);
+                memory.modified.remove(&key);
                 Ok(memory.data.remove(&key).is_some())
             }
         }
@@ -110,6 +114,7 @@ impl Blobs {
                 if memory.data.contains_key(&key) {
                     return Err(StorageError::Conflict);
                 }
+                memory.modified.insert(key.clone(), crate::services::now());
                 memory.data.insert(key, data);
                 Ok(())
             }
@@ -229,6 +234,7 @@ impl Blobs {
                 }) {
                     return Err(StorageError::Conflict);
                 }
+                memory.modified.insert(key.clone(), crate::services::now());
                 memory.data.insert(key, data);
                 Ok(())
             }
@@ -236,6 +242,44 @@ impl Blobs {
     }
 }
 
+impl Blobs {
+    pub async fn list(
+        &self,
+        container: &str,
+        prefix: &str,
+    ) -> Result<Vec<crate::storage::BlobEntry>, StorageError> {
+        match self {
+            Self::Azure(storage) => storage.list_blobs(container, prefix).await,
+            Self::Memory(memory) => Ok(memory
+                .lock()
+                .await
+                .modified
+                .iter()
+                .filter(|((stored, name), _)| stored == container && name.starts_with(prefix))
+                .map(|((_, name), modified)| crate::storage::BlobEntry {
+                    name: name.clone(),
+                    modified_at: *modified,
+                })
+                .collect()),
+        }
+    }
+    #[cfg(test)]
+    pub(crate) async fn age_fixture(
+        &self,
+        container: &str,
+        name: &str,
+        modified: time::OffsetDateTime,
+    ) {
+        let Self::Memory(memory) = self else {
+            panic!("Synthetic memory adapter required");
+        };
+        let mut memory = memory.lock().await;
+        *memory
+            .modified
+            .get_mut(&(container.into(), name.into()))
+            .unwrap() = modified;
+    }
+}
 pub struct BlobLease {
     blobs: Blobs,
     container: String,
@@ -301,6 +345,7 @@ impl BlobLease {
                     return Err(StorageError::Conflict);
                 }
                 memory.leases.remove(&key);
+                memory.modified.remove(&key);
                 Ok(memory.data.remove(&key).is_some())
             }
         }

@@ -1,7 +1,7 @@
 # Rust cloud migration
 
-This crate is the staged cloud foundation, **not yet a runnable or production-ready
-replacement** for the existing Python API/worker/cleanup. Classical ACA, UAMI,
+This crate provides runnable staged Rust API/worker/cleanup entry points, **not an
+accepted production replacement** for the existing Python services. Classical ACA, UAMI,
 private Storage/Speech and the Android contract remain unchanged.
 
 Implemented:
@@ -20,7 +20,7 @@ Implemented:
 - Stable RFC 9457 problem response fields and authentication challenge.
 - Recording lifecycle/upload/completion/finalize reservation and transcript/audit
   services, wired through the actual Axum router. Readiness remains false until
-  production bootstrap, which is not implemented yet.
+  explicit UAMI bootstrap probes of existing resources.
 - Batch MAI Speech and alternate Foundry transcription, exact-prompt literal-edit
   refinement, and Web PubSub REST negotiation/preview-only delivery. Ephemeral
   dictation and refinement retain four/two physical slots after waiter cancellation
@@ -30,7 +30,7 @@ Implemented:
   no confirmed/done output after a missing-completion timeout.
 - Continuous recording lease primitives and strict durable PCM/sample replay
   reader. Table write results retain their own response ETag, not a racy
-  subsequent GET snapshot. These are not yet the complete running worker.
+  subsequent GET snapshot.
 - Leased continuous model processor with full durable replay after failure, exact
   sample/legacy-overlap handling, queue receipt heartbeat and joined shutdown.
   A sequential queue loop and legacy/finalization processors now share the ports.
@@ -39,12 +39,17 @@ Implemented:
   acquire/renew/write/release primitives protect active writers. Finalization uses
   a renewable lock and immutable first-writer canonical bodies, conditional
   metadata, stable IDs and durable notification retries without extending expiry.
+- Cleanup with complete bounded Blob enumeration, conditional recording fencing,
+  active audio/continuous/finalizer ownership checks, fixed audit expiry and
+  conservative retention of fresh unpublished audio.
+- `voice-recorder api|worker|cleanup|check-config`, existing-resource bootstrap
+  probes and SIGTERM/Ctrl+C shutdown. Startup never creates resources.
 
 Stored domain/entity codecs, strict wire defaults, content-digest/sample validation
 and conditional repository primitives now exist.
-Cleanup, production bootstrap, container/ACA wiring and full external
-contracts remain unfinished. Blob enumeration and production bootstrap are not wired.
-Do not deploy the current library or run an alternate worker over existing data.
+Source-only container/ACA image selection is wired, but container validation,
+full external/OpenAPI/config/fault contracts and feature-matched performance
+remain incomplete. Do not deploy or run an alternate worker over existing data.
 
 ```powershell
 cargo fetch --manifest-path rust\Cargo.toml --locked
@@ -59,6 +64,9 @@ actual HTTP handlers, multipart/provider contracts, physical-call cancellation,
 ordered PCM relay, actual 15-second/30-second timeout boundaries, lease takeover/
 late-publication fencing, exact contiguous/legacy continuous model replay,
 receipt rotation and graceful producer/heartbeat shutdown.
+The current workspace has 201 passing tests, including 83 cloud library tests and
+two CLI guards. Read-only resource probes and active-writer-safe cleanup use
+synthetic local fixtures.
 No Azure, paid model, production data or credentials are used. These are not
 private-endpoint/UAMI acceptance against the actual cloud.
 
@@ -117,3 +125,22 @@ backend\.venv\Scripts\python.exe rust\cloud\tests\test_pipeline_text_parity.py -
 These do not prove live Azure connectivity, full WebSocket/worker parity,
 production readiness or feature-matched performance. No cloud deployment or paid
 model call is part of these checks.
+
+## Runtime and source-only packaging
+
+```powershell
+rust\target\release\voice-recorder.exe --help
+rust\target\release\voice-recorder.exe check-config
+```
+
+`check-config` validates explicit `VR_` settings without network or identity calls.
+The other modes require injected ACA UAMI and existing resources; they are not
+authorized production tests. Startup fake adapters are deliberately not silently
+substituted; direct tests inject explicit isolated adapters.
+
+The root-context `rust\cloud\Dockerfile` builds a non-root UID10001 image with the
+same API8000/worker/cleanup entry point. The current local Docker daemon is
+unavailable; CI builds and probes the image without publishing it. The source-only
+`infra\deploy.ps1 -BackendRuntime Rust` switch preserves all classical ACA topology
+and keeps Python as its default/rollback. Do not execute it until deployment is
+separately approved.

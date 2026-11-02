@@ -29,6 +29,22 @@ defaults:
     working-directory: rust
 
 jobs:
+  cloud-container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Rust cloud image without publishing or deployment
+        run: docker build --file rust/cloud/Dockerfile --tag voiceprompt-rust-fixture .
+        working-directory: .
+      - name: Verify unprivileged CLI and reject missing production config
+        working-directory: .
+        run: |
+          docker run --rm --entrypoint id voiceprompt-rust-fixture -u | grep '^10001$'
+          docker run --rm voiceprompt-rust-fixture --help
+          if docker run --rm voiceprompt-rust-fixture check-config; then
+            echo "Missing production config must not succeed."
+            exit 1
+          fi
   offline-checks:
     strategy:
       matrix:
