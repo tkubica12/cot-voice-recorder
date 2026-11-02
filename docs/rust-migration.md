@@ -1479,3 +1479,25 @@ Do latence se zapocita cely wait a trial se nerestartuje. Persistentni ACL/
 access error, oversize nebo invalid JSON stale explicitne selze.
 Sest guard tests vcetne simulated transient/persistent lock a actual frozen
 client composition proslo; novy uplny profil se zmeri znovu zvlast.
+
+## Jeden vyslovne schvaleny physical microphone check
+
+Uzivatel povolil presne jeden Rust default-device240ms count-only/no-store
+test. Prvni read-only preflight nasel znovu bezici installed VoicePromptPID31964,
+takze test body tehdy nebyl spusten a osobni aplikace se neukoncovala. Po
+dalsim uzivatelskem potvrzeni, ze VoicePrompt zavrel, preflight overil jeho
+nepritomnost a probe se spustila presnym ignored-test filtrem pouze jednou.
+
+Vysledek08:53:00Z:6 buffers,6978 PCM bytes spoctenych a zeroizovanych,
+default-input open603.7545ms, stop26.0579ms. Native finish/reset/unprepare/
+close cesta nevypsala zadnou chybu, capture worker byl joined a probePID7808
+skoncil exit0 se stderr prazdnym. Nebyl ulozen/uploadovan zadny zvuk,
+neoteviral se auth/cloud, clipboard/paste ani hotkeys. Frozen probe SHA256
+21788E86E998CE5D54B38F95726C0240AD7EB483688F3EBF03DBA622A018CDE6;
+exact scoped evidence je v session approved-single-test-result.json.
+
+Souhlas je spotrebovany. Zadne opakovani nebo C# microphone baseline nebyly
+provedeny ani povoleny. Tento jeden actual device check nema predstavovat
+30-trial readiness/110%baseline verdict, jine zarizeni, full-client hour nebo
+focus/paste akceptaci. Tyto zbyle scenare maji stale vlastni evidence/permission
+hranice. Bezpecne signed-out mereni s corrected readable markerem probiha zvlast.
