@@ -3,6 +3,211 @@ use serde::Deserialize;
 use serde_json::json;
 use std::path::PathBuf;
 
+async fn worker_and_cleanup(storage: Arc<AzureStorage>) -> (String, String) {
+    use crate::http_fixture::{config, serve, token};
+    use crate::ports::{Blobs, Queue};
+    use crate::services::{ChunkUpload, Services};
+    use base64::Engine;
+    use sha2::{Digest, Sha256};
+
+    let mut provider = serve(vec![
+        token(),
+        (
+            200,
+            r#"{"combinedPhrases":[{"text":"synthetic Azure worker final"}]}"#.into(),
+        ),
+        token(),
+        (202, "".into()),
+    ])
+    .await;
+    let config = Arc::new(config(&provider.endpoint));
+    let services = Arc::new(
+        Services::new(
+            config.clone(),
+            crate::repository::Repository::Azure(storage.clone()),
+            Blobs::Azure(storage.clone()),
+            Queue::Azure {
+                storage: storage.clone(),
+                name: config.queue.clone(),
+            },
+        )
+        .unwrap(),
+    );
+    let identity = Arc::new(ManagedIdentity::fixture(provider.endpoint.as_str()));
+    let worker = crate::worker::QueueWorker {
+        pipeline: Arc::new(crate::pipeline::Pipeline {
+            services: services.clone(),
+            ai: Arc::new(crate::ai::AzureAi::new(config.clone(), identity.clone()).unwrap()),
+            realtime: Arc::new(
+                crate::gateway::WebPubSub::new(config.clone(), identity.clone()).unwrap(),
+            ),
+        }),
+        streaming: Arc::new(
+            crate::streaming::MaiStreamingProvider::new(&config, identity, "synthetic-model")
+                .unwrap(),
+        ),
+    };
+    let (record, created) = services
+        .create(
+            serde_json::from_value(json!({
+                "client_recording_id":"actual-https-emulator-legacy", "refinement_enabled":false,
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(created);
+    let wav = voiceprompt_core::wav::to_wav(&[1, 0, 2, 0, 3, 0, 4, 0]).unwrap();
+    let checksum = format!(
+        "sha-256=:{}:",
+        base64::engine::general_purpose::STANDARD.encode(Sha256::digest(&wav))
+    );
+    services
+        .upload(
+            &record.recording_id,
+            ChunkUpload {
+                index: 0,
+                wav: wav.clone(),
+                checksum,
+                duration_ms: None,
+                overlap_ms: None,
+                started_at: None,
+                start_sample: None,
+                sample_count: None,
+            },
+        )
+        .await
+        .unwrap();
+    services.complete(&record.recording_id, 1).await.unwrap();
+    let (_stop, stopping) = tokio::sync::watch::channel(false);
+    assert!(worker.run_once(stopping.clone()).await.unwrap());
+    assert!(worker.run_once(stopping.clone()).await.unwrap());
+    let completed = services.recording(&record.recording_id).await.unwrap();
+    assert_eq!(completed.state, crate::domain::RecordingState::Completed);
+    assert!(completed.stream_delivery_completed);
+    let transcript_id = completed.transcript_id.unwrap();
+    assert_eq!(
+        services.transcript(&transcript_id).await.unwrap().body,
+        "synthetic Azure worker final"
+    );
+    assert!(matches!(
+        storage
+            .get_blob(
+                &config.audio_container,
+                &format!("{}/0.wav", record.recording_id),
+                1024
+            )
+            .await,
+        Err(StorageError::NotFound)
+    ));
+    services
+        .queue
+        .send(
+            json!({"type":"transcribe","recording_id":record.recording_id,"index":0}),
+            0,
+        )
+        .await
+        .unwrap();
+    services
+        .queue
+        .send(
+            json!({"type":"finalize","recording_id":record.recording_id}),
+            0,
+        )
+        .await
+        .unwrap();
+    assert!(worker.run_once(stopping.clone()).await.unwrap());
+    assert!(worker.run_once(stopping.clone()).await.unwrap());
+    assert!(!worker.run_once(stopping).await.unwrap());
+    provider.next().await;
+    let speech = provider.next().await;
+    assert_eq!(crate::http_fixture::part(&speech.body, "audio"), wav);
+    provider.next().await;
+    let event = provider.next().await;
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&event.body).unwrap()["event"],
+        "transcript.completed"
+    );
+    provider.finish().await;
+
+    let original = services
+        .repository
+        .get(&config.transcripts_table, "transcript", &transcript_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut expired = crate::domain::Transcript::from_entity(&original).unwrap();
+    expired.transcript_id = crate::services::uuid().unwrap();
+    expired.recording_id = expired.transcript_id.clone();
+    expired.body_path = format!("{}.txt", expired.transcript_id);
+    expired.completed_at = crate::services::now() - time::Duration::hours(49);
+    expired.expires_at = expired.completed_at + time::Duration::hours(48);
+    expired.etag.clear();
+    services
+        .blobs
+        .put(
+            &config.transcript_container,
+            &expired.body_path,
+            b"synthetic Azure worker final".to_vec(),
+            "text/plain",
+        )
+        .await
+        .unwrap();
+    services
+        .repository
+        .insert(&config.transcripts_table, expired.entity().unwrap())
+        .await
+        .unwrap();
+    let owner = crate::services::uuid().unwrap();
+    storage
+        .acquire_blob_lease(&config.transcript_container, &expired.body_path, &owner)
+        .await
+        .unwrap();
+    let protected = crate::cleanup::run(&services).await.unwrap();
+    assert_eq!(protected.transcripts_deleted, 0);
+    assert!(
+        services
+            .repository
+            .get(
+                &config.transcripts_table,
+                "transcript",
+                &expired.transcript_id
+            )
+            .await
+            .unwrap()
+            .is_some()
+    );
+    storage
+        .release_blob_lease(&config.transcript_container, &expired.body_path, &owner)
+        .await
+        .unwrap();
+    let cleaned = crate::cleanup::run(&services).await.unwrap();
+    assert_eq!(cleaned.transcripts_deleted, 1);
+    assert!(
+        services
+            .repository
+            .get(
+                &config.transcripts_table,
+                "transcript",
+                &expired.transcript_id
+            )
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(matches!(
+        storage
+            .get_blob(&config.transcript_container, &expired.body_path, 1024)
+            .await,
+        Err(StorageError::NotFound)
+    ));
+    assert_eq!(
+        services.transcript(&transcript_id).await.unwrap().body,
+        "synthetic Azure worker final"
+    );
+    (record.recording_id, transcript_id)
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Setup {
@@ -265,12 +470,17 @@ async fn https_azure_contract() {
         )
         .await
         .unwrap();
+    let (legacy_recording_id, legacy_transcript_id) = worker_and_cleanup(Arc::new(storage)).await;
     println!(
         "{}",
         json!({
             "scope":"https-azurite-production-rest-contract", "tls_verified":true,
             "table_cas_and_int64":true, "blob_lease_fencing":true,
             "queue_receipt_rotation_and_redelivery":true,
+            "legacy_queue_worker_and_durable_delivery":true,
+            "expired_cleanup_respects_active_blob_lease":true,
+            "legacy_recording_id":legacy_recording_id,
+            "legacy_transcript_id":legacy_transcript_id,
             "real_azure_resources":false, "real_managed_identity":false,
             "production_authorization_proven":false,
         })

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import ssl
 import sys
 import tempfile
@@ -20,6 +21,38 @@ import test_azure_rest as fixture
 
 
 class AzureRestFixtureTests(unittest.TestCase):
+    def test_native_proof_rejects_stale_incomplete_or_real_authorization_claims(self) -> None:
+        proof = {
+            "scope": fixture.SCOPE,
+            "table_cas_and_int64": True,
+            "blob_lease_fencing": True,
+            "queue_receipt_rotation_and_redelivery": True,
+            "tls_verified": True,
+            "legacy_queue_worker_and_durable_delivery": True,
+            "expired_cleanup_respects_active_blob_lease": True,
+            "production_authorization_proven": False,
+            "real_azure_resources": False,
+            "real_managed_identity": False,
+            "legacy_recording_id": "01234567-89ab-cdef-0123-456789abcdef",
+            "legacy_transcript_id": "fedcba98-7654-3210-fedc-ba9876543210",
+        }
+        self.assertEqual(
+            fixture.native_proof(("test synthetic ... " + json.dumps(proof)).encode()), proof
+        )
+        for field in [
+            "legacy_queue_worker_and_durable_delivery",
+            "expired_cleanup_respects_active_blob_lease",
+            "real_managed_identity",
+        ]:
+            changed = dict(proof)
+            changed[field] = not proof[field]
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                fixture.native_proof(json.dumps(changed).encode())
+        with self.assertRaises(ValueError):
+            fixture.native_proof(b"0 passed; no actual native proof")
+        with self.assertRaises(ValueError):
+            fixture.native_proof((json.dumps(proof) + "\n" + json.dumps(proof)).encode())
+
     def test_strict_tls_client_trusts_only_the_owned_loopback_certificate(self) -> None:
         with tempfile.TemporaryDirectory(prefix="VoicePrompt-local-https-") as directory:
             root = Path(directory)

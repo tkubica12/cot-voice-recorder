@@ -153,6 +153,39 @@ def mapped_endpoint(container: str, port: int) -> str:
     return f"https://{value}/devstoreaccount1/"
 
 
+def native_proof(stdout: bytes) -> dict:
+    proofs = []
+    for line in stdout.decode().splitlines():
+        if "{" in line:
+            value = json.loads(line[line.index("{") :])
+            if value.get("scope") == SCOPE:
+                proofs.append(value)
+    if len(proofs) != 1:
+        raise ValueError("The exact native contract did not publish one typed proof.")
+    proof = proofs[0]
+    for field in [
+        "table_cas_and_int64",
+        "blob_lease_fencing",
+        "queue_receipt_rotation_and_redelivery",
+        "tls_verified",
+        "legacy_queue_worker_and_durable_delivery",
+        "expired_cleanup_respects_active_blob_lease",
+    ]:
+        if proof.get(field) is not True:
+            raise ValueError(f"Native contract did not prove {field}.")
+    for field in [
+        "production_authorization_proven",
+        "real_azure_resources",
+        "real_managed_identity",
+    ]:
+        if proof.get(field) is not False:
+            raise ValueError("An emulator fixture must not claim real production authorization.")
+    for field in ["legacy_recording_id", "legacy_transcript_id"]:
+        if str(uuid.UUID(proof[field])) != proof[field]:
+            raise ValueError("Native pipeline did not publish canonical synthetic IDs.")
+    return proof
+
+
 def run(oracle: Path, output: Path, revision: str) -> None:
     if not sys.platform.startswith("linux") or not oracle.name.startswith("voiceprompt_cloud-"):
         raise ValueError(
@@ -318,12 +351,37 @@ def run(oracle: Path, output: Path, revision: str) -> None:
                     "Actual Rust emulator contract failed: "
                     + native.stderr.decode(errors="replace")
                 )
+            proof = native_proof(native.stdout)
             entity = table.get_table_client("recordings").get_entity("synthetic", "native'quote")
             assert entity["small"] == 8
             assert isinstance(entity["counter"], EntityProperty)
             assert entity["counter"].edm_type == EdmType.INT64
             assert entity["counter"].value == 2**40
             assert entity["text"] == "synthetic \u0159 text"
+            recording = table.get_table_client("recordings").get_entity(
+                "recording",
+                proof["legacy_recording_id"],
+            )
+            assert (
+                recording["state"] == "completed" and recording["stream_delivery_completed"] is True
+            )
+            transcript = table.get_table_client("transcripts").get_entity(
+                "transcript",
+                proof["legacy_transcript_id"],
+            )
+            assert transcript["recording_id"] == proof["legacy_recording_id"]
+            assert transcript["source"] == "recording"
+            assert isinstance(transcript["completed_at"], datetime)
+            assert isinstance(transcript["expires_at"], datetime)
+            assert (
+                transcript["expires_at"] - transcript["completed_at"]
+            ).total_seconds() == 48 * 3600
+            body = (
+                blob.get_blob_client("transcripts", transcript["body_path"])
+                .download_blob()
+                .readall()
+            )
+            assert body == b"synthetic Azure worker final"
             message = next(queue.get_queue_client("interop").receive_messages(messages_per_page=1))
             assert json.loads(base64.b64decode(message.content)) == {
                 "direction": "rust-to-python",
@@ -347,6 +405,10 @@ def run(oracle: Path, output: Path, revision: str) -> None:
                 "table_cas_and_int64": True,
                 "blob_lease_fencing": True,
                 "queue_receipt_rotation_redelivery": True,
+                "legacy_worker_and_notification_settlement": True,
+                "cleanup_respects_real_active_blob_lease": True,
+                "actual_sdk_worker_transcript_retrieval": True,
+                "model_and_realtime_are_loopback_fixtures": True,
                 "synthetic_identity_requests": len(identity.resources),
                 "real_azure_resources": False,
                 "real_managed_identity": False,

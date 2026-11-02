@@ -1713,3 +1713,30 @@ roundtrip, retained property types a staleCAS412. Osm native storage testu
 a strict Clippy/fmt proslo; stejny actual SDK/emulator scenar se musi znovu
 provest bez zmeny ocekavane stored-type semantiky. Jde o real opravu zachovani
 cloud dat, nikoli dalsi povoleni k Azure deploy nebo sahani na osobni stav.
+
+Actual016a5ac rerun uz prosel celym primitive contractem a actual SDK interop:
+Table Int64 zustal typed po CAS update, staleETag PUT/DELETE vratily412,
+Blob stale owner nemohl obnovit/uvolnit/smazat cizi lease a Queue stary
+receipt neodstranil winner message; redelivery zachovalo payload a zvysilo
+dequeue count. TLS a APIversion checks zustaly zapnute, vsechny tri sluzby
+sdilely presne jeden cached synthetic MI token request. Owned container/
+identity skoncily a ephemeral privatekey byl odstranen pred success report.
+[backend-ci41426538580](https://github.com/tkubica12/cot-voice-recorder/actions/runs/41426538580)
+i cely016a5ac Rust Windows/Linux/MSRV/container CI jsou successful.
+Artifact azure-rest-016a5ac/azure-rest-contract.json SHA256
+e9cbeda2afdc6c1b658523bbc1696b04fec609b16dbb186c7ba7b4a6a6a91d30.
+Emulator OAuth signature/permissions a skutecny Azure UAMI/private egress
+zustavaji vyslovne NEPROKAZANE.
+
+Navazujici bezpecny ignored scenar nyni sklada actual Azure-backed Services,
+QueueWorker, legacy processor/finalizer a cleanup nad stejnym HTTPS Azurite.
+Model a PubSub jsou vyhradne existing bounded loopback providers s presne
+synthetic WAV/textem, ne placena AI ani live notifikace. Scenar vyzaduje
+completed+durable delivery state, exact provider audio, settled replay bez
+dalsiho model call, actual SDK retrieval transcriptu/fixed48h dates a expired
+cleanup, ktery pres aktivni Blob lease metadata/body zachova a po release
+oba odstrani. Typed proof guard odmitne stale oracle nebo chybejici casti.
+
+Tato slozena E2E cast se teprve provede v CI; devet existing worker tests,
+compile/Clippy/fmt a pet local TLS/MI/typed-proof guards prosly. Nerovna se
+dosud provedene primitive storage proof automaticky proofu celeho workeru.
