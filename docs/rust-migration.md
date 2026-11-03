@@ -3400,3 +3400,36 @@ zustavaji beze zmeny. Dalsi unit test zablokuje actualjournal+engine lock a
 overi ze snapshotmonitor netrva na jejichuvolneni.
 Current309workspace/113native/fmt/Clippy PASS; matching source/CI/frozenhashes
 se ulozi pred jedinym60srun. Po tomto doplneni nebyl spusten novyfullhour.
+
+### Assigned post-dedup60s b00: FAILED, novy konkretni reader blocker
+
+Sourceb00daa950827eb2d60e3186400d2c876bbf11cb9 a predchozie797 oba prosly
+ALL5CI (41667807093/41665591227) pred jedinymzadanym60s testem.
+Frozenoptimized+debuginfooracle78b1b4f9.../PDBfdcf7db0.../sourcearchive2e2504e2...
+a local knownsymbols bylyoverene. Original1280B40ms50slots/stopbudgety se
+nemenily a GUI/realaccount/network/physical/registry/Azure ports nevznikly.
+
+Test skoncilOverflow24.6829066s: accepted789760, writerreceived725760,
+completedappend724480bytes, observedqueuepeak50. Producercurrentlate2.9075ms,
+maxearlierlate1367.9798ms.10ssnapshot zachytil1280queuedbytes/maxobserved4;
+20ssnapshot25600queuedbytes/maxobserved50. Raw28capturerows a vsechny
+owner/IO/failedstate/stderr doklady jsou uchovane.
+
+Namereny actual blocker: send-audio-read/read_audio drzel engine i recovery-root
+locks na Rustthread3. Maxenginehold2057.5865ms/maxwait2831.8491ms;
+maxroothold2057.5499ms/maxwait0.0012ms. PriOverflow byla phase read-encrypted
+active676.9262ms a ownerages priblizne677ms. Maxima jsou od vytvoreni locku,
+nikoliv vymysleny acceptance threshold nebo doklad konkretniho OS/kernelwait.
+Acquisition contexts zustavaji odlisene od aktualniho suspendedstacku.
+
+Read-only failedRecovery nasledne overila vsech789760admittedbytes ulozenych,
+confirmed512000/puvodnisyntheticbinding/capturecomplete. Verified302080pending
+PCMbytes zahrnuji retainedoverlap; jsou sample-exact a ciphertextnezmeneny.
+Ownerprocess38696gone, controltempremoved, encryptedfailure-state/rawdata
+retained. Result-summary/failurehash/preservationproof jsou v
+controller-post-path-60s-b00daa9. Zadny retry nebo novyfullhour.
+
+Nesplneno1920000bytes/60s/normalpostidle a nelze tvrdit hour nebo finalmigrationPASS.
+Priority dalsiho kroku je measuredreadercriticalsection/read-encryptedsubphase,
+ne dalsi slepyhour nebo spekulativni thread/path refactor. Source/data/icon/
+scopeCI dukazy zustavaji platne, ale currentwallclockstabilita stale chybi.
