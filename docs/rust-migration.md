@@ -3119,3 +3119,29 @@ nikoliv dalsi2min lidsky zavod. Bezny klient/puvodni180smanualcase se nemeni.
 Nove native99regular/fmt/Clippy PASS; automatedcase bude overen z actualCUI
 focus/control/selection/text/SettingsCancel/files, ne jako screen-reader nebo
 lidska accessibility akceptace.
+
+Automatedonecasec5d3117/PID31332/main527654/Settings5310788 probe skoncil
+BLOCKED pro keyboard dispatch, ne keyboardPASS. Prvni Tab byl serverem prerusen
+detekovanym userinput; probe provedl povinny reread a jediny stejny retry.
+Tab na Main, Right na tabgroup, Down na History, Space na checkboxu a Tab na
+Settings BackendURL hlasily done, ale ocekavane focus/selection/value zmeny
+nebyly prokazane. ShiftTab uz nemel target po bounded closure. Zadny shell,
+WM nebo SendInput UI workaround ani vstup cilene jine aplikaci se nepouzil.
+
+Indexed CUI pritom skutecne zmenilo History selection na druhy radek,
+show-selected-text off->on/exact read-only "Synthetic keyboard preview two.",
+Recoverytab/row2 a scroll0->100; Settings ukazalo vsech10ocekavanychhodnot
+a disabledSave. Tyto pozitivni UI doklady jsou parcialni a nejsou nahradou
+nefungujiciho keyboard dispatch. AgentCancel neni prokazan; normalni bounded
+ownerclose zahodil neulozeneSettings. Procesgone, vsech8baselinefilesSHAexact,
+noToken,onlyownlauncherremoved. Ready709226.../closedF915F6... a
+keyboard-automation-authorized-c5d3117/result-summary.json jsou zachovane.
+Grant spotrebovan, zadne dalsi okno nebo genericky human permission kolotoc.
+Nezavisle hiddenNoPorts control/layout/save/data tests zustavaji PASS, ale
+neni z nich fake keyboard/human/screenreaderPASS.
+
+Presnyc5d3117 RustCI41606601832 take ALL5JOBSSUCCESS, Windows dokoncen
+2026-11-03T09:09:37Z. Nove test-only600s lifetime nezmenilo bezny klient ani
+puvodni180smanualcase. Cela migrace stale potrebuje opravdove full-controller/
+GUI-hour, keyboard/screenreader/monitor, upgrade/rollback a privateAzure dukazy;
+zadne z techto neprovedenych hranic se neuzavira timto scoped CI/volume/UI vysledkem.
