@@ -35,7 +35,8 @@ znovu v odpovidajicim scope.
 | Mereni Windows klienta | NOVA vyslovne schvalena quiet-window current071/checkout86f3b0f full-runtime signed-out30+30/3paired301-point PASS: p95Rust257.948ms,meanprivate3.427MiB,observedpeak3.992MiB. Vsechnyrawvalues/pairedthresholds/cleanup nezavisleovereny;starsi7bPASS ia2d/3f4FAILEDINCOMPLETE zachovany,neprepisuji se na signed-in/physical scope |
 | Microphone readiness | Jeden actual240ms probe a samostatne schvalena30+30 paired serie prosly; first-PCM p95Rust80.75% C#baseline, bez audio souboru/uploadu |
 | Engine longevity | Actual3600s synthetic PCM/real50min rotation,115200000 exact bytes; worst idle growth1.645MiB<10MiB, engine-only PASS |
-| CI nativniho inkrementu | 7b4aff4 original-icon/reactive-overlay Windows/Linux/MSRV1.85/container RustCI a C#WindowsCI PASS; nasledne observer/input inkrementy maji vlastni CI, nejde o real-world cutover |
+| Current controller longevity | Tri actualcontrollerhour a post-dedup60s b00 FAILED/INCOMPLETE s raw/encrypted state zachovanymi; current0f60489 immutable-reader oprava ma316tests/all5CI PASS, nikoli novy3600s/rotation/postidle proof |
+| CI nativniho inkrementu | Current0f60489 pinned-reader Windows/Linux/MSRV1.85/container RustCI41682844962 ALL5PASS; predchozi icon/UI/adapter doklady zustavaji revision-scoped, nejde o real-world cutover |
 | OAuth/token-store/PubSub klient | Native flow implementovany; samostatny live Google auth-only/local-signout a assisted manual clipboard probe PASS, full signed-in backend/controller dictation stale chybi; samostatny automatic DesktopGuard port viz dalsi radek |
 | Automatic DesktopGuard paste port | NOVYexactonephysicalpostfix5b test PASS:one4eventnativeCtrlV/exactownfieldmarker/normalclosed,no retry. Nejdenifullcontroller/hold-toggle/hour/realbackend acceptance;older50040BLOCKED/45788assisted zustavaji |
 | Diktovani/recovery UI | Native microphone/hotkeys/overlay/paste controller, oba enginy, journal, polishing a outbox implementovany; real-world a rozsahlejsi fault/E2E akceptace zbyva |
@@ -3473,11 +3474,46 @@ Mutating manifest operations kvuli durable/CAS semantics zustavaji protected;
 odstranena dlouha critical section je bulk audiofile read/decrypt/copy.
 Presny sourcecommit/matchingCI a dalsi actualclockproof se zaznamenaji oddelene.
 
-V prime jednotkove zkousce actualpinnedreader zustal zablokovany ve fileIO,
+V prime precommit jednotkove zkousce actualpinnedreader zustal zablokovany ve fileIO,
 zatimco journalcheckpoint+confirmation dokoncily19.8118ms. To prokazuje
 odstraneni obou dlouhych reader criticalsections v tomto scenari, nikoliv
 generalni OSlatency/hodinovyPASS. Current6hiddenlifecycle a7DPAPI/IPC/original
-embedded-icon paritygroups takePASS. Build-onlysetup
+embedded-icon paritygroups takePASS. Precommit build-onlysetup
 bb977e19110386a9cac723441acf395c69a96b3d6414f76ff1f7ca41bbf7bbe9
 obsahuje runtime/stagedf00583ec9ea0e47042e4ac4b426b0c19f91bdf00f1ace3c33655dd302404edbd.
 Zadna instalace/release nebo nova60s/fullhour/deviceakce neprobehla.
+
+### Exact committed pinned-reader source verification
+
+Implementace je commitnuta/pushnuta jako
+0f60489a19a33247819e7b979dc40319c038c5d0; Rust tree
+2b1b8eb3c8af751b6b2223ddefa12ad5d6c5d07f. Nad timto presnym source znovu
+proslo316workspace/120native regular tests, fmt/alltarget-allfeatureClippy,
+release a7Recovery/7DPAPI-IPC-icon/6hidden-lifecycle paritygroups.
+Current plne kvalifikovany blocked-reader test trvale ulozil18.1491ms
+checkpoint+confirm pri stale zablokovanem readerovi; predchozi postcommit
+petitestova skupina namerila24.9088ms. Nejde o latencyprofil ani novy limit.
+Jeden prvni presny testfilter bez module prefixu provedl0tests a neni PASS
+dukaz; corrected fully-qualified invocation prokazatelne provedl1test.
+
+Presny sourcearchive SHA256
+2f1e404d657a2a61e8a92db61a1b174e2b622150a7719d1473928b0c1b733739,
+current release/staged runtime
+a90bb1d4ea20054517e2539e1e4692d7d5d8c5354bc1927e56f454fa6b370648,
+build-only installer
+c5361e407c1c98452aa0f017247cb274bc4efa34bc8f099dd3dc0dd4c85be195.
+Starsismoke59febf82... ma vlastni precommit work-after-b7c5fd8 revision;
+jeho3s/96000byte dukaz se neprepisuje na currentcommittedbinary ani hodinu.
+MatchingCI41682844962 je nezavisle overene nad presnym0f60489: vsech5jobs
+completed/success (Windows/Linux checks, MSRV1.85 na obou OS a cloudcontainer).
+Windowsjob skoncil2026-11-03T17:33:29Z; rawrun/jobs a Windowslog jsou uchovane.
+Zadny dalsi60s/fullhour/quietprofile/physical test nebo instalace neprobehly.
+
+Povoleny source/structural inkrement je uzavren. Nejmensi zbyvajici synteticky
+akceptacni dukaz je nove vyslovne zadany currentcontroller wallclock beh:
+3600s/115200000bytes, real50min rotation,301warm+301post a puvodni
+<=10MiB conservative growth. Ted se automaticky nespousti a zadny dosavadni
+failedhour, kratkysmoke nebo engine-only proof ho nenahrazuje. GUI/physical
+pipeline, keyboard dispatcher/ctecka/monitor, instalace/upgrade/rollback
+a skutecne privateAzure/deployedACA/IAM/cutover hranice zustavaji oddelene
+neuzavrene. Tento vysledek neoznacuje kompletnimigraci za hotovou.
