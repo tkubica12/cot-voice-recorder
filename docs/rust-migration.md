@@ -3381,3 +3381,22 @@ Build-only setup36d15520a5528fd14ae33c11f1f802d6879113d2a4b14fe06f416a936b724e88
 obsahuje release/stagedbedd72a93bd6f41bd5978d1b9e98bfa4785b85b80118675dd57b95aeb0824726.
 Installer nebyl spusten/instalovan/publikovan a nebyl pouzit k nove physical
 akceptaci. Presne CI tohoto source inkrementu zustava oddelenym dukazem.
+
+### Bounded post-dedup60s: potrebne pozitivni owner/latency evidence
+
+Koordinator konkretne zadal jeden60s current NoPorts wall-clock regression,
+nikoliv dalsi hodinu nebo quietprofile. Pred jeho startem bylo overeno, ze
+puvodni owner snapshot se publikoval jen pri failure a na success by chybely
+pozadovane measuredhold/wait/occupancy doklady. Doplnene test-only atomicmaxima
+a progress jsou vzorkovane kazdych10s na samostatnem boundedobserverthreadu;
+ten nikdy neziskava engine/journal mutex ani nevytvari frontu audio dat.
+Normalni i chybovy exit observerjoinne. Nepribyva stack nebo velkylog40mspacketu.
+
+Nove owner snapshoty rozlisuji queueadmission/received/completedappend/
+durablesaved/confirmed, maximalni observedqueuecapacity a measuredhold/wait
+od vytvoreni prislusneho locku, bez vymyslenehoperformanceprahu.
+Sourceproducer kontinuita1280B/40ms/50slots, boundedoverflow a stopbudgety
+zustavaji beze zmeny. Dalsi unit test zablokuje actualjournal+engine lock a
+overi ze snapshotmonitor netrva na jejichuvolneni.
+Current309workspace/113native/fmt/Clippy PASS; matching source/CI/frozenhashes
+se ulozi pred jedinym60srun. Po tomto doplneni nebyl spusten novyfullhour.

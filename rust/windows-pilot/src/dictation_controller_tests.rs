@@ -302,6 +302,7 @@ struct Probe {
     fail_stop: AtomicBool,
     clock: Instant,
     accepted_bytes: AtomicU64,
+    observed_queue_slots: AtomicUsize,
     writer_received_bytes: AtomicU64,
     writer_completed_bytes: AtomicU64,
     writer_packet_bytes: AtomicU64,
@@ -335,6 +336,7 @@ impl Ports {
             fail_stop: AtomicBool::new(false),
             clock: Instant::now(),
             accepted_bytes: AtomicU64::new(0),
+            observed_queue_slots: AtomicUsize::new(0),
             writer_received_bytes: AtomicU64::new(0),
             writer_completed_bytes: AtomicU64::new(0),
             writer_packet_bytes: AtomicU64::new(0),
@@ -350,14 +352,16 @@ impl Ports {
     }
 
     fn try_feed(&self, bytes: &[u8]) -> Result<(), CaptureError> {
-        self.0
-            .capture
-            .lock()
-            .unwrap()
-            .sender
-            .as_ref()
-            .unwrap()
-            .try_send(CaptureBuffer(bytes.to_vec()))
+        let state = self.0.capture.lock().unwrap();
+        let sender = state.sender.as_ref().unwrap();
+        let result = sender.try_send(CaptureBuffer(bytes.to_vec()));
+        if !sender.is_closed() {
+            self.0.observed_queue_slots.fetch_max(
+                crate::microphone::OUTPUT_BUFFER_COUNT - sender.capacity(),
+                Ordering::AcqRel,
+            );
+        }
+        result
             .map_err(|error| match error {
                 mpsc::error::TrySendError::Full(_) => CaptureError::Overflow,
                 mpsc::error::TrySendError::Closed(_) => CaptureError::Worker,
@@ -718,6 +722,78 @@ impl crate::audit_outbox::AuditUploader for HourUpload {
     }
 }
 
+struct CaptureMonitor {
+    stop: Arc<AtomicBool>,
+    thread: std::thread::JoinHandle<()>,
+}
+
+impl CaptureMonitor {
+    fn sample(
+        probe: &Probe,
+        recovery: &NativeRecoveryStore,
+        started: Instant,
+    ) -> serde_json::Value {
+        let engine = probe
+            .capture_trace
+            .get()
+            .expect("Capture trace registered before observer")
+            .snapshot();
+        let accepted = probe.accepted_bytes.load(Ordering::Acquire);
+        let received = probe.writer_received_bytes.load(Ordering::Acquire);
+        serde_json::json!({
+            "phase":"capturing","elapsed_seconds":started.elapsed().as_secs_f64(),
+            "captured_bytes":accepted,"accepted_bytes":accepted,"writer_received_bytes":received,
+            "writer_completed_bytes":probe.writer_completed_bytes.load(Ordering::Acquire),
+            "saved_bytes":engine["saved_bytes"],"confirmed_bytes":engine["confirmed_bytes"],
+            "provider_bytes":probe.backend.0.stream_bytes.load(Ordering::Acquire),
+            "observed_max_queue_slots":probe.observed_queue_slots.load(Ordering::Acquire),
+            "observed_queued_bytes":accepted.saturating_sub(received),
+            "engine_lock":engine,"recovery_io":recovery.fixture_io_progress(),
+            "observer_uses_no_target_mutex":true
+        })
+    }
+
+    fn start(harness: &Harness, seconds: u64, root: &std::path::Path, started: Instant) -> Self {
+        let root = root.to_path_buf();
+        let probe = harness.ports.0.clone();
+        let recovery = harness.recovery.clone();
+        let stop = Arc::new(AtomicBool::new(false));
+        let stopped = stop.clone();
+        let thread = std::thread::Builder::new()
+            .name("voiceprompt-noports-observer".into())
+            .spawn(move || {
+                for point in (10..=seconds).step_by(10) {
+                    let due = started + Duration::from_secs(point);
+                    while Instant::now() < due {
+                        if stopped.load(Ordering::Acquire) {
+                            return;
+                        }
+                        std::thread::sleep(Duration::from_millis(20));
+                    }
+                    if stopped.load(Ordering::Acquire) {
+                        return;
+                    }
+                    hour_publish(
+                        &root,
+                        &format!("progress-{point:04}.json"),
+                        Self::sample(&probe, &recovery, started),
+                    );
+                }
+            })
+            .unwrap();
+        Self { stop, thread }
+    }
+
+    async fn finish(self, aborted: bool) {
+        if aborted {
+            self.stop.store(true, Ordering::Release);
+        }
+        tokio::task::spawn_blocking(move || self.thread.join().unwrap())
+            .await
+            .unwrap();
+    }
+}
+
 async fn run_controller_capture(
     harness: &mut Harness,
     seconds: u64,
@@ -739,6 +815,8 @@ async fn run_controller_capture(
         .store(true, Ordering::Release);
     harness.begin(DictationMode::Toggle).await;
     let started = tokio::time::Instant::now();
+    let monitor =
+        diagnostics.map(|root| CaptureMonitor::start(harness, seconds, root, started.into_std()));
     const FRAME_BYTES: usize = crate::microphone::BUFFER_BYTES;
     const FRAME_MILLISECONDS: u64 = FRAME_BYTES as u64 * 1000 / 32000;
     const FRAMES_PER_SECOND: u64 = 1000 / FRAME_MILLISECONDS;
@@ -781,32 +859,15 @@ async fn run_controller_capture(
                         "writer_last_duration_ms":probe.writer_last_duration_ns.load(Ordering::Acquire) as f64/1_000_000.0,
                         "recovery_io":harness.recovery.fixture_io_progress()
                         ,"engine_lock":probe.capture_trace.get().map(|trace|trace.snapshot())
+                        ,"observed_max_queue_slots":probe.observed_queue_slots.load(Ordering::Acquire)
                     }),
                 );
+            }
+            if let Some(monitor) = monitor {
+                monitor.finish(true).await;
             }
             harness.close().await;
             panic!("Synthetic capture producer failed: {error}");
-        }
-        if (index + 1) % (60 * FRAMES_PER_SECOND) == 0 {
-            if let Some(root) = diagnostics {
-                let rows = harness.recovery.list().unwrap();
-                assert_eq!(rows.len(), 1);
-                let saved = harness.recovery.fixture_snapshot(&rows[0].id).unwrap();
-                hour_publish(
-                    root,
-                    &format!("progress-{:04}.json", (index + 1) / FRAMES_PER_SECOND),
-                    serde_json::json!({
-                        "phase":"capturing","elapsed_seconds":started.elapsed().as_secs_f64(),
-                        "captured_bytes":(index+1)*FRAME_BYTES as u64,"saved_bytes":saved.captured_bytes,
-                        "confirmed_bytes":saved.confirmed_bytes,
-                        "provider_bytes":harness.ports.0.backend.0.stream_bytes.load(Ordering::Acquire),
-                        "maximum_lateness_ms":maximum_lateness.as_secs_f64()*1000.0,
-                        "accepted_bytes":harness.ports.0.accepted_bytes.load(Ordering::Acquire),
-                        "writer_received_bytes":harness.ports.0.writer_received_bytes.load(Ordering::Acquire),
-                        "writer_completed_bytes":harness.ports.0.writer_completed_bytes.load(Ordering::Acquire)
-                    }),
-                );
-            }
         }
     }
     // The first timer tick is immediate; wait through the final frame's full duration.
@@ -871,6 +932,9 @@ async fn run_controller_capture(
     reply.send(DeliveryResult::CopiedOnly).unwrap();
     harness.stage(DictationStage::PasteSkipped).await;
     harness.idle().await;
+    if let Some(monitor) = monitor {
+        monitor.finish(false).await;
+    }
     serde_json::json!({
         "audio_seconds":seconds,"actual_capture_seconds":elapsed,
         "captured_bytes":expected,"confirmed_bytes":expected,
@@ -878,6 +942,12 @@ async fn run_controller_capture(
         "confirmed_cursors":cursors,"maximum_producer_lateness_ms":maximum_lateness.as_secs_f64()*1000.0,
         "history_saved_before_handoff":true,"capture_joined":true,"polisher_exercised":true
         ,"capture_frame_bytes":FRAME_BYTES,"capture_frame_interval_ms":FRAME_MILLISECONDS
+        ,"accepted_bytes":harness.ports.0.accepted_bytes.load(Ordering::Acquire),
+        "writer_received_bytes":harness.ports.0.writer_received_bytes.load(Ordering::Acquire),
+        "writer_completed_bytes":harness.ports.0.writer_completed_bytes.load(Ordering::Acquire),
+        "observed_max_queue_slots":harness.ports.0.observed_queue_slots.load(Ordering::Acquire),
+        "engine_lock":harness.ports.0.capture_trace.get().map(|trace|trace.snapshot()),
+        "recovery_io":harness.recovery.fixture_io_progress()
     })
 }
 
@@ -1417,6 +1487,39 @@ async fn blocked_native_checkpoint_keeps_stop_discard_auth_and_shutdown_responsi
     }
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sampled_monitor_does_not_wait_for_blocked_engine_or_journal_mutexes() {
+    let mut harness = Harness::new(true, false);
+    harness.begin(DictationMode::Hold).await;
+    let (release, blocked) = harness.recovery.pause_next_fixture_write();
+    harness.ports.feed(&pcm(32000));
+    tokio::time::timeout(Duration::from_secs(5), blocked)
+        .await
+        .unwrap()
+        .unwrap();
+    let probe = harness.ports.0.clone();
+    let recovery = harness.recovery.clone();
+    let sampled = tokio::time::timeout(
+        Duration::from_millis(200),
+        tokio::task::spawn_blocking(move || {
+            CaptureMonitor::sample(&probe, &recovery, Instant::now())
+        }),
+    )
+    .await;
+    drop(release);
+    let sample = sampled
+        .expect("Monitor blocked on a target mutex.")
+        .unwrap();
+    assert_eq!(sample["observer_uses_no_target_mutex"], true);
+    assert_eq!(sample["recovery_io"]["phase"], "fixture-pause");
+    harness
+        .commands
+        .send(DictationCommand::Interrupt)
+        .await
+        .unwrap();
+    harness.idle().await;
+    harness.close().await;
+}
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn final_seal_does_not_starve_timers_and_pending_cancellation_cannot_deliver_late_text() {
     for streaming in [false, true] {

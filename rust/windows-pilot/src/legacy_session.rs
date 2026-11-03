@@ -353,7 +353,14 @@ impl<S: BatchBackend> Inner<S> {
     fn publish(&self, state: &State) {
         #[cfg(test)]
         let _probe = self.journal.fixture_publish_progress();
-        self.progress.send_replace(progress(state));
+        let value = progress(state);
+        #[cfg(test)]
+        self.trace.progress(
+            value.captured_bytes,
+            value.saved_bytes,
+            value.transcribed_bytes,
+        );
+        self.progress.send_replace(value);
     }
 
     fn checkpoint(

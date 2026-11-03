@@ -423,7 +423,14 @@ impl<S: StreamingBackend> Inner<S> {
     fn publish(&self, state: &State) {
         #[cfg(test)]
         let _probe = self.journal.fixture_publish_progress();
-        self.progress.send_replace(make_progress(state));
+        let value = make_progress(state);
+        #[cfg(test)]
+        self.trace.progress(
+            value.captured_bytes,
+            value.saved_bytes,
+            value.transcribed_bytes,
+        );
+        self.progress.send_replace(value);
     }
 
     fn checkpoint(&self, state: &mut State, complete: bool) -> Result<(), Failure> {

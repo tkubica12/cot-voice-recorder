@@ -122,6 +122,11 @@ pub(crate) struct Lock {
     last_wait_thread: AtomicU64,
     last_wait_context: AtomicUsize,
     last_wait_ns: AtomicU64,
+    maximum_hold_ns: AtomicU64,
+    maximum_wait_ns: AtomicU64,
+    captured_bytes: AtomicU64,
+    saved_bytes: AtomicU64,
+    confirmed_bytes: AtomicU64,
 }
 
 impl Lock {
@@ -144,6 +149,11 @@ impl Lock {
             last_wait_thread: AtomicU64::new(0),
             last_wait_context: AtomicUsize::new(0),
             last_wait_ns: AtomicU64::new(0),
+            maximum_hold_ns: AtomicU64::new(0),
+            maximum_wait_ns: AtomicU64::new(0),
+            captured_bytes: AtomicU64::new(0),
+            saved_bytes: AtomicU64::new(0),
+            confirmed_bytes: AtomicU64::new(0),
         }
     }
 
@@ -160,6 +170,7 @@ impl Lock {
             lock: self.clone(),
             operation: operation.into(),
             active: self.enabled,
+            started_ns: now(),
         }
     }
 
@@ -197,7 +208,18 @@ impl Lock {
             "stable_epoch":epoch==self.owner_epoch.load(Ordering::Acquire),
             "owner_active":epoch!=0,
             "timestamps_are_process_monotonic":true,"not_os_thread_ids":true
+            ,"maximum_hold_ms":self.maximum_hold_ns.load(Ordering::Acquire) as f64/1_000_000.0,
+            "maximum_wait_ms":self.maximum_wait_ns.load(Ordering::Acquire) as f64/1_000_000.0,
+            "captured_bytes":self.captured_bytes.load(Ordering::Acquire),
+            "saved_bytes":self.saved_bytes.load(Ordering::Acquire),
+            "confirmed_bytes":self.confirmed_bytes.load(Ordering::Acquire)
         })
+    }
+
+    pub fn progress(&self, captured: u64, saved: u64, confirmed: u64) {
+        self.captured_bytes.store(captured, Ordering::Release);
+        self.saved_bytes.store(saved, Ordering::Release);
+        self.confirmed_bytes.store(confirmed, Ordering::Release);
     }
 }
 
@@ -205,10 +227,12 @@ pub(crate) struct Wait {
     lock: Arc<Lock>,
     operation: String,
     active: bool,
+    started_ns: u64,
 }
 
 impl Wait {
     pub fn acquired<'a, T>(mut self, inner: std::sync::MutexGuard<'a, T>) -> Guard<'a, T> {
+        let acquired_ns = now();
         let epoch = if self.active {
             self.lock.wait_count.fetch_sub(1, Ordering::AcqRel);
             self.active = false;
@@ -218,7 +242,11 @@ impl Wait {
                 .owner_thread
                 .store(THREAD.with(|id| *id), Ordering::Release);
             self.lock.owner_context.store(0, Ordering::Release);
-            self.lock.acquired_ns.store(now(), Ordering::Release);
+            self.lock.acquired_ns.store(acquired_ns, Ordering::Release);
+            self.lock.maximum_wait_ns.fetch_max(
+                acquired_ns.saturating_sub(self.started_ns),
+                Ordering::AcqRel,
+            );
             self.lock.owner_epoch.store(epoch, Ordering::Release);
             let id = context(self.lock.kind, &self.operation, self.lock.capture_stack);
             self.lock.owner_context.store(id, Ordering::Release);
@@ -230,6 +258,7 @@ impl Wait {
             inner: Some(inner),
             lock: self.lock.clone(),
             epoch,
+            acquired_ns,
         }
     }
 }
@@ -246,6 +275,7 @@ pub(crate) struct Guard<'a, T> {
     inner: Option<std::sync::MutexGuard<'a, T>>,
     lock: Arc<Lock>,
     epoch: u64,
+    acquired_ns: u64,
 }
 impl<T> Deref for Guard<'_, T> {
     type Target = T;
@@ -262,7 +292,12 @@ impl<T> Drop for Guard<'_, T> {
     fn drop(&mut self) {
         drop(self.inner.take());
         if self.epoch != 0 {
-            self.lock.released_ns.store(now(), Ordering::Release);
+            let released_ns = now();
+            self.lock.released_ns.store(released_ns, Ordering::Release);
+            self.lock.maximum_hold_ns.fetch_max(
+                released_ns.saturating_sub(self.acquired_ns),
+                Ordering::AcqRel,
+            );
             let _ = self.lock.owner_epoch.compare_exchange(
                 self.epoch,
                 0,

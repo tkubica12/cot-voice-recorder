@@ -201,6 +201,13 @@ ancestor walk merely to construct the same path. No validation is cached across
 operations. The change has passed data/ownership/junction regression; it is not
 yet a completed wall-clock-hour proof.
 
+Capture diagnostics sample atomic progress and owner/I/O snapshots every ten
+seconds on a separate bounded observer thread. That observer never takes the
+engine or journal mutex and is joined on normal exit or failure. It records
+observed queue occupancy and measured hold/wait maxima since lock creation;
+these are observations, not new acceptance thresholds. A blocked-journal unit
+test verifies the observer still returns while both target locks are held.
+
 ```powershell
 # Use an explicitly chosen isolated directory; do not use installed app state for tests.
 rust\target\release\VoicePromptRustPilot.exe --instance-key isolated-client `
