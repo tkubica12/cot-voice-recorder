@@ -32,7 +32,7 @@ znovu v odpovidajicim scope.
 | Audio jadro a C#/Python parity | Implementovano a overeno |
 | Zdroj externich crates | crates.io vyslovne schvalene jako projektova vyjimka |
 | Nativni Windows zaklad | Tray, izolovana instance a DPAPI implementovany; lokalni self-test a C# DPAPI parity prosly |
-| Mereni Windows klienta | Frozen7b4aff4 full-runtime signed-out30+30/3 paired301-point PASS: p95Rust455.182ms/meanprivate3.650MiB. Aktualni post-main a2d/3f4 profily FAILED/INCOMPLETE na15s readiness, zadne memory serie ani novy verdict; puvodni PASS se neprepisuje na nove binary nebo signed-in/physical scope |
+| Mereni Windows klienta | NOVA vyslovne schvalena quiet-window current071/checkout86f3b0f full-runtime signed-out30+30/3paired301-point PASS: p95Rust257.948ms,meanprivate3.427MiB,observedpeak3.992MiB. Vsechnyrawvalues/pairedthresholds/cleanup nezavisleovereny;starsi7bPASS ia2d/3f4FAILEDINCOMPLETE zachovany,neprepisuji se na signed-in/physical scope |
 | Microphone readiness | Jeden actual240ms probe a samostatne schvalena30+30 paired serie prosly; first-PCM p95Rust80.75% C#baseline, bez audio souboru/uploadu |
 | Engine longevity | Actual3600s synthetic PCM/real50min rotation,115200000 exact bytes; worst idle growth1.645MiB<10MiB, engine-only PASS |
 | CI nativniho inkrementu | 7b4aff4 original-icon/reactive-overlay Windows/Linux/MSRV1.85/container RustCI a C#WindowsCI PASS; nasledne observer/input inkrementy maji vlastni CI, nejde o real-world cutover |
@@ -2790,3 +2790,66 @@ IAM/cutover akceptace. Tyto hranice nelze nahradit synthetic PASS.
 Starsimic/Google/clipboard approvals jsou spotrebovane a45788 je pouze
 assisted/manual-CtrlV partial. Zadne nove personal cache, Azure zmeny,
 paidAI, install nebo dalsi fyzicky pokus se neprovedly.
+
+### Jedna NOVE schvalena quiet-window currentWindows serie: scoped PASS
+
+Po predchozim nezodpovezenem dotazu bylo polozeno JEDNO nove child
+ask_user s presnym nonphysical scope. Uzivatel vyslovne vybral:
+"Ano, povoluji jednu serii; nyni je klidove okno" (presna puvodni
+odpoved s diakritikou je v authorization.json). Tim se schvalila
+prave jedna nova kompletni current30Rust+30CSharp/3paired5minidle
+serie na TOMTO pocitaci,200synthetic history entries, puvodni thresholds
+i15s operational readiness budget. Resume se za souhlas nepovazovalo.
+Po dobu collection nebezely dalsi localbuilds/tests/zatez. Predchozi
+faileda2d/3f4 data nebyla mazana, opakovana ani zpetne prohlasena zaPASS.
+
+Current code0713037, checkout86f3b0f, frozen native
+76e3b043db1d533a3b17e8946f7b29c69acacb3d4932ccc8aca461cb01c8ade2
+a stejny allowlisted C#fixture bundle byly overeny pred startem.
+Git potvrzuje posledni App/Core/ClientFixture sourcechangef93003c,
+takze frozen reference je aktualni, nikoli jina osobni instalace.
+Datum actualserie3.listopadu2026, explicit own roots/IPC, zadny OAuth/
+device/hotkey/clipboard/paste/registry/install/backend/paidAI port.
+Jeden bounded detachedcollector prezil normalne,exit0,stderr empty,
+bez automaticretry. All60immutablestartup observations i6x301memory
+samples byly skutecne dokonceny.
+
+Nezavisly verifier bez importu collector metrics prepocetl vsechny
+raw60startups+60immutablefiles+1806memoryvalues,nearest-rankp95,
+means/maxima,KAZDOUpairedseries aoriginaltargets,actualdurations,
+samecorpus/bundlehashes/source/PIDs a cleanup. Report
+client-comparison-authorized-0713037/measurements/full-client-signed-out-comparison.json
+SHA256f99ab7126e3cf06913e648fa72716cffec22635500006518c144fbb6c8ddaa3e.
+Independent-verification SHA256
+e2cd14d5787e6397b4378842877a351c7cc2d47d04054d2ecf7cdc627992a395,
+verifier vfiles/verify_current_windows_profile.py; jeho vysledek neni
+success-shaped fallback ani tvrzeni cele migrace.
+
+| Current signed-out runtime071,30starts/3pairedidle | C#reference | Rust |
+| --- | --- | --- |
+| Startp95,nearest-rank30 | 1706.136100ms | 257.948300ms |
+| Mean private bytes,vsech903samples | 95.183114MiB | 3.427075MiB |
+| Observed maxprivate,903samples | 107.859375MiB | 3.992188MiB |
+| Paired meanprivate,serie1 | 94.197259MiB | 3.451308MiB |
+| Paired meanprivate,serie2 | 96.912765MiB | 3.293423MiB |
+| Paired meanprivate,serie3 | 94.439317MiB | 3.536493MiB |
+
+Rust startp95 je15.118858%baseline a<=1s/<=70% PASS. Max observed
+private<=80MiB aEACHpairedmean<=50%baseline PASS (Rust3.664/3.398/
+3.745% respective C#series). Actual durations299.9802343..300.0137489s,
+requested1s/301points, zadny zkraceny/accelerated measurement.
+Vsechny66 own measured processes probehly/ukoncily (PIDreuse se
+nezamenuje za novy process),zadny own frozen-image process nezustal;
+generated state roots odstraneny, original rawproofs/bundles retained.
+Source86f3b0f/branch byly po collection stale clean/unchanged.
+
+Tato nova actualserie uzavira konkretni current-full-runtime-SIGNEDOUT
+startup/idle scope. NE signed-in backend/visible-window/controller-hour,
+physicalpaste/mic/humanaccessibility/installerupgrade/realprivateAzure/
+wholemigration acceptance. Predchozi7b cisla nebyla prepsana na tuto
+binary a predchozi failed/incomplete serie s neprokazanou pricinou
+zpomaleni nebyly ignorovany. Nova one-series
+permission je nyni spotrebovana; nedava dalsi repeat ani fyzicky grant.
+Zbyva novy explicitni souhlas pro nejmensi physicalDesktopGuard test,
+human/fullcontroller a install/privateAzure hranice; guarded45788
+stale jenassisted/manualpartial.
