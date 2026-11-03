@@ -231,6 +231,30 @@ fresh manifest state; internal engine pins use descriptors updated only after
 durable publication. Corrupt data or changed binding is an explicit failure.
 These are structural/data proofs and a short smoke, not a60s or hour PASS.
 
+Writer diagnostics can additionally capture one bounded test-only mutation
+timeline: engine/root wait and hold, fresh path/reparse probes, quota entries
+and charged bytes, descriptor/hash validation, DPAPI, staging create/write/
+flush/rename and durable cursor publication. Completed spans and current ages
+are separate; nested spans are inclusive, not additive. The metadata monitor
+uses `try_lock`, reports missing/dropped events explicitly, and never waits for
+an engine or journal lock. No tracing API or selector is exposed by production.
+
+Checkpoints now reuse their already validated manifest encoding. Streaming
+updates its engine state from the manifest it just durably published while
+holding the engine lock, eliminating a second encode and immediate encrypted
+readback. Fresh state validation before mutation, every actual I/O path/reparse
+guard, quota scan including staging/orphans, and audio-before-manifest ordering
+remain unchanged. Legacy retains its fresh readback because batch result
+publication can precede acquisition of its engine state lock.
+
+While an owned persistence worker is pending, the controller still processes
+auth/shutdown/discard and the existing stop deadline. Expiry reports incomplete
+saving and suppresses delivery; it does not detach the writer, announce idle or
+claim a normal join. The original five-second fixture join check is unchanged.
+Deterministic tests keep actual checkpoint I/O blocked beyond that check, then
+release it and verify joined cleanup and exact retained PCM/original binding.
+This does not establish current-hour throughput or guarantee unwritable audio.
+
 ```powershell
 # Use an explicitly chosen isolated directory; do not use installed app state for tests.
 rust\target\release\VoicePromptRustPilot.exe --instance-key isolated-client `

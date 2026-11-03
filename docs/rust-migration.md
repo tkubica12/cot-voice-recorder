@@ -3572,3 +3572,51 @@ protected mutation I/O spolu s nedokazanym joinedshutdown; dalsi bounded
 diagnostika musi rozlisit jeho skutecne phase/ownership, ne odhadovat OS nebo
 automaticky zvetsovat frontu/rozpocty. GUI/physical/accessibility/installation/
 privateAzure hranice i vsechny starsi scope proofs zustavaji oddelene.
+
+### Bounded writer timeline a nejmensi prokazana oprava
+
+Po failed0f hodine koordinator zadal bounded timeline/regression, NE novy
+60s/fullhour. Test-only selected-thread capture ma nejvyse512completed/32active
+spans, `try_lock` metadata monitor, explicitdropped/unavailable a zadne engine/
+journal locky v monitoru. Kazda faze ma actualstart/completed timestamp nebo
+currentage, ownRustthread (NE OSthread), vlastnisynthetic bytes/counts.
+Nested spans jsou inclusive a nesmi se secist jako exclusiveIOcas.
+
+Prvni actual64000byte StreamingSession.append/checkpoint jednotkovy scenar
+nameril17.7963ms append/17.7713ms engineheld/16.0187ms rootheld.
+Corecheckpoint clone/hash/validate2.6765ms, preflightencode0.0244ms a druhe
+encode0.0188ms; postpublication encryptedreadback1.5588ms drzelroot dalsich
+1.5479ms. Kvoty skutecne prozkoumaly3entry/3metadataprobes/342chargedbytes
+a4entry/4probes/64604bytes, za1.0917/0.9525ms. DPAPI a stagingcreate/write/
+flush/close/rename i path/reparseprobe counts maji vlastni rawcompletedspans.
+Complete48event timeline je v writer-checkpoint-timeline-work.
+Tento kratky sparse-root/debug test nereprodukoval historic1589msheld a
+neprokazuje jeho OSpricinu ani podilquota. Nejde o novy latencyprofil.
+
+Prokazane nadbytecne kroky jsou odstraneny: checkpoint znovu pouzije predem
+overene manifestbytes a streamingcaller obdrzi ownvalidated durablypublished
+manifest pri stale drzenem enginelocku, misto dalsiho encryptedreadback.
+Audio-before-manifest, freshstatevalidation predmutation a freshfullpath/
+reparse/bytebounds pri actualIO zustavaji. Quotaaccounting se NECACHUJE;
+staging/orphans/externalcharges a originalwriterownership se neignoruje.
+Legacyfreshreadback zustava kvuli batchresult publication predenginelockem.
+Neni batchdelay checkpointu, queueexpansion/drop ani zmensenizabezpeceni.
+
+Controller navic uz neceka na writer bez zpracovani auth/shutdown/Discard/
+existingdeadline. Pri prekroceni deadline zobrazi explicitincomplete/recoverable
+durableprefix, potlaci pozdejsidelivery a stale vlastni/joinuje mutatingworker.
+Neni falseIdle/normaljoinedPASS nebo detachedmutation;5sfixturejoinlimit
+zustava. Novyactualblockedcheckpoint scenar vysle Stop, pak auth/shutdown
+behemFinishing, overi2sdeadlinefeedback a5sjoinTIMEOUT pri stalezablokovanemIO,
+drzenybusy/owner a zadnouHistory/delivery. Az po uvolneniIO joinne actualworker
+aoveri vsechnyacceptedPCM v puvodnimRecoverybindingu/poradi. Existujici
+Discard/Overflow/workerIOerror/pin/reconnect/retention/data suites prochazeji;
+nezakotvuje to fullguarantee pro nezapisovatelnydisk.
+
+Current320workspace/124native/fmt/alltarget-allfeatureClippy/release PASS;
+7actualRecovery/junction/ownershipparity,7DPAPI-IPC-originalicon a6hiddenclient
+groupsPASS. Currenttimeline unit prokazuje1encode/1pre-mutationmanifestread,
+bez extra readback; originaltimeline/raw0f/a10/ed760/4430/b00failures zachovany.
+Matching commit/CI jeste musi byt presne zapsane. Actualcurrent-hour throughput,
+rotation/postidle10MiB a rychle normaljoinedshutdown stale NEJSOU dokazany.
+Zadny novy60s/fullhour/quietprofile/GUI/CUI/device/install/Azure nebo paidAIbeh.

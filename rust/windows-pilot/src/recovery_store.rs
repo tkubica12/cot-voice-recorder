@@ -166,6 +166,8 @@ impl PinnedRecoveryAudio {
 
 impl Drop for PinnedRecoveryAudio {
     fn drop(&mut self) {
+        #[cfg(test)]
+        let _mutation = crate::mutation_trace::span("deferred-pin-cleanup");
         let release =
             (|| {
                 let _ownership = self.root.lock()?;
@@ -518,6 +520,8 @@ impl RecoveryRoot {
     #[track_caller]
     fn lock(&self) -> Result<MutexGuard<'_, HashSet<String>>, NativeError> {
         #[cfg(test)]
+        let mutation_wait = crate::mutation_trace::span("root-lock-wait");
+        #[cfg(test)]
         let wait = self
             .trace
             .wait(&format!("{}", std::panic::Location::caller()));
@@ -525,6 +529,8 @@ impl RecoveryRoot {
             .active
             .lock()
             .map_err(|_| NativeError::Verification("Recovery journal lock is poisoned."))?;
+        #[cfg(test)]
+        drop(mutation_wait);
         #[cfg(test)]
         return Ok(wait.acquired(guard));
         #[cfg(not(test))]
@@ -602,6 +608,12 @@ impl RecoveryRoot {
     }
 
     fn ensure_quota(&self, additional: usize) -> Result<(), NativeError> {
+        #[cfg(test)]
+        let mut mutation = crate::mutation_trace::span("quota-scan");
+        #[cfg(test)]
+        let mut charged_bytes = 0;
+        #[cfg(test)]
+        let mut metadata_probes = 0;
         let mut remaining =
             self.maximum_bytes
                 .checked_sub(additional as u64)
@@ -626,6 +638,16 @@ impl RecoveryRoot {
                 let metadata = entry
                     .metadata()
                     .map_err(|error| NativeError::Io("inspect recovery quota entry", error))?;
+                #[cfg(test)]
+                {
+                    metadata_probes += 1;
+                    if !metadata.is_dir() {
+                        charged_bytes += metadata.len();
+                    }
+                    if let Some(mutation) = &mut mutation {
+                        mutation.counts(count as u64, metadata_probes, charged_bytes);
+                    }
+                }
                 if metadata.file_attributes() & 0x400 != 0 {
                     return Err(NativeError::Verification(
                         "Recovery quota refuses reparse points.",
@@ -693,13 +715,19 @@ impl RecoveryRoot {
 
     fn write_manifest(&self, state: &RecoveryManifest) -> Result<(), NativeError> {
         let path = self.session_path(&state.id)?.join("manifest.enc");
-        let mut plain = state.encode()?;
+        let mut plain = {
+            #[cfg(test)]
+            let _mutation = crate::mutation_trace::span("manifest-encode");
+            state.encode()?
+        };
         let result = self.write_encrypted(&path, &plain, MAX_MANIFEST_BYTES);
         plain.fill(0);
         result
     }
 
     fn read_encrypted(&self, path: &Path, limit: usize) -> Result<Vec<u8>, NativeError> {
+        #[cfg(test)]
+        let _mutation = crate::mutation_trace::span("encrypted-read");
         #[cfg(test)]
         let _probe = {
             self.io_probe.enter(5);
@@ -745,9 +773,13 @@ impl RecoveryRoot {
             }
         }
         let mut cipher = Vec::new();
-        file.take((limit + ENCRYPTION_ALLOWANCE + 1) as u64)
-            .read_to_end(&mut cipher)
-            .map_err(|error| NativeError::Io("read encrypted recovery file", error))?;
+        {
+            #[cfg(test)]
+            let _mutation = crate::mutation_trace::span("read-cipher-bytes");
+            file.take((limit + ENCRYPTION_ALLOWANCE + 1) as u64)
+                .read_to_end(&mut cipher)
+                .map_err(|error| NativeError::Io("read encrypted recovery file", error))?;
+        }
         if cipher.len() > limit + ENCRYPTION_ALLOWANCE {
             return Err(NativeError::Verification(
                 "Encrypted recovery file exceeds supported bounds.",
@@ -768,6 +800,8 @@ impl RecoveryRoot {
     }
 
     fn remove_audio(&self, id: &str, index: u32) -> Result<(), NativeError> {
+        #[cfg(test)]
+        let _mutation = crate::mutation_trace::span("confirmed-or-orphan-cleanup");
         if let Some(readers) = self.reader_state(id)? {
             let mut readers = readers
                 .lock()
@@ -781,6 +815,8 @@ impl RecoveryRoot {
     }
 
     fn remove_audio_file(&self, id: &str, index: u32) -> Result<(), NativeError> {
+        #[cfg(test)]
+        let _mutation = crate::mutation_trace::span("delete-audio-file");
         #[cfg(test)]
         let _probe = {
             self.io_probe.enter(7);
@@ -858,6 +894,8 @@ impl NativeRecoveryJournal {
     }
 
     fn publish_readers(&self, state: &RecoveryManifest) -> Result<(), NativeError> {
+        #[cfg(test)]
+        let _mutation = crate::mutation_trace::span("manifest-reader-publication");
         let mut readers = self
             .readers
             .lock()
@@ -949,24 +987,58 @@ impl NativeRecoveryJournal {
         complete: bool,
         now: OffsetDateTime,
     ) -> Result<(), NativeError> {
+        self.checkpoint_snapshot(tail, captured, added, complete, now)
+            .map(|_| ())
+    }
+
+    pub(crate) fn checkpoint_snapshot(
+        &self,
+        tail: &[u8],
+        captured: u64,
+        added: &[AudioCheckpoint<'_>],
+        complete: bool,
+        now: OffsetDateTime,
+    ) -> Result<RecoveryManifest, NativeError> {
+        #[cfg(test)]
+        let mut mutation = crate::mutation_trace::span("journal-checkpoint");
+        #[cfg(test)]
+        if let Some(mutation) = &mut mutation {
+            mutation.counts(added.len() as u64, 0, captured);
+        }
         let _active = self.root.lock()?;
         self.ensure_open()?;
         let current = self.load_current()?;
-        let next = current.checkpoint(tail, captured, added, complete, utc_ticks(now)?)?;
+        let next = {
+            #[cfg(test)]
+            let _mutation = crate::mutation_trace::span("checkpoint-clone-hash-validate");
+            current.checkpoint(tail, captured, added, complete, utc_ticks(now)?)?
+        };
         // Check total manifest bounds before touching any audio. Still publish audio first.
-        let mut encoded = next.encode()?;
-        encoded.fill(0);
-        for (offset, audio) in added.iter().enumerate() {
-            let index = (current.chunks.len() + offset) as u32;
-            self.root.remove_audio(&self.id, index)?;
+        let mut encoded = {
+            #[cfg(test)]
+            let _mutation = crate::mutation_trace::span("manifest-size-preflight-encode");
+            next.encode()?
+        };
+        let result = (|| {
+            for (offset, audio) in added.iter().enumerate() {
+                let index = (current.chunks.len() + offset) as u32;
+                self.root.remove_audio(&self.id, index)?;
+                self.root.write_encrypted(
+                    &self.root.audio_path(&self.id, index)?,
+                    audio.wav,
+                    MAX_AUDIO_BYTES,
+                )?;
+            }
             self.root.write_encrypted(
-                &self.root.audio_path(&self.id, index)?,
-                audio.wav,
-                MAX_AUDIO_BYTES,
+                &self.root.session_path(&self.id)?.join("manifest.enc"),
+                &encoded,
+                MAX_MANIFEST_BYTES,
             )?;
-        }
-        self.root.write_manifest(&next)?;
-        self.publish_readers(&next)
+            self.publish_readers(&next)?;
+            Ok(next)
+        })();
+        encoded.fill(0);
+        result
     }
 
     pub fn read_audio(&self, index: u32) -> Result<Vec<u8>, NativeError> {

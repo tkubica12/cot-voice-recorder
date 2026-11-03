@@ -305,10 +305,22 @@ fn transform(data: &[u8], protect: bool) -> Result<Vec<u8>, NativeError> {
 }
 
 pub fn protect(data: &[u8]) -> Result<Vec<u8>, NativeError> {
+    #[cfg(test)]
+    let mut phase = crate::mutation_trace::span("dpapi-protect");
+    #[cfg(test)]
+    if let Some(phase) = &mut phase {
+        phase.counts(0, 0, data.len() as u64);
+    }
     transform(data, true)
 }
 
 pub fn unprotect(data: &[u8]) -> Result<Vec<u8>, NativeError> {
+    #[cfg(test)]
+    let mut phase = crate::mutation_trace::span("dpapi-unprotect");
+    #[cfg(test)]
+    if let Some(phase) = &mut phase {
+        phase.counts(0, 0, data.len() as u64);
+    }
     transform(data, false)
 }
 
@@ -328,7 +340,18 @@ pub struct NativeRecoveryManifestStore {
 
 pub(crate) fn guard_recovery_path(path: &Path) -> Result<(), NativeError> {
     use std::os::windows::fs::MetadataExt;
+    #[cfg(test)]
+    let mut phase = crate::mutation_trace::span("path-reparse-preflight");
+    #[cfg(test)]
+    let mut probes = 0;
     for path in path.ancestors() {
+        #[cfg(test)]
+        {
+            probes += 1;
+            if let Some(phase) = &mut phase {
+                phase.counts(0, probes, 0);
+            }
+        }
         match std::fs::symlink_metadata(path) {
             Ok(metadata) if metadata.file_attributes() & 0x400 != 0 => {
                 return Err(NativeError::Verification(
@@ -2675,31 +2698,55 @@ pub(crate) fn atomic_write(path: &Path, data: &[u8], mode: WriteMode) -> Result<
     ));
     let temporary_path = PathBuf::from(temporary_name);
     let mut temporary = TemporaryFile(None);
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temporary_path)
-        .map_err(|source| NativeError::Io("create atomic staging file", source))?;
+    let mut file = {
+        #[cfg(test)]
+        let _phase = crate::mutation_trace::span("staging-create");
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary_path)
+            .map_err(|source| NativeError::Io("create atomic staging file", source))?
+    };
     temporary.0 = Some(temporary_path.clone());
-    file.write_all(data)
-        .map_err(|source| NativeError::Io("write atomic file", source))?;
-    file.sync_all()
-        .map_err(|source| NativeError::Io("flush atomic file", source))?;
-    drop(file);
+    {
+        #[cfg(test)]
+        let mut phase = crate::mutation_trace::span("staging-write");
+        #[cfg(test)]
+        if let Some(phase) = &mut phase {
+            phase.counts(0, 0, data.len() as u64);
+        }
+        file.write_all(data)
+            .map_err(|source| NativeError::Io("write atomic file", source))?;
+    }
+    {
+        #[cfg(test)]
+        let _phase = crate::mutation_trace::span("staging-flush");
+        file.sync_all()
+            .map_err(|source| NativeError::Io("flush atomic file", source))?;
+    }
+    {
+        #[cfg(test)]
+        let _phase = crate::mutation_trace::span("staging-close");
+        drop(file);
+    }
     let from = wide(temporary_path.as_os_str())?;
     let to = wide(path.as_os_str())?;
     // Both names share a directory. Never permit copy/delete fallback across volumes.
-    match mode {
-        WriteMode::CreateNew => api("MoveFileW (publish new file)", unsafe {
-            MoveFileW(PCWSTR(from.as_ptr()), PCWSTR(to.as_ptr()))
-        })?,
-        WriteMode::Replace => api("MoveFileExW (replace encrypted cache)", unsafe {
-            MoveFileExW(
-                PCWSTR(from.as_ptr()),
-                PCWSTR(to.as_ptr()),
-                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-            )
-        })?,
+    {
+        #[cfg(test)]
+        let _phase = crate::mutation_trace::span("staging-rename");
+        match mode {
+            WriteMode::CreateNew => api("MoveFileW (publish new file)", unsafe {
+                MoveFileW(PCWSTR(from.as_ptr()), PCWSTR(to.as_ptr()))
+            })?,
+            WriteMode::Replace => api("MoveFileExW (replace encrypted cache)", unsafe {
+                MoveFileExW(
+                    PCWSTR(from.as_ptr()),
+                    PCWSTR(to.as_ptr()),
+                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+                )
+            })?,
+        }
     }
     temporary.0 = None;
     Ok(())

@@ -1520,6 +1520,93 @@ async fn sampled_monitor_does_not_wait_for_blocked_engine_or_journal_mutexes() {
     harness.idle().await;
     harness.close().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn blocked_checkpoint_exposes_stop_deadline_without_false_join_or_lost_accepted_audio() {
+    for reason in [
+        StartupInterruption::Stopped,
+        StartupInterruption::AuthChanged,
+        StartupInterruption::Shutdown,
+    ] {
+        let mut harness = Harness::new(true, false);
+        harness.begin(DictationMode::Toggle).await;
+        let (release, blocked) = harness.recovery.pause_next_fixture_write();
+        let mut bytes = pcm(32000);
+        harness.ports.feed(&bytes);
+        tokio::time::timeout(Duration::from_secs(5), blocked)
+            .await
+            .unwrap()
+            .unwrap();
+        let packet = pcm(crate::microphone::BUFFER_BYTES / 2);
+        for _ in 0..crate::microphone::OUTPUT_BUFFER_COUNT {
+            harness.ports.feed(&packet);
+            bytes.extend_from_slice(&packet);
+        }
+        assert_eq!(harness.ports.try_feed(&packet), Err(CaptureError::Overflow));
+        harness.stop().await;
+        harness.stage(DictationStage::Finishing).await;
+        match reason {
+            StartupInterruption::Stopped => {}
+            StartupInterruption::AuthChanged => {
+                harness.ports.0.auth.send_replace(AuthState::SignedOut);
+            }
+            StartupInterruption::Shutdown => {
+                harness.shutdown.send_replace(true);
+            }
+            _ => unreachable!(),
+        }
+        let deadline = tokio::time::timeout(Duration::from_secs(3), async {
+            while !harness
+                .status
+                .borrow()
+                .dictation
+                .issue
+                .is_some_and(|issue| issue.contains("stop deadline"))
+            {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await;
+        let still_owned = !harness.worker.as_ref().unwrap().is_finished();
+        let stage = harness.status.borrow().dictation.stage;
+        let busy = harness.policy.dictation_busy();
+        let joined = if deadline.is_ok() {
+            tokio::time::timeout(Duration::from_secs(5), harness.worker.as_mut().unwrap())
+                .await
+                .is_ok()
+        } else {
+            true
+        };
+        // A failed assertion must not strand the real blocking writer.
+        drop(release);
+        assert!(deadline.is_ok());
+        assert!(still_owned && busy);
+        assert_eq!(stage, DictationStage::Finishing);
+        assert!(
+            !joined,
+            "A blocked writer must not produce a joined-normal PASS."
+        );
+        if reason != StartupInterruption::Shutdown {
+            harness.idle().await;
+        }
+        harness.close().await;
+        assert!(harness.entries().is_empty());
+        assert!(harness.ui.try_recv().is_err());
+        let rows = harness.recovery.list().unwrap();
+        assert_eq!(rows.len(), 1);
+        let journal = harness.recovery.open(&rows[0].id).unwrap();
+        let state = journal.snapshot().unwrap();
+        assert!(state.capture_complete);
+        assert_eq!(state.captured_bytes, bytes.len() as u64);
+        assert_eq!(state.context, format!("{URL}\n{EMAIL}"));
+        for chunk in state.chunks.iter().filter(|chunk| chunk.text.is_none()) {
+            let audio = journal.read_audio(chunk.index).unwrap();
+            let end = usize::try_from(chunk.end_byte).unwrap();
+            assert_eq!(&audio[44..], &bytes[end - (audio.len() - 44)..end]);
+        }
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn final_seal_does_not_starve_timers_and_pending_cancellation_cannot_deliver_late_text() {
     for streaming in [false, true] {

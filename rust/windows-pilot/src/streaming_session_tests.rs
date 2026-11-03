@@ -207,6 +207,109 @@ fn journal(directory: &TemporaryRoot) -> (NativeRecoveryStore, NativeRecoveryJou
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn complete_writer_checkpoint_mutation_timeline_records_actual_io_without_target_lock_monitoring()
+ {
+    let directory = TemporaryRoot::new();
+    let (_, journal) = journal(&directory);
+    let service = Service::new(Mode::Healthy);
+    let session =
+        Arc::new(StreamingSession::start(journal, Arc::new(service.clone()), false).unwrap());
+    let capture = crate::mutation_trace::Capture::new();
+    let writer = session.clone();
+    let recording = capture.clone();
+    tokio::task::spawn_blocking(move || {
+        let _scope = recording.enter();
+        writer.append(&vec![0; 64_000]).unwrap();
+    })
+    .await
+    .unwrap();
+    let timeline = capture.snapshot();
+    assert_eq!(timeline["metadata_unavailable"], false);
+    assert_eq!(timeline["dropped_events"], 0);
+    assert!(timeline["active"].as_array().unwrap().is_empty());
+    let completed = timeline["completed"].as_array().unwrap();
+    for phase in [
+        "append",
+        "engine-lock-wait",
+        "engine-lock-held",
+        "root-lock-wait",
+        "root-lock-held",
+        "path-reparse-preflight",
+        "quota-scan",
+        "checkpoint-clone-hash-validate",
+        "manifest-size-preflight-encode",
+        "dpapi-protect",
+        "staging-create",
+        "staging-write",
+        "staging-flush",
+        "staging-close",
+        "staging-rename",
+        "manifest-reader-publication",
+        "manifest-cursor-update",
+        "cursor-progress-publication",
+    ] {
+        assert!(
+            completed.iter().any(|event| event["phase"] == phase),
+            "Missing actual mutation phase: {phase}"
+        );
+        assert!(
+            !completed
+                .iter()
+                .any(|event| event["phase"] == "post-publication-readback")
+        );
+        assert_eq!(
+            completed
+                .iter()
+                .filter(|event| event["phase"] == "encrypted-read")
+                .count(),
+            1
+        );
+    }
+    for event in completed {
+        assert!(event["completed_ns"].as_u64().unwrap() >= event["started_ns"].as_u64().unwrap());
+    }
+    assert_eq!(
+        completed
+            .iter()
+            .filter(|event| event["phase"] == "staging-rename")
+            .count(),
+        2
+    );
+    assert_eq!(
+        completed
+            .iter()
+            .filter(|event| event["phase"] == "manifest-size-preflight-encode")
+            .count(),
+        1
+    );
+    assert!(
+        !completed
+            .iter()
+            .any(|event| event["phase"] == "manifest-encode")
+    );
+    assert!(
+        completed
+            .iter()
+            .filter(|event| event["phase"] == "quota-scan")
+            .all(|event| {
+                event["entries"].as_u64().unwrap() == event["metadata_probes"].as_u64().unwrap()
+            })
+    );
+    println!("writer-checkpoint-mutation-timeline:{timeline}");
+    session.finish_capture().unwrap();
+    session
+        .wait_for_completion(Duration::from_secs(5), false)
+        .await
+        .unwrap();
+    Arc::try_unwrap(session)
+        .ok()
+        .unwrap()
+        .shutdown()
+        .await
+        .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn reconnect_waits_for_a_pinned_read_and_replays_only_the_original_confirmed_cursor() {
     let directory = TemporaryRoot::new();
     let (store, journal) = journal(&directory);

@@ -230,6 +230,12 @@ impl<S: StreamingBackend> StreamingSession<S> {
     }
 
     pub fn append(&self, mut pcm: &[u8]) -> Result<(), SessionError> {
+        #[cfg(test)]
+        let mut phase = crate::mutation_trace::span("append");
+        #[cfg(test)]
+        if let Some(phase) = &mut phase {
+            phase.counts(1, 0, pcm.len() as u64);
+        }
         if pcm.len() % 2 != 0 {
             return Err(SessionError::Audio(
                 voiceprompt_core::chunker::ChunkerError::IncompleteSample,
@@ -412,6 +418,8 @@ impl<S: StreamingBackend> Inner<S> {
     #[track_caller]
     fn lock(&self) -> Result<MutexGuard<'_, State>, Failure> {
         #[cfg(test)]
+        let mutation_wait = crate::mutation_trace::span("engine-lock-wait");
+        #[cfg(test)]
         let wait = self
             .trace
             .wait(&format!("{}", std::panic::Location::caller()));
@@ -424,11 +432,15 @@ impl<S: StreamingBackend> Inner<S> {
             ))
         })?;
         #[cfg(test)]
+        drop(mutation_wait);
+        #[cfg(test)]
         return Ok(wait.acquired(guard));
         #[cfg(not(test))]
         Ok(guard)
     }
     fn publish(&self, state: &State) {
+        #[cfg(test)]
+        let _mutation = crate::mutation_trace::span("cursor-progress-publication");
         #[cfg(test)]
         let _probe = self.journal.fixture_publish_progress();
         let value = make_progress(state);
@@ -447,12 +459,16 @@ impl<S: StreamingBackend> Inner<S> {
                 "Recovery storage failed.",
             )));
         }
-        let audio = if state.buffer.is_empty() {
-            None
-        } else {
-            Some(AudioBuffer(
-                to_wav(&state.buffer).map_err(|_| Failure::Worker)?,
-            ))
+        let audio = {
+            #[cfg(test)]
+            let _mutation = crate::mutation_trace::span("wav-encode");
+            if state.buffer.is_empty() {
+                None
+            } else {
+                Some(AudioBuffer(
+                    to_wav(&state.buffer).map_err(|_| Failure::Worker)?,
+                ))
+            }
         };
         let chunks: Vec<_> = audio
             .iter()
@@ -462,18 +478,18 @@ impl<S: StreamingBackend> Inner<S> {
                 overlaps_previous: false,
             })
             .collect();
-        let result = self
-            .journal
-            .checkpoint(
-                &state.manifest.tail,
-                state.captured,
-                &chunks,
-                complete,
-                time::OffsetDateTime::now_utc(),
-            )
-            .and_then(|()| self.journal.snapshot());
+        // Streaming mutations share this engine lock; use the snapshot we just published.
+        let result = self.journal.checkpoint_snapshot(
+            &state.manifest.tail,
+            state.captured,
+            &chunks,
+            complete,
+            time::OffsetDateTime::now_utc(),
+        );
         match result {
             Ok(manifest) => {
+                #[cfg(test)]
+                let _mutation = crate::mutation_trace::span("manifest-cursor-update");
                 state.manifest = manifest;
                 state.buffer.fill(0);
                 state.buffer.clear();

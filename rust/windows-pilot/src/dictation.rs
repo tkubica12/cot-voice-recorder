@@ -644,6 +644,7 @@ impl<P: DictationPorts> DictationHost<P> {
             let mut explicit_discard = false;
             let mut preserve = false;
             let discard_capture = Arc::new(AtomicBool::new(false));
+            let streaming_capture = matches!(&session, Session::Streaming(_));
             let (capture_stopped, mut capture_finished) = watch::channel(false);
             let writer = match audio.take() {
                 Some(receiver) => {
@@ -716,14 +717,67 @@ impl<P: DictationPorts> DictationHost<P> {
             }
             let capture_ok = stop_microphone::<P>(microphone.take()).await;
             preserve |= !capture_ok;
-            let writer = match writer {
+            let mut writer = match writer {
                 CapturePersistence::Live(worker) => worker,
                 CapturePersistence::Recovery(session) => {
                     tokio::task::spawn_blocking(move || finish_capture(session, Ok(()), discard))
                 }
             };
+            if preserve {
+                report(
+                    &self.status,
+                    "Interrupted capture is still being saved. Only already persisted audio is recoverable; nothing will be pasted.",
+                );
+            }
+            let persistence_deadline = tokio::time::sleep_until(
+                stopped
+                    + if streaming_capture && recovering.is_none() {
+                        Duration::from_secs(2)
+                    } else {
+                        Duration::from_secs(30)
+                    },
+            );
+            tokio::pin!(persistence_deadline);
+            let mut deadline_reported = false;
+            let mut watch_shutdown = true;
+            let mut watch_auth = true;
+            let mut watch_commands = true;
+            let persisted = loop {
+                tokio::select! {
+                    biased;
+                    _ = &mut persistence_deadline, if !deadline_reported => {
+                        deadline_reported = true;
+                        preserve = true;
+                        report(
+                            &self.status,
+                            "Checkpointing exceeded the stop deadline. Only already persisted audio is recoverable; saving is still pending and nothing will be pasted.",
+                        );
+                    }
+                    result = &mut writer => break result,
+                    result = self.shutdown.changed(), if watch_shutdown => {
+                        watch_shutdown = result.is_ok();
+                        preserve = true;
+                    }
+                    result = auth.changed(), if watch_auth => {
+                        watch_auth = result.is_ok();
+                        preserve = true;
+                    }
+                    command = self.commands.recv(), if watch_commands => {
+                        watch_commands = command.is_some();
+                        match command {
+                            Some(DictationCommand::Discard) if recovering.is_none() => {
+                                explicit_discard = true;
+                                discard = true;
+                                discard_capture.store(true, Ordering::Release);
+                            }
+                            Some(DictationCommand::Interrupt) | None => preserve = true,
+                            _ => {}
+                        }
+                    }
+                }
+            };
             let mut checkpoint_failed = false;
-            let session = match writer.await {
+            let session = match persisted {
                 Ok((session, result)) => {
                     if let Err(error) = result {
                         eprintln!("Final capture checkpoint: {error}");

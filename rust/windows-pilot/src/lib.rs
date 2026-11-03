@@ -80,6 +80,8 @@ mod main_presentation;
 mod main_theme;
 #[cfg(windows)]
 mod microphone;
+#[cfg(all(windows, test))]
+mod mutation_trace;
 #[cfg(windows)]
 mod settings_layout;
 #[cfg(windows)]

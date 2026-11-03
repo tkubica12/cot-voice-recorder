@@ -259,6 +259,11 @@ impl Wait {
             lock: self.lock.clone(),
             epoch,
             acquired_ns,
+            mutation: crate::mutation_trace::span(match self.lock.kind {
+                "recovery-root" => "root-lock-held",
+                "streaming-state" | "legacy-state" => "engine-lock-held",
+                _ => "other-lock-held",
+            }),
         }
     }
 }
@@ -276,6 +281,7 @@ pub(crate) struct Guard<'a, T> {
     lock: Arc<Lock>,
     epoch: u64,
     acquired_ns: u64,
+    mutation: Option<crate::mutation_trace::Span>,
 }
 impl<T> Deref for Guard<'_, T> {
     type Target = T;
@@ -291,6 +297,7 @@ impl<T> DerefMut for Guard<'_, T> {
 impl<T> Drop for Guard<'_, T> {
     fn drop(&mut self) {
         drop(self.inner.take());
+        drop(self.mutation.take());
         if self.epoch != 0 {
             let released_ns = now();
             self.lock.released_ns.store(released_ns, Ordering::Release);
