@@ -98,6 +98,14 @@ impl Drop for AudioBuffer {
     }
 }
 
+enum AudioRead {
+    Memory(AudioBuffer),
+    Pinned {
+        pin: crate::recovery_store::PinnedRecoveryAudio,
+        start: u64,
+    },
+}
+
 struct AudioBatch(Vec<voiceprompt_core::chunker::AudioChunk>);
 impl Drop for AudioBatch {
     fn drop(&mut self) {
@@ -480,12 +488,12 @@ impl<S: StreamingBackend> Inner<S> {
         }
     }
 
-    fn read_range(
+    fn plan_read(
         &self,
         state: &mut State,
         position: u64,
         maximum: usize,
-    ) -> Result<AudioBuffer, Failure> {
+    ) -> Result<AudioRead, Failure> {
         let sealed = state
             .manifest
             .chunks
@@ -494,11 +502,11 @@ impl<S: StreamingBackend> Inner<S> {
         if position >= sealed {
             let offset = usize::try_from(position - sealed).map_err(|_| Failure::Worker)?;
             if offset >= state.buffer.len() {
-                return Ok(AudioBuffer(Vec::new()));
+                return Ok(AudioRead::Memory(AudioBuffer(Vec::new())));
             }
-            return Ok(AudioBuffer(
+            return Ok(AudioRead::Memory(AudioBuffer(
                 state.buffer[offset..offset + maximum.min(state.buffer.len() - offset)].to_vec(),
-            ));
+            )));
         }
         let cached = state.cache.as_ref().is_some_and(|(start, audio)| {
             position >= *start && position < *start + (audio.0.len() - 44) as u64
@@ -513,11 +521,11 @@ impl<S: StreamingBackend> Inner<S> {
                     "Missing recovery audio range.",
                 )))?;
             let start = chunk.end_byte - u64::from(chunk.audio_bytes - 44);
-            let audio = self
+            let pin = self
                 .journal
-                .read_audio(chunk.index)
+                .pin_audio(chunk, &state.manifest.context)
                 .map_err(Failure::Storage)?;
-            state.cache = Some((start, AudioBuffer(audio)));
+            return Ok(AudioRead::Pinned { pin, start });
         }
         let (start, audio) = state.cache.as_ref().ok_or(Failure::Worker)?;
         let offset = usize::try_from(position.checked_sub(*start).ok_or(Failure::Worker)?)
@@ -526,37 +534,9 @@ impl<S: StreamingBackend> Inner<S> {
         if offset >= bytes {
             return Err(Failure::Worker);
         }
-        Ok(AudioBuffer(
+        Ok(AudioRead::Memory(AudioBuffer(
             audio.0[44 + offset..44 + offset + maximum.min(bytes - offset)].to_vec(),
-        ))
-    }
-
-    fn context_at(&self, state: &mut State, through: u64) -> Result<Vec<u8>, Failure> {
-        let mut position = through.saturating_sub(OVERLAP_BYTES as u64);
-        let mut context = AudioBuffer(Vec::new());
-        while position < through {
-            let part = if position < state.manifest.confirmed_bytes {
-                let start = state.manifest.confirmed_bytes - state.manifest.tail.len() as u64;
-                if position < start {
-                    return Err(Failure::Storage(NativeError::Verification(
-                        "Missing confirmed recovery context.",
-                    )));
-                }
-                let count = (through.min(state.manifest.confirmed_bytes) - position) as usize;
-                let offset = (position - start) as usize;
-                AudioBuffer(state.manifest.tail[offset..offset + count].to_vec())
-            } else {
-                self.read_range(state, position, (through - position) as usize)?
-            };
-            if part.0.is_empty() {
-                return Err(Failure::Storage(NativeError::Verification(
-                    "Missing recovery context samples.",
-                )));
-            }
-            context.0.extend_from_slice(&part.0);
-            position += part.0.len() as u64;
-        }
-        Ok(std::mem::take(&mut context.0))
+        )))
     }
 
     fn confirm(
@@ -566,11 +546,11 @@ impl<S: StreamingBackend> Inner<S> {
         text: String,
         fallback: bool,
         words: u32,
+        context: Vec<u8>,
     ) -> Result<(), Failure> {
         if through <= state.manifest.confirmed_bytes || through > state.manifest.captured_bytes {
             return Err(Failure::Api(ApiErrorKind::Unexpected));
         }
-        let context = self.context_at(state, through)?;
         self.journal
             .confirm_streaming(
                 through,
@@ -588,21 +568,99 @@ impl<S: StreamingBackend> Inner<S> {
     }
 }
 
+async fn read_range<S: StreamingBackend>(
+    inner: Arc<Inner<S>>,
+    position: u64,
+    maximum: usize,
+) -> Result<AudioBuffer, Failure> {
+    let plan = {
+        let mut state = inner.async_lock("send-audio-read").await?;
+        inner.plan_read(&mut state, position, maximum)?
+    };
+    match plan {
+        AudioRead::Memory(bytes) => Ok(bytes),
+        AudioRead::Pinned { pin, start } => {
+            let audio = tokio::task::spawn_blocking(move || pin.read().map(AudioBuffer))
+                .await
+                .map_err(|_| Failure::Worker)?
+                .map_err(Failure::Storage)?;
+            let offset = usize::try_from(position.checked_sub(start).ok_or(Failure::Worker)?)
+                .map_err(|_| Failure::Worker)?;
+            let bytes = audio.0.len().checked_sub(44).ok_or(Failure::Worker)?;
+            if offset >= bytes {
+                return Err(Failure::Worker);
+            }
+            let result = AudioBuffer(
+                audio.0[44 + offset..44 + offset + maximum.min(bytes - offset)].to_vec(),
+            );
+            let mut state = inner.async_lock("read-audio-cache").await?;
+            if start + bytes as u64 > state.manifest.confirmed_bytes {
+                state.cache = Some((start, audio));
+            }
+            Ok(result)
+        }
+    }
+}
+
+async fn context_at<S: StreamingBackend>(
+    inner: Arc<Inner<S>>,
+    through: u64,
+) -> Result<Vec<u8>, Failure> {
+    let mut position = through.saturating_sub(OVERLAP_BYTES as u64);
+    let mut context = AudioBuffer(Vec::new());
+    while position < through {
+        let memory = {
+            let state = inner.async_lock("confirmation-context").await?;
+            if position < state.manifest.confirmed_bytes {
+                let start = state.manifest.confirmed_bytes - state.manifest.tail.len() as u64;
+                if position < start {
+                    return Err(Failure::Storage(NativeError::Verification(
+                        "Missing confirmed recovery context.",
+                    )));
+                }
+                let count = (through.min(state.manifest.confirmed_bytes) - position) as usize;
+                let offset = (position - start) as usize;
+                Some(AudioBuffer(
+                    state.manifest.tail[offset..offset + count].to_vec(),
+                ))
+            } else {
+                None
+            }
+        };
+        let part = match memory {
+            Some(bytes) => bytes,
+            None => read_range(inner.clone(), position, (through - position) as usize).await?,
+        };
+        if part.0.is_empty() {
+            return Err(Failure::Storage(NativeError::Verification(
+                "Missing recovery context samples.",
+            )));
+        }
+        position += part.0.len() as u64;
+        context.0.extend_from_slice(&part.0);
+    }
+    Ok(std::mem::take(&mut context.0))
+}
+
 async fn send_audio<S: StreamingBackend>(
     inner: Arc<Inner<S>>,
     sender: S::Sender,
     start: u64,
     committed_to: Arc<AtomicU64>,
+    mut stop: watch::Receiver<bool>,
 ) -> Result<(), Failure> {
     let mut position = start;
     let mut committed = start;
     let mut quiet = 0u64;
     let began = tokio::time::Instant::now();
     loop {
-        let audio = {
-            let mut state = inner.async_lock("send-audio-read").await?;
-            inner.read_range(&mut state, position, 640)?
-        };
+        if *stop.borrow() {
+            return Ok(());
+        }
+        let audio = read_range(inner.clone(), position, 640).await?;
+        if *stop.borrow() {
+            return Ok(());
+        }
         if !audio.0.is_empty() {
             let energy: f64 = audio
                 .0
@@ -614,10 +672,11 @@ async fn send_audio<S: StreamingBackend>(
             } else {
                 0
             };
-            sender
-                .audio(&audio.0)
-                .await
-                .map_err(|error| Failure::Api(error.kind))?;
+            tokio::select! {
+                biased;
+                _ = stop.changed() => return Ok(()),
+                result = sender.audio(&audio.0) => result.map_err(|error| Failure::Api(error.kind))?,
+            };
             position += audio.0.len() as u64;
             if quiet >= 12_800 && position - committed >= 64_000 {
                 {
@@ -627,10 +686,11 @@ async fn send_audio<S: StreamingBackend>(
                     }
                 }
                 committed_to.store(position, Ordering::Release);
-                sender
-                    .commit(false)
-                    .await
-                    .map_err(|error| Failure::Api(error.kind))?;
+                tokio::select! {
+                    biased;
+                    _ = stop.changed() => return Ok(()),
+                    result = sender.commit(false) => result.map_err(|error| Failure::Api(error.kind))?,
+                };
                 committed = position;
                 quiet = 0;
             }
@@ -642,7 +702,7 @@ async fn send_audio<S: StreamingBackend>(
             if complete {
                 break;
             }
-            tokio::select! { _ = inner.wake.notified() => {}, _ = tokio::time::sleep(Duration::from_millis(100)) => {} }
+            tokio::select! { _ = stop.changed() => return Ok(()), _ = inner.wake.notified() => {}, _ = tokio::time::sleep(Duration::from_millis(100)) => {} }
         }
         if began.elapsed() >= Duration::from_secs(50 * 60) {
             break;
@@ -655,23 +715,40 @@ async fn send_audio<S: StreamingBackend>(
         }
     }
     committed_to.store(position, Ordering::Release);
-    sender
-        .commit(true)
-        .await
-        .map_err(|error| Failure::Api(error.kind))
+    tokio::select! {
+        biased;
+        _ = stop.changed() => Ok(()),
+        result = sender.commit(true) => result.map_err(|error| Failure::Api(error.kind)),
+    }
 }
 
 async fn receive_text<S: StreamingBackend>(
     inner: Arc<Inner<S>>,
     mut receiver: S::Receiver,
     committed_to: Arc<AtomicU64>,
+    mut stop: watch::Receiver<bool>,
 ) -> Result<(), Failure> {
     loop {
-        let event = receiver
-            .receive()
-            .await
-            .map_err(|error| Failure::Api(error.kind))?;
+        if *stop.borrow() {
+            return Ok(());
+        }
+        let event = tokio::select! {
+            biased;
+            _ = stop.changed() => return Ok(()),
+            result = receiver.receive() => result.map_err(|error| Failure::Api(error.kind))?,
+        };
         let delta = matches!(&event, DictationMessage::Delta { .. });
+        let context = if let DictationMessage::Confirmed { byte_end, .. } = &event {
+            if *byte_end > committed_to.load(Ordering::Acquire) {
+                return Err(Failure::Api(ApiErrorKind::Unexpected));
+            }
+            Some(context_at(inner.clone(), *byte_end).await?)
+        } else {
+            None
+        };
+        if *stop.borrow() {
+            return Ok(());
+        }
         let mut state = inner.async_lock("receive-transcript").await?;
         state.service_error = None;
         match event {
@@ -686,7 +763,14 @@ async fn receive_text<S: StreamingBackend>(
                 let words = text.split_whitespace().count() as u32;
                 let full =
                     append_preserving_prefix(&state.manifest.confirmed_text, &text, false, None);
-                inner.confirm(&mut state, byte_end, full, false, words)?;
+                inner.confirm(
+                    &mut state,
+                    byte_end,
+                    full,
+                    false,
+                    words,
+                    context.expect("Confirmed message owns its bounded context."),
+                )?;
                 state
                     .hypotheses
                     .retain(|hypothesis| hypothesis.id != item_id);
@@ -754,8 +838,15 @@ async fn stream<S: StreamingBackend>(
         _ = cancel.changed() => return Ok(()),
     };
     let committed = Arc::new(AtomicU64::new(start));
-    let mut sending = tokio::spawn(send_audio(inner.clone(), sender, start, committed.clone()));
-    let mut receiving = tokio::spawn(receive_text(inner, receiver, committed));
+    let (stop, stopped) = watch::channel(false);
+    let mut sending = tokio::spawn(send_audio(
+        inner.clone(),
+        sender,
+        start,
+        committed.clone(),
+        stopped.clone(),
+    ));
+    let mut receiving = tokio::spawn(receive_text(inner, receiver, committed, stopped));
     let mut sent = false;
     let mut received = false;
     let result = tokio::select! {
@@ -777,12 +868,11 @@ async fn stream<S: StreamingBackend>(
             }
         }
     };
+    stop.send_replace(true);
     if !sent {
-        sending.abort();
         let _ = sending.await;
     }
     if !received {
-        receiving.abort();
         let _ = receiving.await;
     }
     result
@@ -795,7 +885,10 @@ fn join_result(result: Result<Result<(), Failure>, tokio::task::JoinError>) -> R
     }
 }
 
-async fn fallback<S: StreamingBackend>(inner: Arc<Inner<S>>) -> Result<(), Failure> {
+async fn fallback<S: StreamingBackend>(
+    inner: Arc<Inner<S>>,
+    mut stop: watch::Receiver<bool>,
+) -> Result<(), Failure> {
     let (cursor, context, captured, language, binding) = {
         let state = inner.async_lock("fallback-snapshot").await?;
         (
@@ -815,13 +908,22 @@ async fn fallback<S: StreamingBackend>(inner: Arc<Inner<S>>) -> Result<(), Failu
     let mut position = cursor;
     let mut batches = AudioBatch(chunker.append(&context.0).map_err(|_| Failure::Worker)?);
     loop {
+        if *stop.borrow() {
+            return Ok(());
+        }
         for chunk in &mut batches.0 {
             let audio = AudioBuffer(std::mem::take(&mut chunk.wav));
-            let text = inner
-                .service
-                .transcribe(&audio.0, &language, &binding)
-                .await;
+            let text = tokio::select! {
+                biased;
+                _ = stop.changed() => return Ok(()),
+                result = inner.service.transcribe(&audio.0, &language, &binding) => result,
+            };
             let text = text.map_err(|error| Failure::Api(error.kind))?;
+            let through = start + chunk.end_byte;
+            let next_context = context_at(inner.clone(), through).await?;
+            if *stop.borrow() {
+                return Ok(());
+            }
             let mut state = inner.async_lock("fallback-prepare").await?;
             let full = append_preserving_prefix(
                 &state.manifest.confirmed_text,
@@ -835,16 +937,14 @@ async fn fallback<S: StreamingBackend>(inner: Arc<Inner<S>>) -> Result<(), Failu
                 full,
                 true,
                 text.split_whitespace().count() as u32,
+                next_context,
             )?;
             first = false;
         }
         if position == captured {
             break;
         }
-        let audio = {
-            let mut state = inner.async_lock("fallback-confirm").await?;
-            inner.read_range(&mut state, position, 64_000)?
-        };
+        let audio = read_range(inner.clone(), position, 64_000).await?;
         if audio.0.is_empty() {
             return Err(Failure::Storage(NativeError::Verification(
                 "Missing pending recovery audio.",
@@ -882,7 +982,7 @@ async fn pump<S: StreamingBackend>(inner: Arc<Inner<S>>) {
                 tokio::select! { _ = cancel.changed() => {}, _ = inner.wake.notified() => {}, _ = tokio::time::sleep(Duration::from_millis(100)) => {} }
                 continue;
             }
-            tokio::select! { result = fallback(inner.clone()) => result, _ = cancel.changed() => return }
+            fallback(inner.clone(), cancel.clone()).await
         } else {
             let done = match inner.async_lock("pump-verify").await {
                 Ok(state) => {

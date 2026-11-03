@@ -472,25 +472,33 @@ async fn transcribe<S: BatchBackend>(inner: Arc<Inner<S>>, index: u32) -> Result
     if *cancel.borrow() {
         return Err(JobError::Cancelled);
     }
-    let loader = inner.clone();
-    let audio =
-        tokio::task::spawn_blocking(move || loader.journal.read_audio(index).map(AudioBuffer))
-            .await
-            .map_err(|_| JobError::Worker)?
-            .map_err(JobError::Storage)?;
-    if *cancel.borrow() {
-        return Err(JobError::Cancelled);
-    }
-    let (language, context) = {
+    let (language, context, pin) = {
         let state = inner
             .async_lock("legacy-request-context")
             .await
             .map_err(|_| JobError::Worker)?;
+        let chunk = state
+            .manifest
+            .chunks
+            .get(index as usize)
+            .ok_or(JobError::Worker)?;
+        let pin = inner
+            .journal
+            .pin_audio(chunk, &state.manifest.context)
+            .map_err(JobError::Storage)?;
         (
             state.manifest.language.clone(),
             state.manifest.context.clone(),
+            pin,
         )
     };
+    let audio = tokio::task::spawn_blocking(move || pin.read().map(AudioBuffer))
+        .await
+        .map_err(|_| JobError::Worker)?
+        .map_err(JobError::Storage)?;
+    if *cancel.borrow() {
+        return Err(JobError::Cancelled);
+    }
     let text = tokio::select! {
         biased;
         _ = cancel.changed() => return Err(JobError::Cancelled),

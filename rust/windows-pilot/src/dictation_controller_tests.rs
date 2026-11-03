@@ -1581,6 +1581,102 @@ async fn final_seal_does_not_starve_timers_and_pending_cancellation_cannot_deliv
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn slow_pinned_audio_read_allows_capture_progress_and_joins_before_cancelled_cleanup() {
+    for reason in [
+        StartupInterruption::Stopped,
+        StartupInterruption::Discarded,
+        StartupInterruption::Interrupted,
+        StartupInterruption::AuthChanged,
+        StartupInterruption::Shutdown,
+    ] {
+        let mut harness = Harness::new(true, false);
+        let (release, blocked) = harness.recovery.pause_next_pinned_read();
+        harness.begin(DictationMode::Hold).await;
+        let mut bytes = pcm(32000);
+        harness.ports.feed(&bytes);
+        tokio::time::timeout(Duration::from_secs(5), blocked)
+            .await
+            .unwrap()
+            .unwrap();
+        let frame = pcm(crate::microphone::BUFFER_BYTES / 2);
+        for _ in 0..20 {
+            harness.ports.feed(&frame);
+            bytes.extend_from_slice(&frame);
+        }
+        let progressed = tokio::time::timeout(Duration::from_secs(1), async {
+            while harness
+                .ports
+                .0
+                .writer_completed_bytes
+                .load(Ordering::Acquire)
+                < bytes.len() as u64
+            {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await;
+        if progressed.is_err() {
+            drop(release);
+            harness.close().await;
+            panic!("Slow encrypted read blocked capture append.");
+        }
+        match reason {
+            StartupInterruption::Stopped => harness.stop().await,
+            StartupInterruption::Discarded => harness
+                .commands
+                .send(DictationCommand::Discard)
+                .await
+                .unwrap(),
+            StartupInterruption::Interrupted => harness
+                .commands
+                .send(DictationCommand::Interrupt)
+                .await
+                .unwrap(),
+            StartupInterruption::AuthChanged => {
+                harness.ports.0.auth.send_replace(AuthState::SignedOut);
+            }
+            StartupInterruption::Shutdown => {
+                harness.shutdown.send_replace(true);
+            }
+        }
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while harness.ports.0.stopped.load(Ordering::Acquire) != 1 {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(
+            harness.policy.dictation_busy(),
+            "Reader I/O cannot be detached as completed cleanup."
+        );
+        assert!(!harness.worker.as_ref().unwrap().is_finished());
+        drop(release);
+        if reason == StartupInterruption::Stopped {
+            let (_, _, reply) = harness.delivery().await;
+            reply.send(DeliveryResult::CopiedOnly).unwrap();
+            harness.stage(DictationStage::PasteSkipped).await;
+            harness.idle().await;
+            assert_eq!(*harness.ports.0.backend.0.stream.lock().unwrap(), bytes);
+        } else {
+            harness.idle().await;
+            assert!(harness.entries().is_empty());
+            assert!(harness.ui.try_recv().is_err());
+        }
+        let rows = harness.recovery.list().unwrap();
+        if reason == StartupInterruption::Discarded {
+            assert!(rows.is_empty());
+        } else {
+            assert_eq!(rows.len(), 1);
+            let state = harness.recovery.fixture_snapshot(&rows[0].id).unwrap();
+            assert_eq!(state.context, format!("{URL}\n{EMAIL}"));
+            assert_eq!(state.captured_bytes, bytes.len() as u64);
+            assert!(state.capture_complete);
+        }
+        harness.close().await;
+    }
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn disk_write_failure_preserves_the_durable_prefix_binding_and_is_not_false_full_capture() {
     for streaming in [false, true] {
         let mut harness = Harness::new(streaming, false);

@@ -3433,3 +3433,51 @@ Nesplneno1920000bytes/60s/normalpostidle a nelze tvrdit hour nebo finalmigration
 Priority dalsiho kroku je measuredreadercriticalsection/read-encryptedsubphase,
 ne dalsi slepyhour nebo spekulativni thread/path refactor. Source/data/icon/
 scopeCI dukazy zustavaji platne, ale currentwallclockstabilita stale chybi.
+
+### Measured reader fix: immutable pins a bounded I/O mimo dlouhe locks
+
+Podle namereneho read_audio blockeru je nyni engine read plan jen kratky
+snapshot/pin/cursor pod state lockem. Published unconfirmed descriptors se
+aktualizuji pouze po uspesnem durable manifest publication; originalbinding,
+digest/bytebounds/endcursor musi souhlasit. Pin admission pouziva jen kratky
+reader-state mutex, ne filesystem nebo coarse recovery-root I/O lock.
+
+Skutecny bounded file-read, DPAPI decrypt a digest/WAV validation probiha na
+blocking poolu mimo engine-state i recovery-root. Fresh plny path/ancestor/
+reparse checks zustavaji; handle otevre leaf s OPEN_REPARSE_POINT, odmita
+reparseattributes a sdili jen Read (zadne Write/Delete). Data nesmi byt mutable
+nebo z ciziho recording/bindingu. Public read API nadale cte fresh manifest;
+interni enginy maji overene own-publication descriptors pro levny pin.
+
+Durable confirmation predchazi release. Pri aktivnim pinu se confirmed file
+nesmaze, stale je quota-charged a cleanup/writer reopen nesmi pin zneplatnit.
+Posledni reader uvolni deferred delete po zavreni file handle. Pin muze prezit
+journal, ale tak dlouho blokuje jeho reopen/delete. Reader fail nebo cancellation
+uvolni vlastnictvi; network wait lze cancelnout, started file-read se joinne
+pred session release/reconnect/delete. Neni druha/unbounded PCMfronta,
+queue50/frame1280B40ms ani puvodni stopbudgety se nemeni.
+
+Nove deterministicke NoPorts skupiny: actualblocked pinnedfile read a soubezny
+journalcheckpoint/confirmation, dva pins+lastrelease, write/delete/reopen
+refusal, original-binding/corruptpayload failurecleanup; actualstreamingcapture
+append behemreaderIO a Stop/Esc/Interrupt/auth/shutdown se joinedcleanup;
+actuallegacyappend/join a reconnectpriReceiverfailure behemfileIO s replay
+od originalconfirmedcursor bezdetach/readloss. Existingpartialconfirmation/
+overlap/invalidACK a C#/Rustv1-v4 suites take prochazeji.
+
+Current316workspace/120native regular tests/fmt/allfeatureClippy/release a
+7actualencryptedRecovery/junction/ownershipparitygroups PASS. Pouze3s/3+3
+NoPortssmoke96000exactbytes/History/outbox/joins/cleanupPASS verdictincomplete.
+Neni novy60s/fullhour, source/proofneprepisuje b00failedraw nebo oldprofiles.
+Mutating manifest operations kvuli durable/CAS semantics zustavaji protected;
+odstranena dlouha critical section je bulk audiofile read/decrypt/copy.
+Presny sourcecommit/matchingCI a dalsi actualclockproof se zaznamenaji oddelene.
+
+V prime jednotkove zkousce actualpinnedreader zustal zablokovany ve fileIO,
+zatimco journalcheckpoint+confirmation dokoncily19.8118ms. To prokazuje
+odstraneni obou dlouhych reader criticalsections v tomto scenari, nikoliv
+generalni OSlatency/hodinovyPASS. Current6hiddenlifecycle a7DPAPI/IPC/original
+embedded-icon paritygroups takePASS. Build-onlysetup
+bb977e19110386a9cac723441acf395c69a96b3d6414f76ff1f7ca41bbf7bbe9
+obsahuje runtime/stagedf00583ec9ea0e47042e4ac4b426b0c19f91bdf00f1ace3c33655dd302404edbd.
+Zadna instalace/release nebo nova60s/fullhour/deviceakce neprobehla.

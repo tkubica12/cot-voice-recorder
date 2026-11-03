@@ -30,6 +30,181 @@ fn now() -> OffsetDateTime {
     OffsetDateTime::from_unix_timestamp(2_000_000_000).unwrap()
 }
 
+#[test]
+fn immutable_audio_pin_defers_confirmed_delete_and_blocks_session_reopen_until_release() {
+    let directory = TemporaryRoot::new();
+    let store = NativeRecoveryStore::new(directory.0.clone(), DEFAULT_RECOVERY_QUOTA).unwrap();
+    let mut journal = store
+        .create("cs".into(), "synthetic pin binding".into(), true, now())
+        .unwrap();
+    let id = journal.id().to_owned();
+    let wav = to_wav(&[1, 0, 2, 0]).unwrap();
+    journal
+        .checkpoint(&[], 4, &[audio(&wav, 4)], false, now())
+        .unwrap();
+    let descriptor = journal.snapshot().unwrap().chunks[0].clone();
+    assert!(journal.pin_audio(&descriptor, "different binding").is_err());
+    let mut wrong = descriptor.clone();
+    wrong.digest[0] ^= 1;
+    assert!(journal.pin_audio(&wrong, "synthetic pin binding").is_err());
+    let pin = journal
+        .pin_audio(&descriptor, "synthetic pin binding")
+        .unwrap();
+    let second_pin = journal
+        .pin_audio(&descriptor, "synthetic pin binding")
+        .unwrap();
+    journal
+        .confirm_streaming(4, "synthetic confirmed".into(), vec![], false, None, now())
+        .unwrap();
+    let path = directory.0.join(&id).join("00000000.wav.enc");
+    assert!(
+        path.exists(),
+        "Confirmed audio is still owned by the pinned reader."
+    );
+    assert!(
+        journal
+            .pin_audio(&descriptor, "synthetic pin binding")
+            .is_err()
+    );
+    assert!(
+        journal.delete().is_err(),
+        "Explicit deletion cannot invalidate a pinned reader."
+    );
+    drop(journal);
+    assert!(store.open(&id).is_err());
+    assert!(store.delete_idle(&id).is_err());
+    assert_eq!(pin.read().unwrap(), wav);
+    assert!(
+        path.exists(),
+        "One remaining reader still owns the confirmed file."
+    );
+    assert_eq!(second_pin.read().unwrap(), wav);
+    assert!(
+        !path.exists(),
+        "The final reader releases deferred confirmed audio."
+    );
+    let restored = store.open(&id).unwrap();
+    assert_eq!(restored.snapshot().unwrap().confirmed_bytes, 4);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn blocked_pinned_file_read_leaves_journal_writes_confirmation_and_timers_responsive() {
+    let directory = TemporaryRoot::new();
+    let store = NativeRecoveryStore::new(directory.0.clone(), DEFAULT_RECOVERY_QUOTA).unwrap();
+    let journal = Arc::new(
+        store
+            .create("cs".into(), "synthetic pin binding".into(), true, now())
+            .unwrap(),
+    );
+    let first = to_wav(&[1, 0, 2, 0]).unwrap();
+    journal
+        .checkpoint(&[], 4, &[audio(&first, 4)], false, now())
+        .unwrap();
+    let descriptor = journal.snapshot().unwrap().chunks[0].clone();
+    let pin = journal
+        .pin_audio(&descriptor, "synthetic pin binding")
+        .unwrap();
+    let (release, blocked) = store.pause_next_pinned_read();
+    let reader = tokio::task::spawn_blocking(move || pin.read());
+    tokio::time::timeout(std::time::Duration::from_secs(5), blocked)
+        .await
+        .unwrap()
+        .unwrap();
+    let path = directory.0.join(journal.id()).join("00000000.wav.enc");
+    let cipher = std::fs::read(&path).unwrap();
+    assert!(std::fs::write(&path, b"synthetic rejected mutation").is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), cipher);
+    let second = to_wav(&[3, 0, 4, 0]).unwrap();
+    let writer = journal.clone();
+    let second_write = second.clone();
+    let began = std::time::Instant::now();
+    let progress = tokio::task::spawn_blocking(move || {
+        writer.checkpoint(&[], 8, &[audio(&second_write, 8)], false, now())?;
+        writer.confirm_streaming(4, "synthetic confirmed".into(), vec![], false, None, now())
+    });
+    let completed = tokio::time::timeout(std::time::Duration::from_secs(1), progress).await;
+    let writer_elapsed_ms = began.elapsed().as_secs_f64() * 1000.0;
+    let still_reading = !reader.is_finished();
+    drop(release);
+    completed
+        .expect("Pinned slow I/O blocked journal progress.")
+        .unwrap()
+        .unwrap();
+    assert!(still_reading);
+    assert_eq!(reader.await.unwrap().unwrap(), first);
+    let state = journal.snapshot().unwrap();
+    assert_eq!(state.captured_bytes, 8);
+    assert_eq!(state.confirmed_bytes, 4);
+    assert_eq!(state.context, "synthetic pin binding");
+    assert_eq!(journal.read_audio(1).unwrap(), second);
+    println!(
+        "{{\"scope\":\"blocked-pinned-read-root-progress\",\"checkpoint_and_confirm_ms\":{writer_elapsed_ms},\"reader_still_blocked_during_progress\":{still_reading},\"original_binding\":true,\"saved_bytes\":8,\"confirmed_bytes\":4}}"
+    );
+}
+
+#[test]
+fn active_journal_rejects_changed_binding_before_new_audio_or_read_admission() {
+    let directory = TemporaryRoot::new();
+    let store = NativeRecoveryStore::new(directory.0.clone(), DEFAULT_RECOVERY_QUOTA).unwrap();
+    let journal = store
+        .create(
+            "cs".into(),
+            "original synthetic binding".into(),
+            true,
+            now(),
+        )
+        .unwrap();
+    let id = journal.id().to_owned();
+    let wav = to_wav(&[1, 0, 2, 0]).unwrap();
+    journal
+        .checkpoint(&[], 4, &[audio(&wav, 4)], false, now())
+        .unwrap();
+    let mut changed = journal.snapshot().unwrap();
+    changed.context = "changed synthetic binding".into();
+    let path = directory.0.join(&id).join("manifest.enc");
+    crate::NativeRecoveryManifestStore::new(path.clone())
+        .unwrap()
+        .save_fixture(&changed.encode().unwrap())
+        .unwrap();
+    let before = std::fs::read(&path).unwrap();
+    assert!(journal.snapshot().is_err());
+    assert!(
+        journal
+            .checkpoint(&[], 8, &[audio(&wav, 8)], false, now())
+            .is_err()
+    );
+    assert!(!directory.0.join(&id).join("00000001.wav.enc").exists());
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn corrupt_pinned_payload_rejects_data_and_releases_read_ownership() {
+    let directory = TemporaryRoot::new();
+    let store = NativeRecoveryStore::new(directory.0.clone(), DEFAULT_RECOVERY_QUOTA).unwrap();
+    let journal = store
+        .create("cs".into(), "synthetic pin binding".into(), true, now())
+        .unwrap();
+    let id = journal.id().to_owned();
+    let wav = to_wav(&[1, 0, 2, 0]).unwrap();
+    journal
+        .checkpoint(&[], 4, &[audio(&wav, 4)], false, now())
+        .unwrap();
+    let descriptor = journal.snapshot().unwrap().chunks[0].clone();
+    let pin = journal
+        .pin_audio(&descriptor, "synthetic pin binding")
+        .unwrap();
+    let path = directory.0.join(&id).join("00000000.wav.enc");
+    let mut cipher = std::fs::read(&path).unwrap();
+    cipher[0] ^= 1;
+    std::fs::write(&path, &cipher).unwrap();
+    assert!(pin.read().is_err());
+    drop(journal);
+    assert!(
+        store.delete_idle(&id).is_ok(),
+        "Failed reads must still release their pin."
+    );
+}
+
 fn audio(wav: &[u8], end_byte: u64) -> AudioCheckpoint<'_> {
     AudioCheckpoint {
         wav,

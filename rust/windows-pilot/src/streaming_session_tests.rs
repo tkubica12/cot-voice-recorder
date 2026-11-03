@@ -21,6 +21,7 @@ struct Service {
     sent: Mutex<Vec<Vec<u8>>>,
     batches: Mutex<Vec<Vec<u8>>>,
     changed: Notify,
+    connection_events: Mutex<Vec<mpsc::Sender<Event>>>,
 }
 
 impl Service {
@@ -32,6 +33,7 @@ impl Service {
             sent: Mutex::new(Vec::new()),
             batches: Mutex::new(Vec::new()),
             changed: Notify::new(),
+            connection_events: Mutex::new(Vec::new()),
         })
     }
 }
@@ -175,6 +177,7 @@ impl StreamingBackend for Arc<Service> {
         self.sent.lock().unwrap().push(Vec::new());
         self.changed.notify_one();
         let (events, receiver) = mpsc::channel(64);
+        self.connection_events.lock().unwrap().push(events.clone());
         Ok((
             Sender {
                 events,
@@ -201,6 +204,57 @@ fn journal(directory: &TemporaryRoot) -> (NativeRecoveryStore, NativeRecoveryJou
         )
         .unwrap();
     (store, journal)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reconnect_waits_for_a_pinned_read_and_replays_only_the_original_confirmed_cursor() {
+    let directory = TemporaryRoot::new();
+    let (store, journal) = journal(&directory);
+    let bytes = vec![0; 64000];
+    let wav = to_wav(&bytes).unwrap();
+    journal
+        .checkpoint(
+            &[],
+            64000,
+            &[AudioCheckpoint {
+                wav: &wav,
+                end_byte: 64000,
+                overlaps_previous: false,
+            }],
+            false,
+            time::OffsetDateTime::now_utc(),
+        )
+        .unwrap();
+    let (release, blocked) = store.pause_next_pinned_read();
+    let service = Service::new(Mode::Healthy);
+    let session = StreamingSession::start(journal, Arc::new(service.clone()), false).unwrap();
+    tokio::time::timeout(Duration::from_secs(5), blocked)
+        .await
+        .unwrap()
+        .unwrap();
+    let events = service.connection_events.lock().unwrap()[0].clone();
+    events.send(Event::Failure).await.unwrap();
+    session.finish_capture().unwrap();
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert_eq!(
+        service.connections.load(Ordering::Acquire),
+        1,
+        "Reconnect cannot detach old read ownership."
+    );
+    drop(release);
+    assert_eq!(
+        session
+            .wait_for_completion(Duration::from_secs(5), false)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("synthetic confirmed")
+    );
+    assert_eq!(*service.starts.lock().unwrap(), [0, 0]);
+    assert!(service.sent.lock().unwrap()[0].is_empty());
+    assert_eq!(service.sent.lock().unwrap()[1], bytes);
+    assert_eq!(session.snapshot().unwrap().confirmed_bytes, 64000);
+    session.shutdown().await.unwrap();
 }
 
 #[tokio::test]

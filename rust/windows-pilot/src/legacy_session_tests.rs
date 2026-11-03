@@ -214,6 +214,55 @@ async fn async_readers_do_not_bypass_a_pending_synchronous_capture_writer() {
     session.shutdown().await.unwrap();
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pinned_legacy_reader_does_not_hold_capture_state_or_root_during_file_io() {
+    let directory = TemporaryRoot::new();
+    let store = NativeRecoveryStore::new(directory.0.clone(), DEFAULT_RECOVERY_QUOTA).unwrap();
+    let journal = store
+        .create(
+            "cs".into(),
+            "synthetic context".into(),
+            false,
+            time::OffsetDateTime::now_utc(),
+        )
+        .unwrap();
+    let id = journal.id().to_owned();
+    let (release, blocked) = store.pause_next_pinned_read();
+    let session = LegacySession::start(journal, Backend::new(false)).unwrap();
+    session.append(&[1; 192000]).unwrap();
+    tokio::time::timeout(Duration::from_secs(5), blocked)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut writer = tokio::task::spawn_blocking(move || {
+        let result = session.append(&[2; 64000]);
+        (session, result)
+    });
+    let progressed = tokio::time::timeout(Duration::from_secs(1), &mut writer).await;
+    let (session, result) = match progressed {
+        Ok(result) => result.unwrap(),
+        Err(_) => {
+            drop(release);
+            let _ = writer.await;
+            panic!("Pinned read blocked actual legacy capture append.");
+        }
+    };
+    assert!(result.is_ok());
+    let saved = store.fixture_snapshot(&id).unwrap();
+    assert_eq!(saved.captured_bytes, 256000);
+    let shutdown = tokio::spawn(session.shutdown());
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    let detached = shutdown.is_finished();
+    drop(release);
+    tokio::time::timeout(Duration::from_secs(5), shutdown)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert!(!detached, "Shutdown must join an active pinned file read.");
+    assert!(store.open(&id).is_ok());
+}
+
 #[tokio::test]
 async fn stop_timeout_and_shutdown_keep_pending_audio_for_restart_recovery() {
     let directory = TemporaryRoot::new();

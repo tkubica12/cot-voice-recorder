@@ -208,6 +208,29 @@ observed queue occupancy and measured hold/wait maxima since lock creation;
 these are observations, not new acceptance thresholds. A blocked-journal unit
 test verifies the observer still returns while both target locks are held.
 
+Encrypted audio reads now use immutable published checkpoint descriptors and
+owned read pins. Engine locks select/copy metadata and admit the pin; bounded
+file read, DPAPI decrypt and digest/WAV validation execute on the blocking pool
+outside both engine and recovery-root mutexes. The opened handle denies writes
+and deletes and rejects a final reparse point, with the same fresh full-path,
+byte/quota and original-binding checks.
+
+Confirmation remains durable-before-release. A confirmed file with active pins
+is retained and charged to quota until its last reader closes; a pin outliving
+its journal prevents another writer or cleanup from reopening/deleting it.
+Failed/cancelled reads release their pins. Stream and batch cancellation cancels
+network waits but joins already-started file reads before releasing journal
+ownership, reconnecting or deleting recovery. At most the existing bounded
+engine read jobs hold bounded audio payloads; no extra PCM queue is introduced.
+
+Deterministic tests block actual pinned encrypted reads, then prove concurrent
+capture append, checkpoint/confirmation, Stop/Esc/auth/shutdown responsiveness,
+ordered replay from the unchanged confirmed cursor, denied mutation/deletion,
+last-pin cleanup and original bindings. The public read API still validates
+fresh manifest state; internal engine pins use descriptors updated only after
+durable publication. Corrupt data or changed binding is an explicit failure.
+These are structural/data proofs and a short smoke, not a60s or hour PASS.
+
 ```powershell
 # Use an explicitly chosen isolated directory; do not use installed app state for tests.
 rust\target\release\VoicePromptRustPilot.exe --instance-key isolated-client `
