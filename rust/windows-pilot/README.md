@@ -255,6 +255,29 @@ Deterministic tests keep actual checkpoint I/O blocked beyond that check, then
 release it and verify joined cleanup and exact retained PCM/original binding.
 This does not establish current-hour throughput or guarantee unwritable audio.
 
+Storage errors retain the original `NativeError`/`Error::source` chain. Safe
+Display/Debug output includes the static operation, IO kind/OS code or HRESULT
+and a whitelisted Recovery-relative journal/file path; it excludes arbitrary
+source-message text and absolute paths. Detailed diagnostics do not replace the
+generic incomplete/Recovery-only user notification.
+
+The synthetic producer now distinguishes NotRunning, WorkerFailure and Overflow
+without unwrapping an absent sender. Its first failure freezes the attempted and
+last admitted sequence, exact admitted byte count, received/completed counters
+and last published saved/confirmed cursors before shutdown. Published cursor
+samples are not an atomic disk snapshot. The producer must stop at that failure
+for this admission count to be final; rejected packets are never counted as
+accepted. Both-engine locked-file regressions preserve the actual durable prefix,
+binding and ciphertext, and a short realtime failure case verifies the producer
+failure file survives normal controller cleanup.
+
+A deterministic actual-filesystem barrier also forces final-pin deletion after
+quota enumerates the file but before its `DirEntry::metadata()` call. On Windows,
+that call succeeded using the entry's enumeration metadata: overlap was proved,
+but the proposed metadata-NotFound error was **not reproduced**. No speculative
+root-lock, quota-cache or NotFound-suppression change was made. This does not
+identify the lost storage cause from the historical failed120s capture.
+
 ```powershell
 # Use an explicitly chosen isolated directory; do not use installed app state for tests.
 rust\target\release\VoicePromptRustPilot.exe --instance-key isolated-client `

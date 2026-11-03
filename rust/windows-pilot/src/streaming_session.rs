@@ -166,9 +166,10 @@ impl fmt::Display for Failure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Api(kind) => write!(f, "Streaming service failure: {kind:?}; audio retained."),
-            Self::Storage(_) => {
-                f.write_str("Streaming recovery storage failed; durable audio retained.")
-            }
+            Self::Storage(error) => write!(
+                f,
+                "Streaming recovery storage failed; durable audio retained: {error}"
+            ),
             Self::Worker => f.write_str("Streaming task failed; durable audio retained."),
         }
     }

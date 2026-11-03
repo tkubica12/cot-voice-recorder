@@ -34,6 +34,10 @@ struct RecoveryRoot {
     #[cfg(test)]
     next_pinned_read_pause: Mutex<Option<Arc<FixtureWritePause>>>,
     #[cfg(test)]
+    next_deferred_delete_pause: Mutex<Option<Arc<FixtureWritePause>>>,
+    #[cfg(test)]
+    quota_entry_pause: Mutex<Option<(PathBuf, Arc<FixtureWritePause>)>>,
+    #[cfg(test)]
     io_probe: FixtureIoProbe,
     #[cfg(test)]
     trace: Arc<crate::lock_trace::Lock>,
@@ -74,6 +78,19 @@ struct FixtureWritePause {
     entered: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     released: Mutex<bool>,
     changed: std::sync::Condvar,
+}
+
+#[cfg(test)]
+impl FixtureWritePause {
+    fn wait(&self) {
+        if let Some(entered) = self.entered.lock().unwrap().take() {
+            let _ = entered.send(());
+        }
+        let mut released = self.released.lock().unwrap();
+        while !*released {
+            released = self.changed.wait(released).unwrap();
+        }
+    }
 }
 
 #[cfg(test)]
@@ -138,14 +155,19 @@ pub(crate) struct PinnedRecoveryAudio {
 
 impl PinnedRecoveryAudio {
     pub fn read(self) -> Result<Vec<u8>, NativeError> {
-        use windows::Win32::Storage::FileSystem::{FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ};
         let path = self.root.audio_path(&self.id, self.descriptor.index)?;
-        guard_recovery_path(&path)?;
+        self.read_path(&path)
+            .map_err(|error| self.root.path_error(&path, error))
+    }
+
+    fn read_path(&self, path: &Path) -> Result<Vec<u8>, NativeError> {
+        use windows::Win32::Storage::FileSystem::{FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ};
+        guard_recovery_path(path)?;
         let file = OpenOptions::new()
             .read(true)
             .share_mode(FILE_SHARE_READ.0)
             .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT.0)
-            .open(&path)
+            .open(path)
             .map_err(|error| NativeError::Io("open pinned recovery audio", error))?;
         let metadata = file
             .metadata()
@@ -190,6 +212,10 @@ impl Drop for PinnedRecoveryAudio {
             })();
         match release {
             Ok(true) => {
+                #[cfg(test)]
+                if let Some(pause) = self.root.next_deferred_delete_pause.lock().unwrap().take() {
+                    pause.wait();
+                }
                 if let Err(error) = self.root.remove_audio_file(&self.id, self.descriptor.index) {
                     eprintln!("Deferred confirmed audio cleanup failed: {error}");
                 }
@@ -306,6 +332,10 @@ impl NativeRecoveryStore {
             #[cfg(test)]
             next_pinned_read_pause: Mutex::new(None),
             #[cfg(test)]
+            next_deferred_delete_pause: Mutex::new(None),
+            #[cfg(test)]
+            quota_entry_pause: Mutex::new(None),
+            #[cfg(test)]
             io_probe: FixtureIoProbe {
                 clock: std::time::Instant::now(),
                 phase: std::sync::atomic::AtomicU8::new(0),
@@ -329,9 +359,13 @@ impl NativeRecoveryStore {
         let mut active = self.0.lock()?;
         let manifest = RecoveryManifest::create(language, context, streaming, utc_ticks(now)?)?;
         let directory = self.0.session_path(&manifest.id)?;
-        guard_recovery_path(&directory)?;
-        std::fs::create_dir(&directory)
-            .map_err(|error| NativeError::Io("create recovery session", error))?;
+        guard_recovery_path(&directory).map_err(|error| self.0.path_error(&directory, error))?;
+        std::fs::create_dir(&directory).map_err(|error| {
+            self.0.path_error(
+                &directory,
+                NativeError::Io("create recovery session", error),
+            )
+        })?;
         self.0.write_manifest(&manifest)?;
         let readers = self.0.register_readers(&manifest)?;
         active.insert(manifest.id.clone());
@@ -485,6 +519,38 @@ impl NativeRecoveryStore {
 }
 
 impl RecoveryRoot {
+    fn path_error(&self, path: &Path, source: NativeError) -> NativeError {
+        let relative_path = path
+            .strip_prefix(&self.path)
+            .ok()
+            .map(|relative| {
+                relative
+                    .components()
+                    .map(|component| {
+                        let name = component.as_os_str().to_string_lossy();
+                        let audio = name.strip_suffix(".wav.enc").is_some_and(|index| {
+                            index.len() == 8 && index.bytes().all(|byte| byte.is_ascii_digit())
+                        });
+                        if valid_id(&name)
+                            || matches!(name.as_ref(), "manifest.enc" | "writer.lock")
+                            || audio
+                        {
+                            name.into_owned()
+                        } else {
+                            "<other-entry>".into()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\\")
+            })
+            .filter(|relative| !relative.is_empty())
+            .unwrap_or_else(|| "<root>".into());
+        NativeError::RecoveryPath {
+            relative_path,
+            source: Box::new(source),
+        }
+    }
+
     fn register_readers(
         &self,
         state: &RecoveryManifest,
@@ -572,19 +638,28 @@ impl RecoveryRoot {
     }
 
     fn list(&self) -> Result<Vec<NativeRecoveryInfo>, NativeError> {
-        guard_recovery_path(&self.path)?;
-        let entries = std::fs::read_dir(&self.path)
-            .map_err(|error| NativeError::Io("list recovery root", error))?;
+        guard_recovery_path(&self.path).map_err(|error| self.path_error(&self.path, error))?;
+        let entries = std::fs::read_dir(&self.path).map_err(|error| {
+            self.path_error(&self.path, NativeError::Io("list recovery root", error))
+        })?;
         let mut result = Vec::new();
         for entry in entries {
-            let entry =
-                entry.map_err(|error| NativeError::Io("read recovery directory entry", error))?;
+            let entry = entry.map_err(|error| {
+                self.path_error(
+                    &self.path,
+                    NativeError::Io("read recovery directory entry", error),
+                )
+            })?;
             let name = entry.file_name();
             let Some(id) = name.to_str().filter(|id| valid_id(id)) else {
                 continue;
             };
-            let metadata = std::fs::symlink_metadata(entry.path())
-                .map_err(|error| NativeError::Io("inspect recovery entry", error))?;
+            let metadata = std::fs::symlink_metadata(entry.path()).map_err(|error| {
+                self.path_error(
+                    &entry.path(),
+                    NativeError::Io("inspect recovery entry", error),
+                )
+            })?;
             if metadata.file_attributes() & 0x400 != 0 {
                 eprintln!("Recovery reparse entry retained for explicit inspection.");
                 result.push(NativeRecoveryInfo::unreadable(id.into()));
@@ -623,21 +698,45 @@ impl RecoveryRoot {
         let mut directories = vec![self.path.clone()];
         let mut count = 0usize;
         while let Some(directory) = directories.pop() {
-            guard_recovery_path(&directory)?;
-            for entry in std::fs::read_dir(directory)
-                .map_err(|error| NativeError::Io("enumerate recovery quota", error))?
-            {
-                let entry =
-                    entry.map_err(|error| NativeError::Io("read recovery quota entry", error))?;
+            guard_recovery_path(&directory).map_err(|error| self.path_error(&directory, error))?;
+            for entry in std::fs::read_dir(&directory).map_err(|error| {
+                self.path_error(
+                    &directory,
+                    NativeError::Io("enumerate recovery quota", error),
+                )
+            })? {
+                let entry = entry.map_err(|error| {
+                    self.path_error(
+                        &directory,
+                        NativeError::Io("read recovery quota entry", error),
+                    )
+                })?;
                 count += 1;
                 if count > 1_000_000 {
                     return Err(NativeError::Verification(
                         "Recovery storage has too many entries.",
                     ));
                 }
-                let metadata = entry
-                    .metadata()
-                    .map_err(|error| NativeError::Io("inspect recovery quota entry", error))?;
+                #[cfg(test)]
+                {
+                    let pause = {
+                        let mut next = self.quota_entry_pause.lock().unwrap();
+                        if next.as_ref().is_some_and(|(path, _)| *path == entry.path()) {
+                            next.take().map(|(_, pause)| pause)
+                        } else {
+                            None
+                        }
+                    };
+                    if let Some(pause) = pause {
+                        pause.wait();
+                    }
+                }
+                let metadata = entry.metadata().map_err(|error| {
+                    self.path_error(
+                        &entry.path(),
+                        NativeError::Io("inspect recovery quota entry", error),
+                    )
+                })?;
                 #[cfg(test)]
                 {
                     metadata_probes += 1;
@@ -669,6 +768,16 @@ impl RecoveryRoot {
     }
 
     fn write_encrypted(&self, path: &Path, plain: &[u8], limit: usize) -> Result<(), NativeError> {
+        self.write_encrypted_inner(path, plain, limit)
+            .map_err(|error| self.path_error(path, error))
+    }
+
+    fn write_encrypted_inner(
+        &self,
+        path: &Path,
+        plain: &[u8],
+        limit: usize,
+    ) -> Result<(), NativeError> {
         #[cfg(test)]
         let _probe = {
             self.io_probe.enter(1);
@@ -726,6 +835,11 @@ impl RecoveryRoot {
     }
 
     fn read_encrypted(&self, path: &Path, limit: usize) -> Result<Vec<u8>, NativeError> {
+        self.read_encrypted_inner(path, limit)
+            .map_err(|error| self.path_error(path, error))
+    }
+
+    fn read_encrypted_inner(&self, path: &Path, limit: usize) -> Result<Vec<u8>, NativeError> {
         #[cfg(test)]
         let _mutation = crate::mutation_trace::span("encrypted-read");
         #[cfg(test)]
@@ -823,11 +937,14 @@ impl RecoveryRoot {
             FixtureIoEnd(&self.io_probe)
         };
         let path = self.audio_path(id, index)?;
-        guard_recovery_path(&path)?;
-        match std::fs::remove_file(path) {
+        guard_recovery_path(&path).map_err(|error| self.path_error(&path, error))?;
+        match std::fs::remove_file(&path) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(NativeError::Io("delete confirmed recovery audio", error)),
+            Err(error) => Err(self.path_error(
+                &path,
+                NativeError::Io("delete confirmed recovery audio", error),
+            )),
         }
     }
 
@@ -845,20 +962,35 @@ impl RecoveryRoot {
             ));
         }
         let directory = self.session_path(id)?;
-        guard_recovery_path(&directory)?;
+        guard_recovery_path(&directory).map_err(|error| self.path_error(&directory, error))?;
         let entries = match std::fs::read_dir(&directory) {
             Ok(entries) => entries,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-            Err(error) => return Err(NativeError::Io("list recovery deletion scope", error)),
+            Err(error) => {
+                return Err(self.path_error(
+                    &directory,
+                    NativeError::Io("list recovery deletion scope", error),
+                ));
+            }
         };
         let mut files = Vec::new();
         for entry in entries {
             let path = entry
-                .map_err(|error| NativeError::Io("inspect recovery deletion scope", error))?
+                .map_err(|error| {
+                    self.path_error(
+                        &directory,
+                        NativeError::Io("inspect recovery deletion scope", error),
+                    )
+                })?
                 .path();
-            guard_recovery_path(&path)?;
+            guard_recovery_path(&path).map_err(|error| self.path_error(&path, error))?;
             if std::fs::symlink_metadata(&path)
-                .map_err(|error| NativeError::Io("inspect recovery deletion file", error))?
+                .map_err(|error| {
+                    self.path_error(
+                        &path,
+                        NativeError::Io("inspect recovery deletion file", error),
+                    )
+                })?
                 .is_dir()
             {
                 return Err(NativeError::Verification(
@@ -868,13 +1000,18 @@ impl RecoveryRoot {
             files.push(path);
         }
         for file in files {
-            guard_recovery_path(&file)?;
-            std::fs::remove_file(file)
-                .map_err(|error| NativeError::Io("delete scoped recovery file", error))?;
+            guard_recovery_path(&file).map_err(|error| self.path_error(&file, error))?;
+            std::fs::remove_file(&file).map_err(|error| {
+                self.path_error(&file, NativeError::Io("delete scoped recovery file", error))
+            })?;
         }
-        guard_recovery_path(&directory)?;
-        std::fs::remove_dir(directory)
-            .map_err(|error| NativeError::Io("delete empty recovery session", error))
+        guard_recovery_path(&directory).map_err(|error| self.path_error(&directory, error))?;
+        std::fs::remove_dir(&directory).map_err(|error| {
+            self.path_error(
+                &directory,
+                NativeError::Io("delete empty recovery session", error),
+            )
+        })
     }
 }
 

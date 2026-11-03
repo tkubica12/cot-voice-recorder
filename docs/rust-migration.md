@@ -35,8 +35,8 @@ znovu v odpovidajicim scope.
 | Mereni Windows klienta | NOVA vyslovne schvalena quiet-window current071/checkout86f3b0f full-runtime signed-out30+30/3paired301-point PASS: p95Rust257.948ms,meanprivate3.427MiB,observedpeak3.992MiB. Vsechnyrawvalues/pairedthresholds/cleanup nezavisleovereny;starsi7bPASS ia2d/3f4FAILEDINCOMPLETE zachovany,neprepisuji se na signed-in/physical scope |
 | Microphone readiness | Jeden actual240ms probe a samostatne schvalena30+30 paired serie prosly; first-PCM p95Rust80.75% C#baseline, bez audio souboru/uploadu |
 | Engine longevity | Actual3600s synthetic PCM/real50min rotation,115200000 exact bytes; worst idle growth1.645MiB<10MiB, engine-only PASS |
-| Current controller longevity | Ctyri actualcontrollerhour vcetne noveho0f60489 a post-dedup60s b00 FAILED/INCOMPLETE s raw/encrypted state zachovanymi; pinned-reader source ma316tests/all5CI PASS, nikoli3600s/rotation/postidle proof |
-| CI nativniho inkrementu | Currentb7d016d writer-timeline/deadline Windows/Linux/MSRV1.85/container RustCI41699794216 ALL5PASS; predchozi pinned-reader/icon/UI/adapter doklady zustavaji revision-scoped, nejde o real-world cutover |
+| Current controller longevity | Ctyri actualcontrollerhour vcetne0f60489, post-dedup60s b00 a b7actual120s FAILED/INCOMPLETE, raw/encrypted state zachovany; b7finalaccepted NOT_OBSERVED, orphan14 neni committed. Nova bounded error/admission sourceproof neni3600s/rotation/postidle proof |
+| CI nativniho inkrementu | Bounded error/admission inkrement local326tests/strictClippy/fmt/release+7Recovery/7platform/6lifecycle PASS; matchingCI zatim pending. Predchozi exactb7 CI41699794216 ALL5PASS zustava revision-scoped, nejde o real-world cutover |
 | OAuth/token-store/PubSub klient | Native flow implementovany; samostatny live Google auth-only/local-signout a assisted manual clipboard probe PASS, full signed-in backend/controller dictation stale chybi; samostatny automatic DesktopGuard port viz dalsi radek |
 | Automatic DesktopGuard paste port | NOVYexactonephysicalpostfix5b test PASS:one4eventnativeCtrlV/exactownfieldmarker/normalclosed,no retry. Nejdenifullcontroller/hold-toggle/hour/realbackend acceptance;older50040BLOCKED/45788assisted zustavaji |
 | Diktovani/recovery UI | Native microphone/hotkeys/overlay/paste controller, oba enginy, journal, polishing a outbox implementovany; real-world a rozsahlejsi fault/E2E akceptace zbyva |
@@ -3696,3 +3696,64 @@ senderNonepanic s durablefinalcountercontext. Source navic obsahuje kandidatni
 last-pin deferreddelete mimo rootlock vs quota enumeration race; dokud neni
 deterministicky overena a exacterror dolozen, netvrdi se jako pricina tohoto
 behu. Predchozi0f/a10/ed760/4430/b00 failures i scopedstructural/CI proofs zustavaji.
+
+### Bounded storage provenance a exact admission; quota race nepotvrzena
+
+Novy objective je pouze bounded NoPorts source/regression oprava, nikoli dalsi
+60s/120s/hour/quietprofile nebo physical/GUI/Azure souhlas. SessionError nyni
+zachovava NativeError i standardni Error::source chain. Display/Debug ma static
+operation, IOkind/rawOScode nebo HRESULT a whitelistovany ownRecoveryrelativepath;
+libovolny source-message text, absolutni cesta ani token se neloguji. Original
+source zustava dostupny pres downcast. Read/write/quota/list/delete/pinnedread
+I/O context je zachovany; fresh guard/reparse/bounds/digest/binding, atomic
+publication, schema a C# rollback se nemenily. User notification zustava generic
+incomplete/onlypersistedprefix/no delivery.
+
+Synthetic try_feed ma typed NotRunning/WorkerFailure/Overflow, ne senderNone
+unwrap. Pod stejnym capture-state mutexem se po uspesnem try_send zapocte
+admissionsequence/bytes; firstfailure je immutable a pred shutdownem uchovava
+attempt/lastaccepted, exactadmittedbytes, received/completed a lastpublished
+saved/confirmed. Posledni dva cursory nejsou fresh ani atomicky disk snapshot.
+Finaladmissioncount plati pro producer, ktery se pri teto prvni chybe zastavi;
+failed packet neni prijaty ani success fallback. Failure JSON se ulozi pred
+monitor/controller cleanup, takze pozdejsi joinfailure nemuze zpetne ztratit
+jiz publikovany producercontext.
+
+Deterministicky actual manifest-sharing failure pro OBA enginy:
+134400accepted/attempt8/lastaccepted7, 128000received, 64000completed a
+64000saved/0confirmed. Durable64000 je sample-exact, originalbinding a manifest
+cipher bezezmeny, capture_complete=false, noHistory/noDelivery; allacceptedsaved
+je FALSE, nikoli odhad. NotRunning i closedreceiver WorkerFailure maji samostatny
+exact/immutable test. Actual missing pinnedfile nese NotFound/OS2 a ownrelativepath;
+sourcechain/downcast a redaction tests overily take HRESULT0x80070005. Tento
+HRESULT je z noveho rizeneho file-sharing testu, NE identifikovana pricina b7.
+
+Jednotkove kratke realtime smoke overilo2s/64000 exact ordered PCM a joined
+controller/outbox cleanup. Druhy short realtime testcase nastavi file-sharing
+fault pred capture a pres skutecnou producerfailure vetev overi durable
+producer-failure.json PRED joinedshutdown/umyslnym failed-test panic. Overuje
+seq*1280 exaktnichadmittedbytes, received/completed, unchangedcommittedcipher a
+absenci producer-complete/transcription-complete. Jde pouze o short unit/runtime
+proof, nikoli novy externallysampled profile,120s/hour nebo postidle10MiB PASS.
+
+Kandidatni last-pin remove outside-root vs quota metadata race byla rizena
+actual filesystem barriers: pin cleanup stoji pred remove; quota ziska presnou
+canonical DirEntry a stoji pred metadata; soubor je pak smazan a teprve pote
+metadata pokracuje. Prekvapivy skutecny vysledek je Ok(()), NE NotFound:
+Windows DirEntry::metadata vyuzilo enumerationmetadata. RED predbezneho
+assertu "zadny overlap" prokazal jen soubeh, nikoli storage-error chain.
+Prvni nekorektni noncanonical barrier target je zachovany jako neplatny setup,
+ne dukaz; opraveny canonical barrier prokazatelne dosel. Hypoteza NotFound
+NENI potvrzena a pricina historickeho b7storageerror zustava nezjistitelna z
+jeho tehdy generic logu. Proto zadny speculative locking refactor, quota cache,
+general metadataNotFound swallow ani nova Drop mutatingIO semantika.
+
+Local current source326workspace/130native, fmt, strictalltarget/allfeatureClippy,
+releasebuild a7Recovery+7platform+6hiddenlifecycle parity PASS; matchingCI bude
+uvedeno az po exactcommit overeni. Existing lastpin/confirm/delete/reconnect/
+cancellation/blockedcheckpoint Stop/auth/shutdown/deadline tests zustaly PASS.
+Original1280B40ms50slots,2s/30sstop a5sfixturejoin se nemenily, zadna nova PCM
+fronta/drop/durabilitydelay. Failed b7/0f/a10/ed760/4430/b00 raw/encryptedstate a
+orphan14 candidate-vs-reference rozliseni zustavaji. Actual currentcontroller
+hour/realrotation/postidle, fullGUI/physical/accessibility, install/rollback a
+privateAzure acceptance jsou nadale nehotove; zadny dalsi runtime automaticky.

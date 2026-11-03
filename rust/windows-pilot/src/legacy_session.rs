@@ -108,9 +108,10 @@ pub enum SessionError {
 impl fmt::Display for SessionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Storage(_) => {
-                f.write_str("Dictation recovery storage failed; durable data is retained.")
-            }
+            Self::Storage(error) => write!(
+                f,
+                "Dictation recovery storage failed; durable data is retained: {error}"
+            ),
             Self::Audio(error) => error.fmt(f),
             Self::Closed => f.write_str("Dictation capture is already closed."),
             Self::Worker => f.write_str("Dictation background worker failed."),
@@ -118,7 +119,15 @@ impl fmt::Display for SessionError {
     }
 }
 
-impl std::error::Error for SessionError {}
+impl std::error::Error for SessionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Storage(source) => Some(source),
+            Self::Audio(source) => Some(source),
+            _ => None,
+        }
+    }
+}
 
 struct Retry {
     kind: ApiErrorKind,

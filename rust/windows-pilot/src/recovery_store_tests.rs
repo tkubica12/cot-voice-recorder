@@ -31,6 +31,189 @@ fn now() -> OffsetDateTime {
 }
 
 #[test]
+fn storage_error_source_chain_preserves_io_and_hresult_without_private_message_text() {
+    use crate::legacy_session::SessionError;
+    use std::error::Error;
+    let directory = TemporaryRoot::new();
+    let store = NativeRecoveryStore::new(directory.0.clone(), DEFAULT_RECOVERY_QUOTA).unwrap();
+    let id = "0123456789abcdef0123456789abcdef";
+    let path = store.0.path.join(id).join("00000003.wav.enc");
+    let error = SessionError::Storage(store.0.path_error(
+        &path,
+        NativeError::Io(
+            "read encrypted recovery file",
+            io::Error::from_raw_os_error(2),
+        ),
+    ));
+    let native = error
+        .source()
+        .unwrap()
+        .downcast_ref::<NativeError>()
+        .unwrap();
+    let cause = native
+        .source()
+        .unwrap()
+        .downcast_ref::<NativeError>()
+        .unwrap();
+    let io = cause.source().unwrap().downcast_ref::<io::Error>().unwrap();
+    assert_eq!(io.kind(), io::ErrorKind::NotFound);
+    assert_eq!(io.raw_os_error(), Some(2));
+    let display = error.to_string();
+    assert!(display.contains(&format!("{id}\\00000003.wav.enc")));
+    assert!(display.contains("read encrypted recovery file"));
+    assert!(display.contains("kind=NotFound, os_code=Some(2)"));
+    assert!(!display.contains(directory.0.to_str().unwrap()));
+    let sensitive = "synthetic-secret=C:\\private-user\\private-file";
+    let private = store.0.path.join("private-user").join("private-file");
+    let error = SessionError::Storage(store.0.path_error(
+        &private,
+        NativeError::Io(
+            "synthetic write",
+            io::Error::new(io::ErrorKind::PermissionDenied, sensitive),
+        ),
+    ));
+    for value in [error.to_string(), format!("{error:?}")] {
+        assert!(value.contains("<other-entry>\\<other-entry>"));
+        assert!(value.contains("kind=PermissionDenied"));
+        assert!(!value.contains("private-user"));
+        assert!(!value.contains("private-file"));
+        assert!(!value.contains("synthetic-secret"));
+    }
+    let api = windows::core::Error::new(windows::core::HRESULT(0x80070005u32 as i32), sensitive);
+    let error = SessionError::Storage(
+        store
+            .0
+            .path_error(&path, NativeError::Api("replace atomic file", api)),
+    );
+    let message = error.to_string();
+    assert!(message.contains("replace atomic file"));
+    assert!(message.contains("HRESULT=0x80070005"));
+    assert!(!message.contains(sensitive));
+    let native = error
+        .source()
+        .unwrap()
+        .source()
+        .unwrap()
+        .downcast_ref::<NativeError>()
+        .unwrap();
+    assert_eq!(
+        native
+            .source()
+            .unwrap()
+            .downcast_ref::<windows::core::Error>()
+            .unwrap()
+            .code()
+            .0 as u32,
+        0x80070005
+    );
+    println!("sanitized-storage-chain:{message}");
+}
+
+#[test]
+fn actual_missing_pinned_file_preserves_its_owned_relative_path_and_io_source() {
+    use std::error::Error;
+    let directory = TemporaryRoot::new();
+    let store = NativeRecoveryStore::new(directory.0.clone(), DEFAULT_RECOVERY_QUOTA).unwrap();
+    let journal = store
+        .create("cs".into(), "synthetic error binding".into(), true, now())
+        .unwrap();
+    let wav = to_wav(&[1, 0, 2, 0]).unwrap();
+    journal
+        .checkpoint(&[], 4, &[audio(&wav, 4)], false, now())
+        .unwrap();
+    let descriptor = journal.snapshot().unwrap().chunks[0].clone();
+    let pin = journal
+        .pin_audio(&descriptor, "synthetic error binding")
+        .unwrap();
+    let path = store.0.audio_path(journal.id(), 0).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    let error = pin.read().unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains(&format!("{}\\00000000.wav.enc", journal.id()))
+    );
+    assert!(error.to_string().contains("open pinned recovery audio"));
+    let io = error
+        .source()
+        .unwrap()
+        .source()
+        .unwrap()
+        .downcast_ref::<io::Error>()
+        .unwrap();
+    assert_eq!(io.kind(), io::ErrorKind::NotFound);
+    assert_eq!(io.raw_os_error(), Some(2));
+    println!("actual-pinned-file-error:{error}");
+}
+
+fn controlled_pause() -> (
+    Arc<FixtureWritePause>,
+    FixtureWriteRelease,
+    tokio::sync::oneshot::Receiver<()>,
+) {
+    let (entered, observed) = tokio::sync::oneshot::channel();
+    let pause = Arc::new(FixtureWritePause {
+        entered: Mutex::new(Some(entered)),
+        released: Mutex::new(false),
+        changed: std::sync::Condvar::new(),
+    });
+    (pause.clone(), FixtureWriteRelease(pause), observed)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn last_pin_delete_quota_metadata_hypothesis_has_an_explicit_actual_result() {
+    let directory = TemporaryRoot::new();
+    let store = NativeRecoveryStore::new(directory.0.clone(), DEFAULT_RECOVERY_QUOTA).unwrap();
+    let journal = store
+        .create("cs".into(), "synthetic race binding".into(), true, now())
+        .unwrap();
+    let wav = to_wav(&[1, 0, 2, 0]).unwrap();
+    journal
+        .checkpoint(&[], 4, &[audio(&wav, 4)], false, now())
+        .unwrap();
+    let descriptor = journal.snapshot().unwrap().chunks[0].clone();
+    let pin = journal
+        .pin_audio(&descriptor, "synthetic race binding")
+        .unwrap();
+    journal
+        .confirm_streaming(4, "confirmed".into(), vec![], false, None, now())
+        .unwrap();
+    let path = store.0.audio_path(journal.id(), 0).unwrap();
+    let (pause, release_delete, delete_entered) = controlled_pause();
+    *store.0.next_deferred_delete_pause.lock().unwrap() = Some(pause);
+    let deleting = tokio::task::spawn_blocking(move || drop(pin));
+    tokio::time::timeout(std::time::Duration::from_secs(5), delete_entered)
+        .await
+        .unwrap()
+        .unwrap();
+    let (pause, release_quota, quota_entered) = controlled_pause();
+    *store.0.quota_entry_pause.lock().unwrap() = Some((path.clone(), pause));
+    let scanning = store.clone();
+    let quota = tokio::task::spawn_blocking(move || {
+        let _owned = scanning.0.lock()?;
+        scanning.0.ensure_quota(1)
+    });
+    let enumerated_before_delete =
+        tokio::time::timeout(std::time::Duration::from_secs(5), quota_entered).await;
+    drop(release_delete);
+    deleting.await.unwrap();
+    drop(release_quota);
+    let result = quota.await.unwrap();
+    enumerated_before_delete
+        .expect("The actual enumerated entry never reached the metadata barrier.")
+        .unwrap();
+    println!(
+        "actual-last-pin-quota-overlap: enumerated=true; deleted-before-metadata=true; result={result:?}; \
+         NotFound hypothesis is not established by overlap alone"
+    );
+    assert!(!path.exists());
+    assert!(
+        result.is_ok(),
+        "Actual quota result changed; preserve its precise error before any proposed repair: {result:?}"
+    );
+}
+
+#[test]
 fn immutable_audio_pin_defers_confirmed_delete_and_blocks_session_reopen_until_release() {
     let directory = TemporaryRoot::new();
     let store = NativeRecoveryStore::new(directory.0.clone(), DEFAULT_RECOVERY_QUOTA).unwrap();

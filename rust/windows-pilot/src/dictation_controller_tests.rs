@@ -65,13 +65,45 @@ fn synthetic_capture_matches_native_packets_and_refuses_overflow_without_success
     for _ in 0..crate::microphone::OUTPUT_BUFFER_COUNT {
         assert!(ports.try_feed(&frame).is_ok());
     }
-    assert_eq!(ports.try_feed(&frame), Err(CaptureError::Overflow));
+    assert_eq!(ports.try_feed(&frame), Err(AdmissionError::Overflow));
     let mut bytes = 0;
     while let Ok(buffer) = receiver.try_recv() {
         bytes += buffer.0.len();
     }
     assert_eq!(bytes, 1280 * 50);
     assert!(ports.try_feed(&frame).is_ok());
+}
+
+#[test]
+fn admission_failure_is_typed_exact_and_immutable_before_cleanup() {
+    for closed_receiver in [false, true] {
+        let ports = Ports::new();
+        let (capture, receiver) = ports.start_capture().unwrap();
+        let frame = [0; crate::microphone::BUFFER_BYTES];
+        ports.try_feed(&frame).unwrap();
+        if closed_receiver {
+            drop(receiver);
+        } else {
+            Ports::stop_capture(capture).unwrap();
+        }
+        let expected = if closed_receiver {
+            AdmissionError::WorkerFailure
+        } else {
+            AdmissionError::NotRunning
+        };
+        assert_eq!(ports.try_feed(&frame), Err(expected));
+        let first = ports.0.admission_failure.get().unwrap().clone();
+        assert_eq!(first["attempted_sequence"], 2);
+        assert_eq!(first["last_accepted_sequence"], 1);
+        assert_eq!(first["accepted_bytes"], 1280);
+        assert_eq!(first["rejected_bytes"], 1280);
+        assert_eq!(first["writer_received_bytes"], 0);
+        assert_eq!(first["writer_completed_bytes"], 0);
+        assert!(first["last_published_saved_bytes"].is_null());
+        assert_eq!(ports.try_feed(&frame), Err(expected));
+        assert_eq!(ports.0.admission_failure.get().unwrap(), &first);
+        assert_eq!(ports.0.accepted_bytes.load(Ordering::Acquire), 1280);
+    }
 }
 
 #[derive(Default)]
@@ -300,8 +332,12 @@ struct Probe {
     stopped: AtomicUsize,
     fail_open: AtomicBool,
     fail_stop: AtomicBool,
+    prepare_capture: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     clock: Instant,
     accepted_bytes: AtomicU64,
+    attempted_sequence: AtomicU64,
+    last_accepted_sequence: AtomicU64,
+    admission_failure: std::sync::OnceLock<serde_json::Value>,
     observed_queue_slots: AtomicUsize,
     writer_received_bytes: AtomicU64,
     writer_completed_bytes: AtomicU64,
@@ -316,6 +352,23 @@ struct Probe {
 struct Ports(Arc<Probe>);
 
 struct Capture(Arc<Probe>);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AdmissionError {
+    NotRunning,
+    WorkerFailure,
+    Overflow,
+}
+
+impl std::fmt::Display for AdmissionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::NotRunning => "Synthetic capture is not running.",
+            Self::WorkerFailure => "Synthetic capture receiver closed.",
+            Self::Overflow => "Synthetic capture queue overflowed.",
+        })
+    }
+}
 
 impl Ports {
     fn new() -> Self {
@@ -334,8 +387,12 @@ impl Ports {
             stopped: AtomicUsize::new(0),
             fail_open: AtomicBool::new(false),
             fail_stop: AtomicBool::new(false),
+            prepare_capture: Mutex::new(None),
             clock: Instant::now(),
             accepted_bytes: AtomicU64::new(0),
+            attempted_sequence: AtomicU64::new(0),
+            last_accepted_sequence: AtomicU64::new(0),
+            admission_failure: std::sync::OnceLock::new(),
             observed_queue_slots: AtomicUsize::new(0),
             writer_received_bytes: AtomicU64::new(0),
             writer_completed_bytes: AtomicU64::new(0),
@@ -351,26 +408,60 @@ impl Ports {
         self.try_feed(bytes).unwrap();
     }
 
-    fn try_feed(&self, bytes: &[u8]) -> Result<(), CaptureError> {
+    fn try_feed(&self, bytes: &[u8]) -> Result<(), AdmissionError> {
         let state = self.0.capture.lock().unwrap();
-        let sender = state.sender.as_ref().unwrap();
-        let result = sender.try_send(CaptureBuffer(bytes.to_vec()));
-        if !sender.is_closed() {
-            self.0.observed_queue_slots.fetch_max(
-                crate::microphone::OUTPUT_BUFFER_COUNT - sender.capacity(),
-                Ordering::AcqRel,
-            );
-        }
-        result
-            .map_err(|error| match error {
-                mpsc::error::TrySendError::Full(_) => CaptureError::Overflow,
-                mpsc::error::TrySendError::Closed(_) => CaptureError::Worker,
-            })
-            .map(|()| {
+        let sequence = self.0.attempted_sequence.fetch_add(1, Ordering::AcqRel) + 1;
+        let result = match state.sender.as_ref() {
+            Some(sender) => {
+                let result = sender
+                    .try_send(CaptureBuffer(bytes.to_vec()))
+                    .map_err(|error| match error {
+                        mpsc::error::TrySendError::Full(_) => AdmissionError::Overflow,
+                        mpsc::error::TrySendError::Closed(_) => AdmissionError::WorkerFailure,
+                    });
+                if !sender.is_closed() {
+                    self.0.observed_queue_slots.fetch_max(
+                        crate::microphone::OUTPUT_BUFFER_COUNT - sender.capacity(),
+                        Ordering::AcqRel,
+                    );
+                }
+                result
+            }
+            None => Err(AdmissionError::NotRunning),
+        };
+        match result {
+            Ok(()) => {
                 self.0
                     .accepted_bytes
                     .fetch_add(bytes.len() as u64, Ordering::AcqRel);
-            })
+                self.0
+                    .last_accepted_sequence
+                    .store(sequence, Ordering::Release);
+            }
+            Err(error) => {
+                self.0.admission_failure.get_or_init(|| {
+                    let cursors = self.0.capture_trace.get().map(|trace| trace.snapshot());
+                    serde_json::json!({
+                        "status":"failed-admission","error":error.to_string(),
+                        "kind":format!("{error:?}"),
+                        "first_failure_is_immutable":true,
+                        "producer_must_stop_after_this_failure_for_final_accepted_count":true,
+                        "attempted_sequence":sequence,
+                        "last_accepted_sequence":self.0.last_accepted_sequence.load(Ordering::Acquire),
+                        "accepted_bytes":self.0.accepted_bytes.load(Ordering::Acquire),
+                        "rejected_bytes":bytes.len(),
+                        "sender_present":state.sender.is_some(),
+                        "writer_received_bytes":self.0.writer_received_bytes.load(Ordering::Acquire),
+                        "writer_completed_bytes":self.0.writer_completed_bytes.load(Ordering::Acquire),
+                        "last_published_saved_bytes":cursors.as_ref().map(|value|value["saved_bytes"].clone()),
+                        "last_published_confirmed_bytes":cursors.as_ref().map(|value|value["confirmed_bytes"].clone()),
+                        "cursors_are_not_a_fresh_disk_snapshot":true,
+                        "not_a_success_or_accepted_packet":true
+                    })
+                });
+            }
+        }
+        result
     }
 }
 
@@ -402,6 +493,9 @@ impl DictationPorts for Ports {
         self.0.opened.fetch_add(1, Ordering::AcqRel);
         if self.0.fail_open.load(Ordering::Acquire) {
             return Err(CaptureError::Worker);
+        }
+        if let Some(prepare) = self.0.prepare_capture.lock().unwrap().take() {
+            prepare();
         }
         let receiver = self
             .0
@@ -860,6 +954,7 @@ async fn run_controller_capture(
                         "recovery_io":harness.recovery.fixture_io_progress()
                         ,"engine_lock":probe.capture_trace.get().map(|trace|trace.snapshot())
                         ,"observed_max_queue_slots":probe.observed_queue_slots.load(Ordering::Acquire)
+                        ,"immutable_admission_failure":probe.admission_failure.get()
                     }),
                 );
             }
@@ -949,6 +1044,87 @@ async fn run_controller_capture(
         "engine_lock":harness.ports.0.capture_trace.get().map(|trace|trace.snapshot()),
         "recovery_io":harness.recovery.fixture_io_progress()
     })
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn short_realtime_controller_smoke_joins_exact_pcm_and_outbox_without_physical_ports() {
+    let mut harness = Harness::new(true, true);
+    let outbox = HourOutbox::start(&harness);
+    let result = run_controller_capture(&mut harness, 2, None).await;
+    for key in [
+        "accepted_bytes",
+        "writer_received_bytes",
+        "writer_completed_bytes",
+        "confirmed_bytes",
+    ] {
+        assert_eq!(result[key], 64000);
+    }
+    assert!(harness.ports.0.admission_failure.get().is_none());
+    hour_cleanup(&mut harness, &outbox).await;
+    harness.close().await;
+    outbox.close().await;
+    println!("short-controller-smoke: {result}; scope=2s-NoPorts-only; hour-acceptance=false");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn short_realtime_storage_failure_publishes_exact_producer_context_before_join_and_panic() {
+    let directory = TemporaryRoot::new();
+    let diagnostics = directory.0.join("diagnostics");
+    std::fs::create_dir(&diagnostics).unwrap();
+    let mut harness = Harness::new_at(directory.0.join("state"), true, true, None);
+    let recovery = harness.recovery.clone();
+    let root = harness.root.clone();
+    let held = Arc::new(std::sync::OnceLock::new());
+    let locked = held.clone();
+    *harness.ports.0.prepare_capture.lock().unwrap() = Some(Box::new(move || {
+        let rows = recovery.list().unwrap();
+        assert_eq!(rows.len(), 1);
+        let path = root.join("recovery").join(&rows[0].id).join("manifest.enc");
+        let before = std::fs::read(&path).unwrap();
+        let handle = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(1)
+            .open(&path)
+            .unwrap();
+        assert!(locked.set((handle, path, before)).is_ok());
+    }));
+    let output = diagnostics.clone();
+    let producer =
+        tokio::spawn(async move { run_controller_capture(&mut harness, 3, Some(&output)).await });
+    let result = tokio::time::timeout(Duration::from_secs(10), producer)
+        .await
+        .unwrap();
+    assert!(
+        result.unwrap_err().is_panic(),
+        "Storage failure cannot look like successful capture."
+    );
+    let (_, path, original_cipher) = held
+        .get()
+        .expect("The synthetic file fault was not prepared before capture.");
+    let failure: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(diagnostics.join("producer-failure.json")).unwrap())
+            .unwrap();
+    let admission = &failure["immutable_admission_failure"];
+    assert_eq!(admission["kind"], "NotRunning");
+    let accepted = admission["accepted_bytes"].as_u64().unwrap();
+    let sequence = admission["last_accepted_sequence"].as_u64().unwrap();
+    assert_eq!(accepted, sequence * 1280);
+    assert_eq!(
+        admission["attempted_sequence"].as_u64().unwrap(),
+        sequence + 1
+    );
+    assert_eq!(failure["frame_index"].as_u64().unwrap(), sequence);
+    assert_eq!(failure["accepted_bytes"], admission["accepted_bytes"]);
+    assert_eq!(failure["produced_bytes"], accepted);
+    assert_eq!(admission["writer_completed_bytes"], 49 * 1280);
+    assert_eq!(admission["last_published_saved_bytes"], 0);
+    assert_eq!(admission["last_published_confirmed_bytes"], 0);
+    assert_eq!(&std::fs::read(path).unwrap(), original_cipher);
+    assert!(!diagnostics.join("producer-complete.json").exists());
+    assert!(!diagnostics.join("transcription-complete.json").exists());
+    println!(
+        "short-controller-failed-producer-evidence: {failure}; durable=0; all-admitted-saved=false; no retry"
+    );
 }
 
 struct HourOutbox {
@@ -1409,7 +1585,10 @@ async fn blocked_native_checkpoint_keeps_stop_discard_auth_and_shutdown_responsi
                 harness.ports.feed(&packet);
                 bytes.extend_from_slice(&packet);
             }
-            assert_eq!(harness.ports.try_feed(&packet), Err(CaptureError::Overflow));
+            assert_eq!(
+                harness.ports.try_feed(&packet),
+                Err(AdmissionError::Overflow)
+            );
             match reason {
                 StartupInterruption::Stopped => harness.stop().await,
                 StartupInterruption::Discarded => harness
@@ -1542,7 +1721,10 @@ async fn blocked_checkpoint_exposes_stop_deadline_without_false_join_or_lost_acc
             harness.ports.feed(&packet);
             bytes.extend_from_slice(&packet);
         }
-        assert_eq!(harness.ports.try_feed(&packet), Err(CaptureError::Overflow));
+        assert_eq!(
+            harness.ports.try_feed(&packet),
+            Err(AdmissionError::Overflow)
+        );
         harness.stop().await;
         harness.stage(DictationStage::Finishing).await;
         match reason {
@@ -1785,13 +1967,50 @@ async fn disk_write_failure_preserves_the_durable_prefix_binding_and_is_not_fals
         .await
         .unwrap();
         let path = harness.root.join("recovery").join(&id).join("manifest.enc");
+        let original_cipher = std::fs::read(&path).unwrap();
+        let (release, blocked) = harness.recovery.pause_next_fixture_write();
+        harness.ports.feed(&prefix);
+        tokio::time::timeout(Duration::from_secs(5), blocked)
+            .await
+            .unwrap()
+            .unwrap();
         let held = std::fs::OpenOptions::new()
             .read(true)
             .share_mode(1)
             .open(&path)
             .unwrap();
-        harness.ports.feed(&prefix);
+        let frame = pcm(crate::microphone::BUFFER_BYTES / 2);
+        for _ in 0..5 {
+            harness.ports.try_feed(&frame).unwrap();
+        }
+        let admitted = 2 * prefix.len() as u64 + 5 * frame.len() as u64;
+        drop(release);
         harness.idle().await;
+        assert_eq!(
+            harness.ports.try_feed(&frame),
+            Err(AdmissionError::NotRunning)
+        );
+        let context = harness.ports.0.admission_failure.get().unwrap().clone();
+        assert_eq!(context["accepted_bytes"], admitted);
+        assert_eq!(context["last_accepted_sequence"], 7);
+        assert_eq!(context["attempted_sequence"], 8);
+        assert_eq!(context["writer_received_bytes"], 128000);
+        assert_eq!(context["writer_completed_bytes"], 64000);
+        assert_eq!(context["last_published_saved_bytes"], 64000);
+        assert_eq!(context["last_published_confirmed_bytes"], 0);
+        assert_eq!(context["cursors_are_not_a_fresh_disk_snapshot"], true);
+        assert_eq!(std::fs::read(&path).unwrap(), original_cipher);
+        hour_publish(
+            &harness.root,
+            "immutable-admission-failure.json",
+            context.clone(),
+        );
+        harness.close().await;
+        assert_eq!(harness.ports.0.admission_failure.get().unwrap(), &context);
+        assert_eq!(
+            harness.ports.0.accepted_bytes.load(Ordering::Acquire),
+            admitted
+        );
         drop(held);
         assert!(harness.status.borrow().issue.is_some());
         assert!(harness.entries().is_empty());
@@ -1812,7 +2031,9 @@ async fn disk_write_failure_preserves_the_durable_prefix_binding_and_is_not_fals
             assert!(tail.frame.is_empty());
         }
         drop(journal);
-        harness.close().await;
+        println!(
+            "actual-storage-error-admission: streaming={streaming}; {context}; durable=64000; all-admitted-saved=false; delivery=false"
+        );
     }
 }
 

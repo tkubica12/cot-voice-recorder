@@ -137,7 +137,6 @@ thread_local! {
         const { RefCell::new(None) };
 }
 
-#[derive(Debug)]
 pub enum NativeError {
     InvalidArgument(&'static str),
     AlreadyRunning,
@@ -145,6 +144,16 @@ pub enum NativeError {
     Io(&'static str, io::Error),
     Verification(&'static str),
     Protocol(ProtocolError),
+    RecoveryPath {
+        relative_path: String,
+        source: Box<NativeError>,
+    },
+}
+
+impl fmt::Debug for NativeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
 }
 
 impl fmt::Display for NativeError {
@@ -154,9 +163,22 @@ impl fmt::Display for NativeError {
             Self::AlreadyRunning => {
                 f.write_str("This isolated Rust pilot instance is already running.")
             }
-            Self::Api(operation, source) => write!(f, "{operation} returned failure: {source}"),
-            Self::Io(operation, source) => write!(f, "{operation} failed: {source}"),
+            Self::Api(operation, source) => write!(
+                f,
+                "{operation} returned failure: HRESULT=0x{:08X}",
+                source.code().0 as u32
+            ),
+            Self::Io(operation, source) => write!(
+                f,
+                "{operation} failed: kind={:?}, os_code={:?}",
+                source.kind(),
+                source.raw_os_error()
+            ),
             Self::Protocol(error) => error.fmt(f),
+            Self::RecoveryPath {
+                relative_path,
+                source,
+            } => write!(f, "Recovery path={relative_path}: {source}"),
         }
     }
 }
@@ -167,6 +189,7 @@ impl Error for NativeError {
             Self::Api(_, source) => Some(source),
             Self::Io(_, source) => Some(source),
             Self::Protocol(source) => Some(source),
+            Self::RecoveryPath { source, .. } => Some(source.as_ref()),
             _ => None,
         }
     }
