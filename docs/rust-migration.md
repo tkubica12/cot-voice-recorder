@@ -36,7 +36,7 @@ znovu v odpovidajicim scope.
 | Microphone readiness | Jeden actual240ms probe a samostatne schvalena30+30 paired serie prosly; first-PCM p95Rust80.75% C#baseline, bez audio souboru/uploadu |
 | Engine longevity | Actual3600s synthetic PCM/real50min rotation,115200000 exact bytes; worst idle growth1.645MiB<10MiB, engine-only PASS |
 | Current controller longevity | Ctyri actualcontrollerhour vcetne noveho0f60489 a post-dedup60s b00 FAILED/INCOMPLETE s raw/encrypted state zachovanymi; pinned-reader source ma316tests/all5CI PASS, nikoli3600s/rotation/postidle proof |
-| CI nativniho inkrementu | Current0f60489 pinned-reader Windows/Linux/MSRV1.85/container RustCI41682844962 ALL5PASS; predchozi icon/UI/adapter doklady zustavaji revision-scoped, nejde o real-world cutover |
+| CI nativniho inkrementu | Currentb7d016d writer-timeline/deadline Windows/Linux/MSRV1.85/container RustCI41699794216 ALL5PASS; predchozi pinned-reader/icon/UI/adapter doklady zustavaji revision-scoped, nejde o real-world cutover |
 | OAuth/token-store/PubSub klient | Native flow implementovany; samostatny live Google auth-only/local-signout a assisted manual clipboard probe PASS, full signed-in backend/controller dictation stale chybi; samostatny automatic DesktopGuard port viz dalsi radek |
 | Automatic DesktopGuard paste port | NOVYexactonephysicalpostfix5b test PASS:one4eventnativeCtrlV/exactownfieldmarker/normalclosed,no retry. Nejdenifullcontroller/hold-toggle/hour/realbackend acceptance;older50040BLOCKED/45788assisted zustavaji |
 | Diktovani/recovery UI | Native microphone/hotkeys/overlay/paste controller, oba enginy, journal, polishing a outbox implementovany; real-world a rozsahlejsi fault/E2E akceptace zbyva |
@@ -3620,3 +3620,26 @@ bez extra readback; originaltimeline/raw0f/a10/ed760/4430/b00failures zachovany.
 Matching commit/CI jeste musi byt presne zapsane. Actualcurrent-hour throughput,
 rotation/postidle10MiB a rychle normaljoinedshutdown stale NEJSOU dokazany.
 Zadny novy60s/fullhour/quietprofile/GUI/CUI/device/install/Azure nebo paidAIbeh.
+
+### Writer inkrement: exact source a CI overeny
+
+Sourceb7d016d2e04f47bbfaa113d99f0714dd3aac3199/Rusttree
+95de9044d6b83737b577d34a7721181d6b6f7843 je commitnuty/pushnuty.
+MatchingCI41699794216 ALL5completed/success je nezavisle overene:
+Windows/Linux checks, MSRV1.85 na obou OS a cloudcontainer; Windows dokoncil
+2026-11-03T19:20:36Z. Current320tests/124native a actual7Recovery/7platform/
+6lifecycle proofs jsou ulozene v writer-checkpoint-timeline-work.
+
+Build-only release/staged
+2540c359c83819a57cf7744c9dad5f23f76a544f38d815e36eaf45264c42dada;
+setup3cadb6ba154b886aebc567b1dd298a449de1ac76fe10e414d14566c349ffe02c.
+Sourcearchive75ddb7c4516009acb49c93ace4a4769ccd4856817b6c3918683644696aa22d83.
+Nic nebylo instalovane/nasazene a zadny novy60s/fullhour neprobeh.
+
+Odstranene criticalsections jsou druhy manifestencode a okamzity postpublish
+encryptedreadback uvnitr streamingengine locku; samotne mutablejournal/quota/
+DPAPI/flush/rename nadale drzi root/engine protection. Sourceproof a shortunit
+timings neslibuji odstraneni historical1589ms nebo PASS hodiny. Bounded
+writer ownership/deadline oprava neni tvrzeni, ze normaljoin urcite stihne5s.
+Actual throughput/realrotation/postidle10MiB i dalsi GUI/physical/human/
+installation/privateAzure akceptace zustavaji neuzavrene.
