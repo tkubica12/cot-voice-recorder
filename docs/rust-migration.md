@@ -35,7 +35,7 @@ znovu v odpovidajicim scope.
 | Mereni Windows klienta | NOVA vyslovne schvalena quiet-window current071/checkout86f3b0f full-runtime signed-out30+30/3paired301-point PASS: p95Rust257.948ms,meanprivate3.427MiB,observedpeak3.992MiB. Vsechnyrawvalues/pairedthresholds/cleanup nezavisleovereny;starsi7bPASS ia2d/3f4FAILEDINCOMPLETE zachovany,neprepisuji se na signed-in/physical scope |
 | Microphone readiness | Jeden actual240ms probe a samostatne schvalena30+30 paired serie prosly; first-PCM p95Rust80.75% C#baseline, bez audio souboru/uploadu |
 | Engine longevity | Actual3600s synthetic PCM/real50min rotation,115200000 exact bytes; worst idle growth1.645MiB<10MiB, engine-only PASS |
-| Current controller longevity | Ctyri actualcontrollerhour vcetne0f60489, post-dedup60s b00 a b7actual120s FAILED/INCOMPLETE, raw/encrypted state zachovany; b7finalaccepted NOT_OBSERVED, orphan14 neni committed. Nova bounded error/admission sourceproof neni3600s/rotation/postidle proof |
+| Current controller longevity | Novy neutral-observer76b25da ONE30s/960000exactPCM/normaljoin PASS. Ctyri actualhour, b00 a b7actual120s FAILED zachovany; b7finalaccepted NOT_OBSERVED/orphan14 neni committed. Novych30s neni120s/3600s/rotation/postidle10MiB/fullGUI proof |
 | CI nativniho inkrementu | Exact76b25da error/admission source ma CI41737781150 Windows/Linux/MSRV1.85/container ALL5PASS a local326tests/strictClippy/fmt/release+7Recovery/7platform/6lifecycle PASS; quotaNotFound nepotvrzen, nejde o runtimehour ani real-world cutover |
 | OAuth/token-store/PubSub klient | Native flow implementovany; samostatny live Google auth-only/local-signout a assisted manual clipboard probe PASS, full signed-in backend/controller dictation stale chybi; samostatny automatic DesktopGuard port viz dalsi radek |
 | Automatic DesktopGuard paste port | NOVYexactonephysicalpostfix5b test PASS:one4eventnativeCtrlV/exactownfieldmarker/normalclosed,no retry. Nejdenifullcontroller/hold-toggle/hour/realbackend acceptance;older50040BLOCKED/45788assisted zustavaji |
@@ -3765,3 +3765,59 @@ fronta/drop/durabilitydelay. Failed b7/0f/a10/ed760/4430/b00 raw/encryptedstate 
 orphan14 candidate-vs-reference rozliseni zustavaji. Actual currentcontroller
 hour/realrotation/postidle, fullGUI/physical/accessibility, install/rollback a
 privateAzure acceptance jsou nadale nehotove; zadny dalsi runtime automaticky.
+
+### ONE30s76b25da neutral-observer controller diagnostic: PASS pouze30s
+
+Koordinator v puvodni bezpecne synteticke delegaci vyresil child requestf01b53e6
+volbou ONEmax30s NoPortsdiagnostic a vyslovne tim NAHRADIL predchozi asynchronni
+120s assignment. Neni to novy primy physical/cloud/human grant,30+120 nebo retry.
+Proveden prave jeden konfigurovany30s maincapture; nezmeneny fixture pred nim
+provede svou2s unmeasuredwarmup validaci, nikoli dalsi diagnosticky pokus.
+Nebyl spusten zadny120s/fullhour/quietprofile/CUI/device/install/Azure case.
+
+Frozen code76b25da/Rusttreed3ff9eb0/checkoutdocs6187ab4 a matchingCI41737781150
+ALL5PASS; sourcearchivecbf9a89a... zustal stejny. RELEASEoptimized LIBTEST
+9804576b515001e4ab19cc9ed1f8b8e52ed597e0341198bbe82c3f044cbc1959
+mel debuginfo2/PDB059b2112cb00927969253012b0577eb31086b0b3b8775026a0a2d56df303bf4e.
+KnownlocalPDBsymbol1test a4collector guardy BEZcapture prosly predstartem.
+Neni to productEXE, novy produktovy performance profile ani aktualizace aplikace.
+
+Observer je frozen7e45735e... bez storageobserveru, sampler88c5ed25... a
+reportmoduledef129a6...; behemcapture se NECTE obsah zivychRecoverymanifest/audio
+kvuli counts. Jen1s ownprocessrawmemory/CPU a10s existujici atomic/try-lock
+phase/progress, boundedflushedstdout/stderr. Native manifest File::open sdili
+READ/WRITE/DELETE; pinnedimmutableaudio umyslne pouzeREAD a blokuje mutace azdo
+dokonceni actualread. Writer.lock share0 je jiny vlastnenylockfile. Sampler
+otevira vlastni vystupniJSONL, ne Recovery. Precleanup externalentries/charges
+zustavaji NOT_OBSERVED_EXTERNALLY. Zadna pricina historickeho b7 se z neutrality
+nevyvozuje.
+
+Ownnative24844/collector58268/readiness/imagehash a livewarmheader byly overeny;
+pri kolekci zadny source/frozen-tool edit, build nebo testload. Native actual
+maincapture30.0117777s prokazal960000produced/accepted/received/completed/saved/
+sent/confirmedPCM;750fixed1280Bframes je odvozeno z exactbytes, ne exportovane
+lastadmissionsequence. Vsech15 durableconfirmedcursors64000..960000 je ordered,
+native kazdy sample overil, history-before-handoff/polisher/outboxack prosly.
+Normalstop/joinedcontroller/read/writer/outbox cleanup,0activepins; native i
+collector nebezi a controltemp odstranen. Nezavisle znovu overeno ze3warm+
+31capture+3postsamples a matchingflushedJSONL, source/binary/PDB/toolhashes i
+normalexit proof. Stderr je0bytes, zadny producerfailure/NativeError nevznikl.
+Firststoragecause je tedy NOT_REPRODUCED_IN_THIS30s, NE vyresena historicka chyba.
+
+Observedqueuepeak26/50, maxproducerlateness461.1978ms. Completedlockmaxima od
+vzniku instance enginehold937.1285ms/wait901.7238ms a roothold937.0025ms/
+wait398.814ms nejsou cause jednotlivych subphases ani OS/kernel diagnoza.
+10s/20s/30s snapshoty byly uchovany; napriklad30s atomic snapshot jeste mel
+saved898560/confirmed896000, az final actualcheckpoint/confirmation960000.
+Prubezny snapshot neni finalne durable ani koherentni disk snapshot.
+
+Rawdiagnosticfixture peakprivate144949248bytes/working-set149143552bytes a
+CPUonecorep9514.2995%; jde o symbolized owner-trace LIBTEST, nikoli production
+80MiB acceptance. Three-sample conservativepostgrowth1183744bytes neni
+301+3600+301/hour10MiB proof. Puvodni limity1280B40ms50slots/2s30s/5sjoin,
+freshpath/quota/durability zustaly bezezmeny. Raw/source/readiness/cleanup a
+independent-verification.json jsou v controller-diagnostic-30s-76b25da.
+Vsechny starefailedcases vcetneb7unknownfinalaccepted/orphan14 zustavaji.
+Pred delsim currentcontroller testem je nutne nove konkretni synteticke zadani;
+30sPASS sam nenahrazuje120s/hodinu/realrotation/postidle/fullGUI/physical/IAM
+acceptance a nic dalsiho se automaticky nespousti.
