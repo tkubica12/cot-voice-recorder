@@ -36,7 +36,7 @@ znovu v odpovidajicim scope.
 | Microphone readiness | Jeden actual240ms probe a samostatne schvalena30+30 paired serie prosly; first-PCM p95Rust80.75% C#baseline, bez audio souboru/uploadu |
 | Engine longevity | Actual3600s synthetic PCM/real50min rotation,115200000 exact bytes; worst idle growth1.645MiB<10MiB, engine-only PASS |
 | CI nativniho inkrementu | 7b4aff4 original-icon/reactive-overlay Windows/Linux/MSRV1.85/container RustCI a C#WindowsCI PASS; nasledne observer/input inkrementy maji vlastni CI, nejde o real-world cutover |
-| OAuth/token-store/PubSub klient | Native flow implementovany; samostatny live Google auth-only/local-signout a assisted manual clipboard probe PASS, full signed-in backend/automatic dictation paste stale chybi |
+| OAuth/token-store/PubSub klient | Native flow implementovany; samostatny live Google auth-only/local-signout a assisted manual clipboard probe PASS, full signed-in backend/controller dictation stale chybi; samostatny automatic DesktopGuard port viz dalsi radek |
 | Automatic DesktopGuard paste port | NOVYexactonephysicalpostfix5b test PASS:one4eventnativeCtrlV/exactownfieldmarker/normalclosed,no retry. Nejdenifullcontroller/hold-toggle/hour/realbackend acceptance;older50040BLOCKED/45788assisted zustavaji |
 | Diktovani/recovery UI | Native microphone/hotkeys/overlay/paste controller, oba enginy, journal, polishing a outbox implementovany; real-world a rozsahlejsi fault/E2E akceptace zbyva |
 | History cache | JSON/retence/200 entries, atomicka persistence, native list/text a manual copy latest/selected/original implementovany; C# file parity overena |
@@ -2981,3 +2981,49 @@ realGoogle/backend/model,userdestination/accessibility/monitor/installer/
 privateAzure acceptance. Current071performancefrozen76e3... zustava
 source071,nikolinewscreenshot/toolbinary5b. Cele prepisani/akceptace
 se proto dale NEPROHLASUJI zaperfektne/uplne dokoncenou.
+
+### Controller: preruseni asynchronni inicializace pred enginem a mikrofonem
+
+Po poslednim jednorazovem paste PASS byla nalezena konkretni dalsi zdrojova
+mezera. `DictationHost` cekal na auth/recovery inicializaci a pote bez kontroly
+cekajiciho Stop, Discard, Interrupt, auth-change nebo shutdown spoustel session
+engine a mikrofon. Tyto udalosti zpracoval az v recording smycce. C# reference
+ma synchronni start na UI dispatcheru; Rust asynchronni predel potrebuje vlastni
+kontrolu platnosti. Jde o opravu controlleru, nikoliv dalsi fyzicky test.
+
+Priprava journalu a backend adapteru je nyni oddelena od spusteni session
+enginu. Stejny produkcni gate kontroluje pending udalosti pred inicializaci
+a po jejim dokonceni; engine a mikrofon se spusti pouze v `Ready` vetvi.
+Jiz rozpracovany blocking journal worker se dokonci/joinne, neodpoji se s
+nepozorovanym zapisem. To neslibuje preruseni blokovaneho OS/storage syscallu.
+Stop/Discard odstrani pouze novy, jeste nespusteny journal po uvolneni vlastnictvi.
+Preruseni Recovery nikdy nesmaze existujici journal/audio. Chyby inicializace
+a uklidu zustavaji explicitni; auth/shutdown/interruption obnovi idle/busy stav
+a viditelne vysvetli, ze mikrofon nebyl otevren.
+
+Sest novych deterministickych NoPorts skupin overuje vsech pet druhu preruseni
+pred a behem inicializace, dokoncenou/joinnutou pripravu bez prechodu do startupu,
+stary generation Stop, oba mode vstupy, closed watch/command channels,
+auth epoch i pri stejnem SignedIn stavu, already-seen shutdown, chybove vysledky
+a novy-versus-existing Recovery v obou formatech. Existujici synteticke Recovery
+maji take skutecny encrypted PCM checkpoint; po preruseni sedi cely encoded
+manifest i presne WAV bytes. Zadny test neotevre mikrofon, systemovy clipboard,
+SendInput, hotkey nebo account/backend port.
+
+Lokalne po oprave: 13 focused dictation testu, 279 workspace all-feature testu
+(83 native), all-target/all-feature Clippy s `-D warnings`, fmt a release PASS.
+Dale 6 actual-hidden lifecycle a 7 C#/Rust DPAPI/IPC/PE-icon parity skupin PASS.
+Prvni compile odhalil presun String z Drop-protected manifestu a chybne pouziti
+PartialEq na tomto typu; opraveno clone ID a porovnanim celeho encoded manifestu
+pred uspesnymi behy. Zadny neuspesny beh neni vydavan za PASS.
+
+Novy build-only instalator ma SHA256
+d836cf6e1b4bcb48593c302d5e1abf61e27f8e1ecd745a95a439a15b1dc0632d;
+release a staged EXE oba
+d35852bb0b18430315014d4000efbb65c94794e224fcd542a0409ca2ce786711.
+Nebyly instalovany ani pouzity k dalsimu fyzickemu scenari.
+Current071 performance a posledni fyzicky paste5b zustavaji presne dukazy
+svych puvodnich binary; tato nova oprava je neprejmenovava.
+Windows/Linux/MSRV CI tohoto konkretniho inkrementu se overi samostatne.
+Full-controller hold/toggle/hour, human keyboard/screen-reader/monitor,
+upgrade/rollback a real private Azure/cutover akceptace stale nejsou uzavrene.

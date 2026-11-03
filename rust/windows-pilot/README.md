@@ -76,6 +76,17 @@ or .NET runtime is used. Native microphone, both dictation modes, global shortcu
 nonactivating overlay, guarded paste, Recovery and audit outbox are now wired.
 These surfaces are implemented but have not passed real-device or production E2E.
 
+Dictation initialization now checks pending Stop, Discard, interruption,
+authentication changes and shutdown both before initialization and after joining
+the journal worker. Session engines and microphone startup are deferred until
+that second check passes. An already-running journal write is joined rather than
+detached; cancellation does not promise to interrupt a blocked OS/storage call.
+A stopped or discarded new, unstarted journal is removed only after releasing
+its ownership. Existing Recovery is retained, including when Esc cancels it.
+Deterministic NoPorts tests cover these boundaries, stale generations, closed
+channels, initialization errors and exact retained manifest/audio bytes. This
+does not replace physical controller or hour-long acceptance.
+
 ```powershell
 # Use an explicitly chosen isolated directory; do not use installed app state for tests.
 rust\target\release\VoicePromptRustPilot.exe --instance-key isolated-client `

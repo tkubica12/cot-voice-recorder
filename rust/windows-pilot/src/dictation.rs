@@ -9,12 +9,13 @@ use voiceprompt_client_protocol::dictation_text::preview_tail;
 use voiceprompt_client_protocol::history::HistoryEntry;
 use voiceprompt_client_protocol::polishing::{Polisher, RefinementService};
 use voiceprompt_client_protocol::settings::AppSettings;
+use voiceprompt_client_protocol::state::AuthState;
 
 use crate::client::{ClientStatus, UiRequest};
 use crate::microphone::{CaptureBuffer, Microphone};
 use crate::{
     BoundBatchBackend, DEFAULT_RECOVERY_QUOTA, EncryptedTokenStore, LegacySession, NativeError,
-    NativeHistoryStore, NativeRecoveryStore, SessionError, StreamingSession,
+    NativeHistoryStore, NativeRecoveryJournal, NativeRecoveryStore, SessionError, StreamingSession,
 };
 
 #[cfg(test)]
@@ -210,19 +211,123 @@ fn report(status: &watch::Sender<ClientStatus>, issue: &'static str) {
     });
 }
 
+struct PreparedSession {
+    journal: NativeRecoveryJournal,
+    service: Arc<Service>,
+    id: String,
+    context: String,
+    streaming: bool,
+}
+
+impl PreparedSession {
+    fn start(self, recovering: bool) -> Result<(Session, String, String), NativeError> {
+        let session = if self.streaming {
+            StreamingSession::start(self.journal, self.service, recovering).map(Session::Streaming)
+        } else {
+            LegacySession::start(self.journal, self.service).map(Session::Legacy)
+        }
+        .map_err(|error| {
+            eprintln!("Dictation session initialization: {error}");
+            NativeError::Verification("Dictation session could not start.")
+        })?;
+        Ok((session, self.id, self.context))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StartupInterruption {
+    Stopped,
+    Discarded,
+    Interrupted,
+    AuthChanged,
+    Shutdown,
+}
+
+enum StartupOutcome<T> {
+    Ready(T),
+    Interrupted(StartupInterruption, Option<T>),
+}
+
+fn startup_interruption(
+    generation: u64,
+    commands: &mut mpsc::Receiver<DictationCommand>,
+    auth: &watch::Receiver<AuthState>,
+    shutdown: &watch::Receiver<bool>,
+) -> Option<StartupInterruption> {
+    if *shutdown.borrow() || !matches!(shutdown.has_changed(), Ok(false)) {
+        return Some(StartupInterruption::Shutdown);
+    }
+    if *auth.borrow() != AuthState::SignedIn || !matches!(auth.has_changed(), Ok(false)) {
+        return Some(StartupInterruption::AuthChanged);
+    }
+    loop {
+        match commands.try_recv() {
+            Ok(DictationCommand::Stop {
+                generation: expected,
+            }) if expected == generation => {
+                return Some(StartupInterruption::Stopped);
+            }
+            Ok(DictationCommand::Discard) => return Some(StartupInterruption::Discarded),
+            Ok(DictationCommand::Interrupt) => return Some(StartupInterruption::Interrupted),
+            Ok(_) => {}
+            Err(mpsc::error::TryRecvError::Disconnected) => {
+                return Some(StartupInterruption::Interrupted);
+            }
+            Err(mpsc::error::TryRecvError::Empty) => return None,
+        }
+    }
+}
+
+async fn initialize_startup<T>(
+    initialization: impl std::future::Future<Output = T>,
+    generation: u64,
+    commands: &mut mpsc::Receiver<DictationCommand>,
+    auth: &watch::Receiver<AuthState>,
+    shutdown: &watch::Receiver<bool>,
+) -> StartupOutcome<T> {
+    if let Some(reason) = startup_interruption(generation, commands, auth, shutdown) {
+        return StartupOutcome::Interrupted(reason, None);
+    }
+    // Join blocking journal initialization before releasing its ownership; do not detach a disk write.
+    let initialized = initialization.await;
+    match startup_interruption(generation, commands, auth, shutdown) {
+        Some(reason) => StartupOutcome::Interrupted(reason, Some(initialized)),
+        None => StartupOutcome::Ready(initialized),
+    }
+}
+
+fn release_interrupted_journal(
+    journal: NativeRecoveryJournal,
+    root: &NativeRecoveryStore,
+    reason: StartupInterruption,
+    recovering: bool,
+) -> Result<(), NativeError> {
+    let id = journal.id().to_owned();
+    drop(journal);
+    if !recovering
+        && matches!(
+            reason,
+            StartupInterruption::Stopped | StartupInterruption::Discarded
+        )
+    {
+        root.delete_idle(&id)?;
+    }
+    Ok(())
+}
+
 async fn load_session(
-    host: &DictationHost,
+    api: &Arc<ApiClient<EncryptedTokenStore>>,
+    root: &NativeRecoveryStore,
+    settings: AppSettings,
     recover: Option<&str>,
-) -> Result<(Session, String, String), NativeError> {
-    let settings = host.settings.borrow().clone();
-    let context = host
-        .api
+) -> Result<PreparedSession, NativeError> {
+    let context = api
         .recovery_context(&settings.backend_base_url)
         .await
         .ok_or(NativeError::Verification(
             "Sign in before dictating or recovering saved audio.",
         ))?;
-    let root = host.recovery.clone();
+    let root = root.clone();
     let language = settings.dictation_language;
     let binding = context.clone();
     let streaming = settings.dictation_streaming_enabled;
@@ -245,20 +350,16 @@ async fn load_session(
         ));
     }
     let service = Arc::new(BoundBatchBackend::new(
-        host.api.clone(),
+        api.clone(),
         settings.backend_base_url,
     )?);
-    let id = state.id.clone();
-    let session = if state.streaming {
-        StreamingSession::start(journal, service, recover.is_some()).map(Session::Streaming)
-    } else {
-        LegacySession::start(journal, service).map(Session::Legacy)
-    }
-    .map_err(|error| {
-        eprintln!("Dictation session initialization: {error}");
-        NativeError::Verification("Dictation session could not start.")
-    })?;
-    Ok((session, id, context))
+    Ok(PreparedSession {
+        journal,
+        service,
+        id: state.id.clone(),
+        context,
+        streaming: state.streaming,
+    })
 }
 
 async fn saved_history(
@@ -354,6 +455,9 @@ async fn deliver_to_ui(
 impl DictationHost {
     pub async fn run(mut self) {
         loop {
+            if *self.shutdown.borrow() {
+                return;
+            }
             let command = tokio::select! {
                 biased;
                 _ = self.shutdown.changed() => return,
@@ -382,7 +486,63 @@ impl DictationHost {
                 };
             });
             let mut auth = self.api.auth_state();
-            let initialized = load_session(&self, recovering.as_deref()).await;
+            let settings = self.settings.borrow().clone();
+            let initialization =
+                load_session(&self.api, &self.recovery, settings, recovering.as_deref());
+            let initialized = match initialize_startup(
+                initialization,
+                generation,
+                &mut self.commands,
+                &auth,
+                &self.shutdown,
+            )
+            .await
+            {
+                StartupOutcome::Ready(result) => {
+                    result.and_then(|prepared| prepared.start(recovering.is_some()))
+                }
+                StartupOutcome::Interrupted(reason, prepared) => {
+                    match prepared {
+                        Some(Ok(prepared)) => {
+                            if let Err(error) = release_interrupted_journal(
+                                prepared.journal,
+                                &self.recovery,
+                                reason,
+                                recovering.is_some(),
+                            ) {
+                                eprintln!("Cancelled initialization deletion: {error}");
+                                report(
+                                    &self.status,
+                                    "Cancelled initialization could not be removed. Use Recovery to delete it.",
+                                );
+                            }
+                        }
+                        Some(Err(error)) => {
+                            eprintln!("Interrupted dictation initialization: {error}");
+                        }
+                        None => {}
+                    }
+                    eprintln!("Dictation initialization interrupted: {reason:?}");
+                    if !matches!(
+                        reason,
+                        StartupInterruption::Stopped | StartupInterruption::Discarded
+                    ) {
+                        report(
+                            &self.status,
+                            "Dictation initialization was interrupted. No microphone was opened; Recovery is retained.",
+                        );
+                    }
+                    update(
+                        &self.status,
+                        generation,
+                        mode,
+                        DictationStage::Idle,
+                        String::new(),
+                    );
+                    self.policy.set_dictation_busy(false);
+                    continue;
+                }
+            };
             let (session, id, context) = match initialized {
                 Ok(value) => value,
                 Err(error) => {
