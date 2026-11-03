@@ -3180,3 +3180,8 @@ native99regular/Clippy/fmt a nezavisle6hiddenlifecyclegroupsPASS. SkrytySettings
 selftest navicprosel40skutecnych forward/backwardGetNextDlgTabItem dotazu
 na10poli/dvaviewporty/disabledSave, bez inputu nebo aktivace; nenahrazuje CUIkeys.
 Priprava skutecneho jedinehohodinovehobehu pokracuje, zadnyhourPASS jeste neni.
+Collector pro tento controller scope take uklada create-new durablyflushed
+JSONL header+kazdyprivate/working-set/CPU/thread/handle sample. Finalrawreport
+musi exactmatchvsechnyjournalrows, aby externalinterrupt neztratilcelecapture
+telemetry. Puvodni samplery bez optionalSampleJournalPath se nemeni. Novy3s
+journalsmoke prosel identity/shape/exactrawrows/cleanup, staleverdictincomplete.

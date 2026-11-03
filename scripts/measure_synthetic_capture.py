@@ -81,6 +81,11 @@ def sample(
             revision,
             "-OutputPath",
             str(output),
+            *(
+                ["-SampleJournalPath", str(output.with_suffix(".jsonl"))]
+                if scope == CONTROLLER_SCOPE
+                else []
+            ),
         ],
         check=True,
         timeout=count + 60,
@@ -99,6 +104,28 @@ def sample(
         raise RuntimeError("Owned-process sampler identity or complete shape mismatch.")
     if process.poll() is not None:
         raise RuntimeError("Owned engine exited during sampling.")
+    if scope == CONTROLLER_SCOPE:
+        rows = [
+            json.loads(line)
+            for line in output.with_suffix(".jsonl").read_text().splitlines()
+        ]
+        header = rows[0]
+        if (
+            len(rows) != count + 1
+            or header["process_id"] != process.pid
+            or header["scenario"] != scope
+            or header["source_revision"] != revision
+            or header["binary_sha256"].lower() != binary_hash
+            or header["requested_samples"] != count
+            or header["interval_milliseconds"] != 1000
+            or any(
+                row["index"] != index or row["sample"] != report["samples"][index]
+                for index, row in enumerate(rows[1:])
+            )
+        ):
+            raise RuntimeError(
+                "Durable raw sample journal does not match the completed sampler."
+            )
     return report
 
 
@@ -361,6 +388,11 @@ def run(
                     row["private_bytes"] for row in during["samples"]
                 ),
                 "raw_reports": ["before.json", "capture.json", "after.json"],
+                "durable_sample_journals": (
+                    ["before.jsonl", "capture.jsonl", "after.jsonl"]
+                    if controller
+                    else []
+                ),
                 "exclusions": [
                     "native GUI/renderer/tray" if controller else "full GUI/controller",
                     "microphone",

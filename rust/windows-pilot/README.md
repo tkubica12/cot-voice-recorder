@@ -143,6 +143,11 @@ for all ten controls at both viewport sizes, checking disabled Save is skipped.
 This emits no keyboard/input or activation and does not replace the blocked CUI
 dispatcher or screen-reader/human acceptance.
 
+The current-controller collector additionally enables an explicit sampler
+`SampleJournalPath`: a flushed, create-new JSONL identity header and every raw
+sample survive an interrupted capture. Completed journals must match every row
+of the final raw report. Ordinary sampling without this optional path is unchanged.
+
 ```powershell
 # Use an explicitly chosen isolated directory; do not use installed app state for tests.
 rust\target\release\VoicePromptRustPilot.exe --instance-key isolated-client `

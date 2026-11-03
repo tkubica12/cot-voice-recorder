@@ -19,7 +19,9 @@ param(
   [ValidateRange(100, 60000)]
   [int]$IntervalMilliseconds = 1000,
 
-  [string]$SourceRevision
+  [string]$SourceRevision,
+
+  [string]$SampleJournalPath
 )
 
 Set-StrictMode -Version Latest
@@ -36,6 +38,7 @@ if (-not (Test-Path -LiteralPath ([System.IO.Path]::GetDirectoryName($output)) -
 }
 
 $process = Get-Process -Id $ProcessId
+$journal = $null
 try {
   $processStarted = $process.StartTime.ToUniversalTime()
   $module = $process.MainModule
@@ -45,6 +48,21 @@ try {
   $clock = [System.Diagnostics.Stopwatch]::StartNew()
   $samples = [System.Collections.Generic.List[object]]::new()
   $logicalProcessors = [Environment]::ProcessorCount
+  if (-not [string]::IsNullOrEmpty($SampleJournalPath)) {
+    if ([string]::IsNullOrWhiteSpace($SampleJournalPath)) { throw 'A sample journal path cannot be blank.' }
+    $journalPath = [System.IO.Path]::GetFullPath($SampleJournalPath)
+    if (-not (Test-Path -LiteralPath ([System.IO.Path]::GetDirectoryName($journalPath)) -PathType Container)) {
+      throw 'The sample journal directory must already exist.'
+    }
+    $stream = [System.IO.FileStream]::new($journalPath, [System.IO.FileMode]::CreateNew,
+      [System.IO.FileAccess]::Write, [System.IO.FileShare]::Read)
+    $journal = [System.IO.StreamWriter]::new($stream, [System.Text.UTF8Encoding]::new($false))
+    $journal.WriteLine((@{schema_version=1;status='sampling';process_id=$ProcessId;
+      binary_sha256=$binaryHash;source_revision=$SourceRevision;scenario=$Scenario;
+      requested_samples=$SampleCount;interval_milliseconds=$IntervalMilliseconds} | ConvertTo-Json -Compress))
+    $journal.Flush()
+    $journal.BaseStream.Flush($true)
+  }
 
   for ($index = 0; $index -lt $SampleCount; $index++) {
     if ($index -gt 0) {
@@ -78,6 +96,11 @@ try {
       thread_count = $process.Threads.Count
       handle_count = $process.HandleCount
     })
+    if ($null -ne $journal) {
+      $journal.WriteLine((@{index=$index;sample=$samples[$index]} | ConvertTo-Json -Compress))
+      $journal.Flush()
+      $journal.BaseStream.Flush($true)
+    }
   }
 
   $first = $samples[0]
@@ -132,5 +155,6 @@ try {
   }
   Write-MeasurementReport -Report $report -OutputPath $output
 } finally {
+  if ($null -ne $journal) { $journal.Dispose() }
   $process.Dispose()
 }
