@@ -174,6 +174,13 @@ the user is assisted evidence, not an automatic-paste PASS.
 
 Clipboard writes use immediate `CF_UNICODETEXT` publication from moveable global
 memory, transferring ownership only after successful `SetClipboardData`.
+The writer now checks `CloseClipboard` before returning a publication sequence;
+the guard must not mark a sequence sampled inside an unfinished clipboard
+transaction. Ownership metadata must still identify the publishing window.
+Missing/changed ownership, unavailable sequence or a failed close is visible
+failure, never a successful copy or an arbitrary rebase after a paste rejection.
+The close guard is UI-thread-affine; a successful explicit close does not close
+again on drop. No clipboard contents are read or restored by these checks.
 Bounded retries apply only to a busy clipboard. Pause, suspended/sign-out state
 and dictation-busy policy are rechecked at the actual UI write; an abandoned UI
 request is cancelled so it cannot write later. Audit-source events never auto-copy.

@@ -2853,3 +2853,62 @@ permission je nyni spotrebovana; nedava dalsi repeat ani fyzicky grant.
 Zbyva novy explicitni souhlas pro nejmensi physicalDesktopGuard test,
 human/fullcontroller a install/privateAzure hranice; guarded45788
 stale jenassisted/manualpartial.
+
+### NOVY physical guarded-paste case: safe block, nePASS; checked commit oprava
+
+Uzivatel nasledne NOVE schvalil jeden3min isolated automaticDesktopGuard
+test s jednim personalRun,500ms delay,fixedmarker a bezmanualCtrlV/retry.
+Fresh case PID50040/window592838/frozenCDD6210947c7da1d290533de834b87828ca9c2b5aaf478b56df8d4d016adfacf
+skutecne acceptedRun zaznamenal jeste pred agentprompt. Agent proto
+NEZADAL dalsi klik. Immutable focus/armed/delivering/result prokazuji
+own-focusHResult0/targetmatched,true a jednou publishedmarker, ALE
+typedguard clipboard_sequence_changed:expected25/actual28.
+native_emission_invoked=false/native_events0/input_sent=false;zadny
+nativeCtrlV se nevyvolal. Nativeown-field markerobservation nebyla
+attempted, read-only CUI field byl bezValue aRun disabled. Zadny
+manualpaste/clipboardread/restore zagentastrany ani druhyRun.
+
+Normalni3min windowshutdown,processabsent aonlyowned.lnkremoved;
+resultab31ccfb3804948256a6c6d1207db48f9f43771b74d37f6c7f8212340b94bf9b,
+closedf143f1b34f2f4072d3861bfea223d392b69b4fc8fc877b4244b0bbf454e987b4
+afailurec8a8ef004a6961e33f2e23febdd9b35f06f06237fca070805b233fcb80e1ad7b
+jsou zachovane ve guarded-paste-authorized-0713037. Tento souhlas je
+spotrebovany;NENIautomaticPASS a45788 se nadale nechava assisted-only.
+Po sequencechange nelze tvrdit actual currentclipboardcontents bez
+zakazaneho read; proto se reportuje jenonepublication/norestore a
+fixtureUI uz nepodsouva "marker remains" jako overeny pozdejsi obsah.
+
+Sourceaudit odhalil konkretni orderinggap: write_with_sequence nejprve
+vyhodnotilo GetClipboardSequenceNumber a AZPOTOM RAII Drop provedl
+CloseClipboard. Actual C#MarkedClipboardWriter volaMarkClipboard
+po dokonceneStaClipboardWriter.SetText/flush. Microsoft
+[CloseClipboard](https://learn.microsoft.com/windows/win32/api/winuser/nf-winuser-closeclipboard)
+popisuje dokonceni zmen/umozneni pristupu dalsim windows;
+[sequence API](https://learn.microsoft.com/windows/win32/api/winuser/nf-winuser-getclipboardsequencenumber)
+zavisi na contents/empty/render changes. Tyto source/API dukazy
+NEPROKAZUJI zpetne,ze vsechny3liveincrements vyvolal konkretneclose;
+OS rendering/external activity zustava mozna. Neni zadne fixed "+3"
+pravidlo ani povoleny rebase na aktualni seq pri selhani guardu.
+
+Oprava checkedclose -> sequence -> still-own-owner metadata vraci
+commit snapshot az po dokoncene ownpublication, stejneho radu jako
+C#reference. NULL/changed owner/zero sequence/failedclose znamena
+viditelnoufailure (includingNULLprojectedS_OK asno verifiedowner),
+nikoli success. Guard je thread-affine a successful explicitclose
+nevytvari double-close; resource cleanup po chybe neni dalsiwrite.
+[SetClipboardData](https://learn.microsoft.com/windows/win32/api/winuser/nf-winuser-setclipboarddata)
+vyzaduje owningwindow/openclipboard, memory se transferuje pouze
+poactualSetData success. BezGetClipboardData/contents read/restore.
+
+Prime NoPorts testy pouzivaji STEJNY production commit helper:
+simulatedclose meni25->28 a returnedseq je28; failedclose query
+nedosahne,zero/lostowner/APIerror se nevydavaji zaCopy success.
+STEJNY productionDesktopGuard s synthetic emitterem prijme completed
+snapshot28,ale naslednouchanged29 odmitne PRED emitterem. Focus/
+modifiers/sequence/once-only/release safeguards se neoslabily.
+77native/273fullworkspace+Clippy/release aexisting6lifecycle/7platform
+groups PASS bez jakychkoli systemclipboard/input/device/accounts
+calls vtechto NoPorts testech. Fyzicky post-fixPASS/novyCI jestezbyva;
+predchozi071WindowsPerformancePASS patri frozen76e3... a neprepisuje
+se na tuto pozdejsi clipboardbinary. Novyphysicalpokus potrebuje
+dalsiNOVE rozhodnuti, ne recyklovany souhlas.

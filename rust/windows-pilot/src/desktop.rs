@@ -242,6 +242,56 @@ mod tests {
     use super::*;
 
     #[test]
+    fn guard_uses_completed_publication_sequence_and_still_blocks_later_changes_without_ports() {
+        let sequence = std::cell::Cell::new(25);
+        let published = crate::clipboard::committed_sequence(
+            || {
+                sequence.set(28);
+                Ok(())
+            },
+            || sequence.get(),
+            || Ok(true),
+        )
+        .unwrap();
+        let target = Target {
+            window: 1,
+            focus: 2,
+            thread: 3,
+            process: 4,
+        };
+        let mut guard = DesktopGuard::new(target);
+        guard.mark_clipboard(published);
+        let mut synthetic_emissions = 0;
+        assert_eq!(
+            guard.attempt_with(
+                target,
+                || true,
+                || sequence.get(),
+                |events| {
+                    synthetic_emissions += 1;
+                    events.len() as u32
+                }
+            ),
+            PasteOutcome::Sent { events: 4 }
+        );
+        assert_eq!(synthetic_emissions, 1);
+        sequence.set(29);
+        assert_eq!(
+            guard.attempt_with(
+                target,
+                || true,
+                || sequence.get(),
+                |_| panic!("A later clipboard change must never reach the emitter."),
+            ),
+            PasteOutcome::Blocked(PasteBlock::ClipboardChanged {
+                expected: 28,
+                actual: 29
+            })
+        );
+        assert_eq!(synthetic_emissions, 1);
+    }
+
+    #[test]
     fn typed_guard_reasons_use_no_ports_and_preserve_lazy_order_and_sticky_focus() {
         let target = Target {
             window: 1,

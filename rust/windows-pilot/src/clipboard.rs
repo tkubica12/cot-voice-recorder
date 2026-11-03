@@ -5,7 +5,8 @@ use windows::Win32::Foundation::{
     ERROR_SUCCESS, GetLastError, GlobalFree, HANDLE, HGLOBAL, HWND, SetLastError,
 };
 use windows::Win32::System::DataExchange::{
-    CloseClipboard, EmptyClipboard, GetClipboardSequenceNumber, OpenClipboard, SetClipboardData,
+    CloseClipboard, EmptyClipboard, GetClipboardOwner, GetClipboardSequenceNumber, OpenClipboard,
+    SetClipboardData,
 };
 use windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock};
 
@@ -21,14 +22,48 @@ impl Drop for GlobalBuffer {
     }
 }
 
-struct OpenedClipboard;
+struct OpenedClipboard {
+    open: bool,
+    _thread: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+
+impl OpenedClipboard {
+    fn close(&mut self) -> Result<(), ClipboardError> {
+        unsafe { CloseClipboard() }.map_err(|error| {
+            eprintln!("Clipboard close failed; publication cannot be verified: {error}");
+            ClipboardError::Platform
+        })?;
+        self.open = false;
+        Ok(())
+    }
+}
 
 impl Drop for OpenedClipboard {
     fn drop(&mut self) {
-        if let Err(error) = unsafe { CloseClipboard() } {
-            eprintln!("CloseClipboard failed: {error}");
+        if self.open {
+            if let Err(error) = unsafe { CloseClipboard() } {
+                eprintln!("CloseClipboard cleanup failed: {error}");
+            }
         }
     }
+}
+
+pub(crate) fn committed_sequence(
+    close: impl FnOnce() -> Result<(), ClipboardError>,
+    sequence: impl FnOnce() -> u32,
+    still_owned: impl FnOnce() -> Result<bool, ClipboardError>,
+) -> Result<u32, ClipboardError> {
+    close()?;
+    let sequence = sequence();
+    if sequence == 0 {
+        eprintln!("Clipboard publication sequence is unavailable after close.");
+        return Err(ClipboardError::Platform);
+    }
+    if !still_owned()? {
+        eprintln!("Clipboard ownership changed after publication; copying was not verified.");
+        return Err(ClipboardError::Platform);
+    }
+    Ok(sequence)
 }
 
 fn unicode_text(text: &str) -> Result<Vec<u16>, ClipboardError> {
@@ -76,7 +111,10 @@ pub(crate) fn write_with_sequence(owner: HWND, text: &str) -> Result<u32, Clipbo
     if unsafe { OpenClipboard(Some(owner)) }.is_err() {
         return Err(ClipboardError::Busy);
     }
-    let _opened = OpenedClipboard;
+    let mut opened = OpenedClipboard {
+        open: true,
+        _thread: std::marker::PhantomData,
+    };
     unsafe { EmptyClipboard() }.map_err(|error| {
         eprintln!("EmptyClipboard failed: {error}");
         ClipboardError::Platform
@@ -87,12 +125,78 @@ pub(crate) fn write_with_sequence(owner: HWND, text: &str) -> Result<u32, Clipbo
     })?;
     // CF_UNICODETEXT is rendered immediately; only successful publication transfers ownership.
     buffer.0 = None;
-    Ok(unsafe { GetClipboardSequenceNumber() })
+    committed_sequence(
+        || opened.close(),
+        || unsafe { GetClipboardSequenceNumber() },
+        || match unsafe { GetClipboardOwner() } {
+            Ok(current) => Ok(current == owner),
+            Err(error) => {
+                if error.code().0 == 0 {
+                    eprintln!("Clipboard has no verified owner after publication.");
+                } else {
+                    eprintln!("Clipboard ownership metadata is unavailable: {error}");
+                }
+                Err(ClipboardError::Platform)
+            }
+        },
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn returned_sequence_is_sampled_after_completed_close_without_clipboard_ports() {
+        let sequence = std::cell::Cell::new(25);
+        let operations = std::cell::RefCell::new(Vec::new());
+        let published = committed_sequence(
+            || {
+                operations.borrow_mut().push("close");
+                sequence.set(28);
+                Ok(())
+            },
+            || {
+                operations.borrow_mut().push("sequence");
+                sequence.get()
+            },
+            || {
+                operations.borrow_mut().push("ownership");
+                Ok(true)
+            },
+        )
+        .unwrap();
+        assert_eq!(published, 28);
+        assert_eq!(*operations.borrow(), ["close", "sequence", "ownership"]);
+    }
+
+    #[test]
+    fn failed_close_unavailable_sequence_and_changed_owner_are_never_publication_success() {
+        assert_eq!(
+            committed_sequence(
+                || Err(ClipboardError::Platform),
+                || panic!("Failed close must not vend a sequence."),
+                || panic!("Failed close must not query ownership."),
+            ),
+            Err(ClipboardError::Platform)
+        );
+        assert_eq!(
+            committed_sequence(
+                || Ok(()),
+                || 0,
+                || panic!("Missing sequence must not query ownership."),
+            ),
+            Err(ClipboardError::Platform)
+        );
+        assert_eq!(
+            committed_sequence(|| Ok(()), || 28, || Ok(false),),
+            Err(ClipboardError::Platform)
+        );
+        assert_eq!(
+            committed_sequence(|| Ok(()), || 28, || Err(ClipboardError::Platform),),
+            Err(ClipboardError::Platform)
+        );
+    }
 
     #[test]
     fn clipboard_buffer_is_exact_terminated_utf16_without_touching_system_clipboard() {

@@ -568,7 +568,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                                 text(
                                     status,
                                     &format!(
-                                        "Marker published, automatic paste incomplete ({detail}). DO NOT paste manually or retry. Leave the field unchanged; marker remains on clipboard."
+                                        "Marker was published, automatic paste incomplete ({detail}). DO NOT paste manually or retry. Leave the field unchanged. Current clipboard contents were not read or restored."
                                     ),
                                 )?;
                             }
@@ -598,9 +598,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 text(
                     status,
                     if report.marker_observed {
-                        "PASS: exact synthetic marker observed in own field after one automatic Ctrl+V. Marker remains on clipboard."
+                        "PASS: exact synthetic marker observed in own field after one automatic Ctrl+V. Previous clipboard was not restored."
                     } else {
-                        "FAILED: exact marker not observed. No retry; clipboard marker remains."
+                        "FAILED: exact marker not observed. No retry; current clipboard contents were not read or restored."
                     },
                 )?;
             }
