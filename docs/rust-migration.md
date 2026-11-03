@@ -3024,6 +3024,13 @@ d35852bb0b18430315014d4000efbb65c94794e224fcd542a0409ca2ce786711.
 Nebyly instalovany ani pouzity k dalsimu fyzickemu scenari.
 Current071 performance a posledni fyzicky paste5b zustavaji presne dukazy
 svych puvodnich binary; tato nova oprava je neprejmenovava.
-Windows/Linux/MSRV CI tohoto konkretniho inkrementu se overi samostatne.
+RustCI41596155218 nad code2349319c23201c2a0d09cb9ce0210796785cd244
+nasledne skoncilo uspesne ve vsech peti jobech: Windows/Linux offline checks,
+Windows/Linux all-feature MSRV1.85 a cloud-container build bez nasazeni.
+Windows hidden Settings/lifecycle, DPAPI/IPC/ikonove a v1-v4/text/checkpoint
+parity, oba GDI resource testy a NoPorts focus proof prosly.
+Windows job dokoncen 2026-11-03T07:40:15Z; watcher skoncil exit0.
+Jeho bounded synthetic engine smoke trval 238s, nikoliv novou real-hour
+nebo full-controller akceptaci. Zadny aktivni helper nezustal.
 Full-controller hold/toggle/hour, human keyboard/screen-reader/monitor,
 upgrade/rollback a real private Azure/cutover akceptace stale nejsou uzavrene.
