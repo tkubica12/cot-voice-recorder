@@ -604,7 +604,7 @@ async fn run_client(
     let mut dictation_task = recovery.map(|recovery| {
         tokio::spawn(
             DictationHost {
-                api: api.clone(),
+                ports: crate::dictation_ports::NativeDictationPorts::new(api.clone()),
                 recovery,
                 history: history.clone(),
                 settings: setting_updates,
@@ -694,6 +694,17 @@ async fn run_client(
             }
             command = commands.recv() => {
                 let Some(command) = command else { break };
+                if options.fixture_runtime {
+                    issue(
+                        &status,
+                        if matches!(&command, ClientCommand::SaveSettings(_)) {
+                            "Validation fixture cannot save Settings."
+                        } else {
+                            "Read-only fixture cannot execute client actions."
+                        },
+                    );
+                    continue;
+                }
                 match command {
                     ClientCommand::SignIn => {
                         if status.borrow().signing_in || status.borrow().signing_out { continue; }
@@ -1099,6 +1110,127 @@ mod tests {
         );
         assert_eq!(std::fs::read(path).unwrap(), original);
         drop(host);
+        assert!(!directory.0.join("tokens.bin").exists());
+    }
+
+    #[test]
+    fn read_only_fixture_rejects_all_runtime_actions_and_preserves_synthetic_data() {
+        let directory = crate::recovery_store::tests::TemporaryRoot::new();
+        std::fs::write(
+            directory.0.join("migration-fixture.json"),
+            serde_json::json!({"scope":crate::fixtures::SCOPE,
+                "instance_key":"0123456789abcdef0123456789abcdef"})
+            .to_string(),
+        )
+        .unwrap();
+        let settings = AppSettings {
+            backend_base_url: "https://fixture.example.invalid".into(),
+            notifications_paused: true,
+            auto_start: false,
+            dictation_enabled: false,
+            ..Default::default()
+        };
+        let settings_path = directory.0.join("settings.json");
+        NativeSettingsStore::new(settings_path.clone())
+            .unwrap()
+            .save(&settings)
+            .unwrap();
+        let history_path = directory.0.join("history.json");
+        let now = time::OffsetDateTime::now_utc();
+        NativeHistoryStore::new(history_path.clone())
+            .unwrap()
+            .add(
+                HistoryEntry {
+                    transcript_id: "synthetic".into(),
+                    recording_id: "synthetic".into(),
+                    body: "synthetic immutable body".into(),
+                    raw_body: Some("synthetic original".into()),
+                    preview: "synthetic".into(),
+                    character_count: 24,
+                    completed_at: now,
+                    cached_at: now,
+                    refinement_fallback_blocks: 0,
+                },
+                now,
+            )
+            .unwrap();
+        let recovery = crate::dictation::open_recovery(directory.0.join("recovery")).unwrap();
+        let journal = recovery
+            .create("cs".into(), "synthetic binding".into(), false, now)
+            .unwrap();
+        let id = journal.id().to_owned();
+        let manifest = journal.snapshot().unwrap().encode().unwrap();
+        drop(journal);
+        let original_settings = std::fs::read(&settings_path).unwrap();
+        let original_history = std::fs::read(&history_path).unwrap();
+        let mut host = ClientHost::start(ClientOptions {
+            state_directory: directory.0.clone(),
+            oauth_config: None,
+            clipboard_enabled: false,
+            installed: false,
+            fixture_runtime: true,
+            auth_only: false,
+        })
+        .unwrap();
+        let commands = [
+            ClientCommand::SignIn,
+            ClientCommand::SignOut,
+            ClientCommand::Copy {
+                id: None,
+                original: false,
+            },
+            ClientCommand::Copy {
+                id: Some("synthetic".into()),
+                original: true,
+            },
+            ClientCommand::TogglePause,
+            ClientCommand::Reconnect,
+            ClientCommand::Suspend,
+            ClientCommand::Resume,
+            ClientCommand::Dictation(DictationCommand::Begin {
+                generation: 1,
+                mode: crate::dictation::DictationMode::Hold,
+            }),
+            ClientCommand::Dictation(DictationCommand::Recover {
+                id: id.clone(),
+                generation: 2,
+            }),
+            ClientCommand::DeleteRecovery(id.clone()),
+            ClientCommand::RefreshHistory,
+            ClientCommand::RefreshRecovery,
+            ClientCommand::ClearHistory,
+        ];
+        for command in commands {
+            host.status.borrow_and_update();
+            host.commands.try_send(command).unwrap();
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            while !host.status.has_changed().unwrap()
+                || host.commands.capacity() != 8
+                || host.status.borrow().issue
+                    != Some("Read-only fixture cannot execute client actions.")
+            {
+                assert!(std::time::Instant::now() < deadline);
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }
+        assert!(host.requests.try_recv().is_err());
+        assert_eq!(host.status.borrow().auth, AuthState::NotConfigured);
+        assert!(!host.status.borrow().signing_in && !host.status.borrow().signing_out);
+        assert!(!host.policy.dictation_busy());
+        assert!(!host.policy.authenticated() && host.policy.paused());
+        drop(host);
+        assert_eq!(std::fs::read(&settings_path).unwrap(), original_settings);
+        assert_eq!(std::fs::read(&history_path).unwrap(), original_history);
+        assert_eq!(
+            recovery
+                .open(&id)
+                .unwrap()
+                .snapshot()
+                .unwrap()
+                .encode()
+                .unwrap(),
+            manifest
+        );
         assert!(!directory.0.join("tokens.bin").exists());
     }
 

@@ -77,6 +77,21 @@ const DELETE_RECOVERY: usize = 1042;
 const OPEN_SETTINGS: usize = 1044;
 const REFRESH_HISTORY: usize = 1045;
 const CLEAR_HISTORY: usize = 1046;
+const CLIENT_ACTIONS: [usize; 13] = [
+    SIGN_IN,
+    SIGN_OUT,
+    COPY_LATEST,
+    PAUSE,
+    RECONNECT,
+    COPY_SELECTED,
+    COPY_ORIGINAL,
+    RECOVER_SELECTED,
+    REFRESH_RECOVERY,
+    DELETE_RECOVERY,
+    OPEN_SETTINGS,
+    REFRESH_HISTORY,
+    CLEAR_HISTORY,
+];
 const MAIN_TABS: usize = 1050;
 const SHOW_HISTORY_TEXT: usize = 1051;
 const RECOVERY_HELP: usize = 1052;
@@ -112,6 +127,8 @@ thread_local! {
     static UI_PREVIEW_ROOT: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
     #[cfg(test)]
     static UI_PREVIEW_MINIMUM: Cell<bool> = const { Cell::new(false) };
+    #[cfg(test)]
+    static UI_PREVIEW_KEYBOARD: Cell<bool> = const { Cell::new(false) };
     static UI_HISTORY: RefCell<Option<std::sync::Arc<Vec<voiceprompt_client_protocol::history::HistoryEntry>>>> =
         const { RefCell::new(None) };
     static UI_RECOVERY: RefCell<Option<std::sync::Arc<Vec<crate::NativeRecoveryInfo>>>> =
@@ -994,7 +1011,20 @@ fn selected_id(hwnd: HWND) -> Result<Option<String>, NativeError> {
     }))
 }
 
+fn fixture_ui_allows(options: &ClientOptions, command: usize) -> bool {
+    !options.fixture_runtime || command == OPEN_SETTINGS
+}
+
 fn client_command(hwnd: HWND, command: usize) -> Result<(), NativeError> {
+    if CLIENT.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .is_some_and(|host| !fixture_ui_allows(&host.options, command))
+    }) {
+        return Err(NativeError::Verification(
+            "Read-only fixture rejected an action before dialogs, shortcuts or client commands.",
+        ));
+    }
     if CLIENT.with(|slot| {
         slot.borrow()
             .as_ref()
@@ -1355,9 +1385,10 @@ fn refresh_client_ui(hwnd: HWND, force_presentation: bool) -> Result<(), NativeE
         set_text(hwnd, PAUSE, if host.policy.paused() { "Resume auto-copy" } else { "Pause auto-copy" })?;
         let selected = selected_id(hwnd)?;
         let original_available = selected_history_entry(&status.history, selected.as_deref()).is_some_and(|entry| entry.raw_body.is_some());
-        for id in [SIGN_IN, SIGN_OUT, COPY_LATEST, PAUSE, RECONNECT, COPY_SELECTED, COPY_ORIGINAL, RECOVER_SELECTED, REFRESH_RECOVERY, DELETE_RECOVERY, OPEN_SETTINGS, REFRESH_HISTORY, CLEAR_HISTORY] {
+        for id in CLIENT_ACTIONS {
             let control = api("GetDlgItem", unsafe { GetDlgItem(Some(hwnd), id as i32) })?;
-            let enabled = if host.options.auth_only && !matches!(id, SIGN_IN | SIGN_OUT) {
+            let enabled = if !fixture_ui_allows(&host.options, id)
+                || host.options.auth_only && !matches!(id, SIGN_IN | SIGN_OUT) {
                 false
             } else { match id {
                 SIGN_IN => status.can_sign_in(),
@@ -1970,7 +2001,14 @@ fn dispatch(
                 ));
             }
             api("Name isolated native client preview", unsafe {
-                SetWindowTextW(hwnd, w!("Isolated Rust client preview - no physical ports"))
+                SetWindowTextW(
+                    hwnd,
+                    if UI_PREVIEW_KEYBOARD.with(Cell::get) {
+                        w!("Isolated Rust keyboard test - NoPorts")
+                    } else {
+                        w!("Isolated Rust client preview - no physical ports")
+                    },
+                )
             })?;
             unsafe {
                 let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
@@ -1980,6 +2018,21 @@ fn dispatch(
                     "Read-only preview activated the window.",
                 ));
             }
+            refresh_client_ui(hwnd, true)?;
+            for id in CLIENT_ACTIONS {
+                let control = api("Verify read-only preview control", unsafe {
+                    GetDlgItem(Some(hwnd), id as i32)
+                })?;
+                let enabled = unsafe {
+                    windows::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled(control)
+                }
+                .as_bool();
+                if enabled != (id == OPEN_SETTINGS) {
+                    return Err(NativeError::Verification(
+                        "Read-only preview exposed an action or disabled Settings navigation.",
+                    ));
+                }
+            }
             let mut bounds = RECT::default();
             api("Read visual client viewport", unsafe {
                 GetClientRect(hwnd, &mut bounds)
@@ -1987,7 +2040,8 @@ fn dispatch(
             let data = serde_json::to_vec(&serde_json::json!({"scope":"native-full-client-ui-preview","pid":std::process::id(),
                 "window":hwnd.0 as usize,"history_count":count,"physical_ports":false,"auth":"not_configured","dpi":crate::dpi::window_dpi(hwnd),
                 "client_width":bounds.right-bounds.left,"client_height":bounds.bottom-bounds.top,"foreground_unchanged":true,
-                "hidden_history_format_calls":0}))
+                "hidden_history_format_calls":0,"action_controls_disabled":true,
+                "keyboard_only":UI_PREVIEW_KEYBOARD.with(Cell::get)}))
                 .map_err(|_|NativeError::Verification("Encode visual client readiness failed."))?;
             atomic_write(
                 &root.join("ui-preview-ready.json"),
@@ -3088,6 +3142,41 @@ mod tests {
     #[ignore = "Bounded minimum-reference-size full-client visual fixture, physical/account ports disabled. Launch through UI tools in a fresh marked synthetic root."]
     fn manual_native_client_minimum_visual_preview() {
         run_native_client_preview(true);
+    }
+
+    #[test]
+    #[ignore = "One separately approved keyboard-only3min NoPorts main/Settings fixture in a fresh marked root; no clipboard/input emission/account/device ports."]
+    fn manual_native_client_keyboard_preview() {
+        let root = std::env::current_dir().unwrap();
+        let marker: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(root.join("keyboard-fixture.json")).unwrap())
+                .unwrap();
+        assert_eq!(
+            marker,
+            serde_json::json!({"scope":"single-native-keyboard-only-fixture"})
+        );
+        UI_PREVIEW_KEYBOARD.with(|value| value.set(true));
+        run_native_client_preview(false);
+        UI_PREVIEW_KEYBOARD.with(|value| value.set(false));
+    }
+
+    #[test]
+    fn read_only_preview_only_allows_settings_navigation_and_normal_controls_are_unchanged() {
+        let mut options = ClientOptions {
+            state_directory: PathBuf::new(),
+            oauth_config: None,
+            clipboard_enabled: false,
+            installed: false,
+            fixture_runtime: true,
+            auth_only: false,
+        };
+        for id in CLIENT_ACTIONS {
+            assert_eq!(fixture_ui_allows(&options, id), id == OPEN_SETTINGS);
+        }
+        options.fixture_runtime = false;
+        for id in CLIENT_ACTIONS {
+            assert!(fixture_ui_allows(&options, id));
+        }
     }
 
     fn run_native_client_preview(minimum: bool) {

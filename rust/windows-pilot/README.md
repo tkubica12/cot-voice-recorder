@@ -87,6 +87,27 @@ Deterministic NoPorts tests cover these boundaries, stale generations, closed
 channels, initialization errors and exact retained manifest/audio bytes. This
 does not replace physical controller or hour-long acceptance.
 
+The controller loop now uses private typed ports for authentication context,
+bound backend creation, refinement and capture lifecycle. The normal client
+always constructs `NativeDictationPorts`, which delegates to the same authenticated
+API, `BoundBatchBackend` and `Microphone`; no command-line/configuration switch
+selects synthetic ports. Test-only ports run the actual controller, both engines,
+encrypted Recovery and atomic History together. Synthetic UI acknowledgements
+exercise handoff/cancellation, not operating-system paste.
+
+All `fixture_runtime` client actions are read-only: runtime commands are refused
+before dispatch, and the native action controls are disabled except Settings
+navigation. The UI rejects forced commands before confirmation dialogs or
+shortcut registration. Settings fields remain navigable but Save is disabled
+and rejected in the runtime; closing/cancelling preserves the input files.
+The separately ignored `platform::tests::manual_native_client_keyboard_preview`
+requires a fresh ordinary signed-out fixture root plus
+`keyboard-fixture.json` equal to
+`{"scope":"single-native-keyboard-only-fixture"}`. It verifies disabled action
+controls before readiness and opens one three-minute keyboard-only preview.
+User keyboard participation requires its own permission; this does not enable
+clipboard, global hotkeys, devices, accounts, backend operations or installation.
+
 ```powershell
 # Use an explicitly chosen isolated directory; do not use installed app state for tests.
 rust\target\release\VoicePromptRustPilot.exe --instance-key isolated-client `

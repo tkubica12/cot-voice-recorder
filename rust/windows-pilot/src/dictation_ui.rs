@@ -228,6 +228,11 @@ impl DictationUi {
     }
 
     pub fn recover(&mut self, id: String) -> Result<(), NativeError> {
+        if !self.enabled {
+            return Err(NativeError::Verification(
+                "Recovery actions are disabled in this read-only client.",
+            ));
+        }
         if self.busy {
             return Err(NativeError::Verification(
                 "Finish dictation before Recovery.",
@@ -536,6 +541,22 @@ mod tests {
         ui.generation = 17;
         ui.busy = true;
         (ui, receiver)
+    }
+
+    #[test]
+    fn read_only_recovery_refuses_before_shortcuts_generation_or_command_queue() {
+        let (mut ui, mut commands) = pending_ui();
+        ui.busy = false;
+        let generation = ui.generation;
+        assert!(
+            ui.recover("synthetic never open any journal".into())
+                .is_err()
+        );
+        assert_eq!(ui.generation, generation);
+        assert!(!ui.busy);
+        assert!(!ui.shortcuts.needs_poll());
+        assert!(commands.try_recv().is_err());
+        assert!(!unsafe { IsWindowVisible(ui.overlay.window) }.as_bool());
     }
 
     #[test]

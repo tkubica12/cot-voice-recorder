@@ -3034,3 +3034,60 @@ Jeho bounded synthetic engine smoke trval 238s, nikoliv novou real-hour
 nebo full-controller akceptaci. Zadny aktivni helper nezustal.
 Full-controller hold/toggle/hour, human keyboard/screen-reader/monitor,
 upgrade/rollback a real private Azure/cutover akceptace stale nejsou uzavrene.
+
+### Synteticka kompozice cele controllerove smycky a keyboard-only NoPorts guard
+
+Nove private typed ports zpristupnuji skutecnou `DictationHost::run` smycku
+deterministickym testum bez fyzickych zdroju. Bezny klient vzdy vytvori
+`NativeDictationPorts`: stejny authenticated ApiClient, puvodni binding kontrola,
+Refiner a Microphone start/finish. JSON/CLI nemohou zvolit mock porty.
+Session enginy, encrypted journal, History a stop/polishing/delivery logika jsou
+v kompozicnich testech skutecne produkcni implementace. UI reply Pasted/CopiedOnly
+je synteticke potvrzeni handoffu, nikoliv dukaz Windows Ctrl+V.
+
+Kompozice pokryva oba rezimy a enginy, presne queued+stop-tail PCM, durable
+History pred UI handoffem, original/final text pri polishing success/failure,
+Discard versus interrupt/auth/shutdown retention, capture start/stop failures,
+chybny History zapis, Recovery bez automatickeho paste, provisional+failed
+fallback, joined cancellation blocked completion, closed UI a disabled Settings/
+signed-out startup. Nove acknowledgement fixture testuje prubezne confirmed
+prefixy; ACK/provisionalni text se nepouziva jako audio release ani finalni History.
+
+Prvni accelerated115200000-byte volume pokus FAILED po645.29s na5s testovem
+UI-handoff timeoutu. Jeho original log/binary a jediny overeny synteticky temp
+root byly zachovany v controller-volume-failed-37deb3f, neprepsany na PASS.
+History uz obsahovala synteticky finalni text, ale handoff/cleanup PASS pro tento
+beh neni prokazan. Puvodni fixture krmila nepretrzity high-energy signal bez
+quiet interval; produkcni sender tak neprovedl prubezne manual commits.
+To neni zdravy checkpoint workload pouzity drivejsim hodinovym testem.
+Opravena fixture pouziva explicitni low-energy deterministicke PCM a potvrzuje
+jen skutecne committed prefixy. Sample-volume cil115200000bytes ani stop/paste
+guard/budgets nejsou snizeny. Real-hour/50min rotation nebo GUI performance se
+tim nenahrazuji. Failures zustavaji zachovane, novy velky beh se overi oddelene.
+
+Uzivatel NOVE schvalil jeden3min keyboard-only NoPorts main/Settings test:
+Tab/ShiftTab/arrows/Space, cteni a navigace History/Recovery/Settings, Cancel
+bez Save; bez CtrlC/V/Enter/send/device/globalhotkeys/account/backend/install/
+OS/Narrator/personalstate. Kontrola pred otevrenim odhalila ze stara visual
+fixture mela Save/copy blokovane, ale Pause/Clear/Delete/Recover dostupne.
+To bylo opraveno pred jakymkoli otevrenim keyboard case: UI controls disabled,
+forced command guard pred dialogy/shortcuty a runtime allow-none command gate.
+NoPorts `DictationUi::recover` take odmita pred zmenou generation/busy a hotkeys.
+Runtime test posila14 ruznych akci a overuje exact Settings/History/Recovery,
+nezmenenou auth/policy, prazdne UI requests a zadny token soubor.
+Keyboard readiness kontroluje skutecne IsWindowEnabled pro vsechny action IDs;
+povolena zustava jen Settings navigace a jeji Save nadale zakazuje UI i runtime.
+
+Dosavadni lokalni native regression:99 regular tests PASS (13 ignored samostatnych
+physical/volume/visual vstupu), all-target/all-feature Clippy/fmt/release PASS.
+Nove kompletni workspace all-feature regression295 regular tests PASS,
+13 actual controller-composition skupin PASS,6 hidden lifecycle a7 C#/Rust
+DPAPI/IPC/original-icon parity skupin PASS. Count-only acknowledgement smoke
+overil1280000 exact sample bytes, live confirmed prefixes, stop/history/audit
+a joined cleanup; nejde o hodinu. Novy build-only setup
+1d4c91165858b4be55e68b76a9fb56cca5109f9fd883683a05dadf2ea2588223
+obsahuje release/staged2cadaa327c2f14f1ac02696686b8b30ce757228ae95c7c465b7b62cb7ec2654c.
+Zadna instalace, skutecna device/copy akce nebo produkcni zmena neprobehla.
+Schvaleny keyboard countdown jeste NEZACAL a zadne keyboard okno nebylo otevrene.
+Opraveny presny build, dalsi parity/CI a pripadne novy volume dukaz budou
+zaznamenany pred dalsimi tvrzenimi o akceptaci. Cela migrace stale neni uzavrena.

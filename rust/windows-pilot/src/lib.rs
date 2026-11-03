@@ -65,6 +65,8 @@ mod dictation;
 #[cfg(windows)]
 mod dictation_overlay;
 #[cfg(windows)]
+mod dictation_ports;
+#[cfg(windows)]
 mod dictation_ui;
 #[cfg(windows)]
 mod hotkeys;

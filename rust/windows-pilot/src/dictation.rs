@@ -3,24 +3,28 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use tokio::sync::{mpsc, oneshot, watch};
-use voiceprompt_client_protocol::api::ApiClient;
 use voiceprompt_client_protocol::delivery::DeliveryPolicy;
 use voiceprompt_client_protocol::dictation_text::preview_tail;
 use voiceprompt_client_protocol::history::HistoryEntry;
-use voiceprompt_client_protocol::polishing::{Polisher, RefinementService};
+use voiceprompt_client_protocol::polishing::Polisher;
 use voiceprompt_client_protocol::settings::AppSettings;
 use voiceprompt_client_protocol::state::AuthState;
 
 use crate::client::{ClientStatus, UiRequest};
-use crate::microphone::{CaptureBuffer, Microphone};
+use crate::dictation_ports::{DictationPorts, NativeDictationPorts};
+use crate::microphone::CaptureBuffer;
 use crate::{
-    BoundBatchBackend, DEFAULT_RECOVERY_QUOTA, EncryptedTokenStore, LegacySession, NativeError,
-    NativeHistoryStore, NativeRecoveryJournal, NativeRecoveryStore, SessionError, StreamingSession,
+    DEFAULT_RECOVERY_QUOTA, LegacySession, NativeError, NativeHistoryStore, NativeRecoveryJournal,
+    NativeRecoveryStore, SessionError, StreamingBackend, StreamingSession,
 };
 
 #[cfg(test)]
 #[path = "dictation_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "dictation_controller_tests.rs"]
+mod controller_tests;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DictationMode {
@@ -87,31 +91,12 @@ pub(crate) enum DictationCommand {
     },
 }
 
-type Service = BoundBatchBackend<EncryptedTokenStore>;
-struct Refiner {
-    api: Arc<ApiClient<EncryptedTokenStore>>,
-    email: String,
-}
-impl RefinementService for Refiner {
-    async fn refine(
-        &self,
-        text: &str,
-        context: &str,
-    ) -> Result<
-        voiceprompt_client_protocol::api::DictationRefinement,
-        voiceprompt_client_protocol::api::ApiError,
-    > {
-        self.api
-            .refine_bound_dictation(text, context, &self.email)
-            .await
-    }
-}
-enum Session {
-    Legacy(LegacySession<Service>),
-    Streaming(StreamingSession<Service>),
+enum Session<S: StreamingBackend> {
+    Legacy(LegacySession<S>),
+    Streaming(StreamingSession<S>),
 }
 
-impl Session {
+impl<S: StreamingBackend> Session<S> {
     fn append(&self, bytes: &[u8]) -> Result<(), SessionError> {
         match self {
             Self::Legacy(session) => session.append(bytes),
@@ -156,8 +141,8 @@ impl Session {
     }
 }
 
-pub(crate) struct DictationHost {
-    pub api: Arc<ApiClient<EncryptedTokenStore>>,
+pub(crate) struct DictationHost<P: DictationPorts = NativeDictationPorts> {
+    pub ports: P,
     pub recovery: NativeRecoveryStore,
     pub history: Arc<NativeHistoryStore>,
     pub settings: watch::Receiver<AppSettings>,
@@ -211,16 +196,16 @@ fn report(status: &watch::Sender<ClientStatus>, issue: &'static str) {
     });
 }
 
-struct PreparedSession {
+struct PreparedSession<S: StreamingBackend> {
     journal: NativeRecoveryJournal,
-    service: Arc<Service>,
+    service: Arc<S>,
     id: String,
     context: String,
     streaming: bool,
 }
 
-impl PreparedSession {
-    fn start(self, recovering: bool) -> Result<(Session, String, String), NativeError> {
+impl<S: StreamingBackend> PreparedSession<S> {
+    fn start(self, recovering: bool) -> Result<(Session<S>, String, String), NativeError> {
         let session = if self.streaming {
             StreamingSession::start(self.journal, self.service, recovering).map(Session::Streaming)
         } else {
@@ -315,13 +300,13 @@ fn release_interrupted_journal(
     Ok(())
 }
 
-async fn load_session(
-    api: &Arc<ApiClient<EncryptedTokenStore>>,
+async fn load_session<P: DictationPorts>(
+    ports: &P,
     root: &NativeRecoveryStore,
     settings: AppSettings,
     recover: Option<&str>,
-) -> Result<PreparedSession, NativeError> {
-    let context = api
+) -> Result<PreparedSession<P::Backend>, NativeError> {
+    let context = ports
         .recovery_context(&settings.backend_base_url)
         .await
         .ok_or(NativeError::Verification(
@@ -349,10 +334,7 @@ async fn load_session(
             "Use the original signed-in account and backend for Recovery.",
         ));
     }
-    let service = Arc::new(BoundBatchBackend::new(
-        api.clone(),
-        settings.backend_base_url,
-    )?);
+    let service = ports.backend(settings.backend_base_url)?;
     Ok(PreparedSession {
         journal,
         service,
@@ -362,9 +344,9 @@ async fn load_session(
     })
 }
 
-async fn saved_history(
-    host: &DictationHost,
-    session: &Session,
+async fn saved_history<P: DictationPorts>(
+    host: &DictationHost<P>,
+    session: &Session<P::Backend>,
     text: &str,
     raw_text: Option<&str>,
     fallback_blocks: usize,
@@ -408,9 +390,9 @@ pub(crate) fn dashed_id(id: &str) -> String {
     )
 }
 
-async fn stop_microphone(microphone: Option<Microphone>) -> bool {
+async fn stop_microphone<P: DictationPorts>(microphone: Option<P::Capture>) -> bool {
     if let Some(microphone) = microphone {
-        match tokio::task::spawn_blocking(move || microphone.finish()).await {
+        match tokio::task::spawn_blocking(move || P::stop_capture(microphone)).await {
             Ok(Ok(())) => true,
             result => {
                 eprintln!("Microphone shutdown failed: {result:?}");
@@ -452,7 +434,7 @@ async fn deliver_to_ui(
     .map_err(|_| UiDeliveryError::TimedOut)?
 }
 
-impl DictationHost {
+impl<P: DictationPorts> DictationHost<P> {
     pub async fn run(mut self) {
         loop {
             if *self.shutdown.borrow() {
@@ -485,10 +467,10 @@ impl DictationHost {
                     ..Default::default()
                 };
             });
-            let mut auth = self.api.auth_state();
+            let mut auth = self.ports.auth_state();
             let settings = self.settings.borrow().clone();
             let initialization =
-                load_session(&self.api, &self.recovery, settings, recovering.as_deref());
+                load_session(&self.ports, &self.recovery, settings, recovering.as_deref());
             let initialized = match initialize_startup(
                 initialization,
                 generation,
@@ -566,7 +548,8 @@ impl DictationHost {
             let mut microphone = None;
             let mut audio = None;
             if recovering.is_none() {
-                match tokio::task::spawn_blocking(Microphone::start).await {
+                let ports = self.ports.clone();
+                match tokio::task::spawn_blocking(move || ports.start_capture()).await {
                     Ok(Ok((capture, receiver))) => {
                         microphone = Some(capture);
                         audio = Some(receiver);
@@ -598,12 +581,9 @@ impl DictationHost {
             let polishing_settings = self.settings.borrow().clone();
             let polisher =
                 if recovering.is_none() && polishing_settings.dictation_refinement_enabled {
-                    context.split_once('\n').map(|(_, email)| {
-                        Polisher::new(Arc::new(Refiner {
-                            api: self.api.clone(),
-                            email: email.to_owned(),
-                        }))
-                    })
+                    context
+                        .split_once('\n')
+                        .map(|(_, email)| Polisher::new(self.ports.refiner(email.to_owned())))
                 } else {
                     None
                 };
@@ -654,7 +634,7 @@ impl DictationHost {
                     polishing_settings.dictation_final_wait_milliseconds,
                 )));
             }
-            let capture_ok = stop_microphone(microphone.take()).await;
+            let capture_ok = stop_microphone::<P>(microphone.take()).await;
             preserve |= !capture_ok;
             if let Err(error) = drain_capture(&mut audio, discard, |pcm| session.append(pcm)).await
             {
