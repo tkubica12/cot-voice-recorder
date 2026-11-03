@@ -2912,3 +2912,30 @@ calls vtechto NoPorts testech. Fyzicky post-fixPASS/novyCI jestezbyva;
 predchozi071WindowsPerformancePASS patri frozen76e3... a neprepisuje
 se na tuto pozdejsi clipboardbinary. Novyphysicalpokus potrebuje
 dalsiNOVE rozhodnuti, ne recyklovany souhlas.
+
+### Checkedclipboardcommit NoPorts inkrement: fullCI PASS
+
+Source5bcaee592b9dad61d1545e4f262676e3ce8306ed byl po273localtests/
+77native+Clippy/release/data/lifecycle overeni commitnut a pushnut.
+[RustCI41590534884](https://github.com/tkubica12/cot-voice-recorder/actions/runs/41590534884)
+skutecne dokoncil vsech5 Windows/Linux/MSRV1.85-allfeatures/container
+jobs SUCCESS. NoPorts tests nevolaly systemclipboard/input APIs;
+prokazuji checkedclose/sequence/ownerorder a preservedlate-change
+rejection, nikoli zpetne successfulphysicalpaste.
+
+Aktualni build-only installer5b:
+b2a0e529718cb737bc23ce194d2348cd24e1b74d2106a0bdc370cba0798d9dbb,
+staged/release native oba
+f01fe1355418f01f817747b215f580e6dcb5798ccf4a2b345f88ce506eb4e7fc.
+Sestaven, nebyl spusten/instalovan/upgradeovan ani releasovan.
+Mezi NoPorts opravou a timto CI nebylo znovuotevrene actionwindow,
+clipboardoverwrite,paste,mic/login nebojinyphysicalpokus.
+
+Nejmensi zbyvajici physicalgate je NOVYexplicitne schvaleny
+jeden3min case se stejnym fixedmarker/personalRun/noManualCtrlV/
+500ms/atmostoneDesktopGuardbatch/noRetry aownblanktarget; nove
+metadataovereni kontroluje onlyownowner/sequence, nectestareani
+noveclipboardcontents. Takovy souhlas tedneni kdispozici a neni
+odvozenzpredchoziho50040failure/071performance nebo obecnehoresume.
+Real automatic/fullcontroller/human/upgrade/privateAzure acceptance
+staleNEuzavrena.
