@@ -3643,3 +3643,56 @@ timings neslibuji odstraneni historical1589ms nebo PASS hodiny. Bounded
 writer ownership/deadline oprava neni tvrzeni, ze normaljoin urcite stihne5s.
 Actual throughput/realrotation/postidle10MiB i dalsi GUI/physical/human/
 installation/privateAzure akceptace zustavaji neuzavrene.
+
+### Prave jeden b7d016d actual120s pokus: FAILED/storage + fixture panic
+
+Koordinator po upresneni zvolil fixedb7 plus read-only initial/periodic/
+final-return-idle counts, bez dalsi telemetryrevision. Sourceb7d016d/Rusttree
+95de9044/archive75ddb7c4... zustaly bezezmeny. RELEASEoptimized LIBTEST
+063f7cf222c5e0662adf4b170d7d4700af9f7fa2cab0b14a0c3a2cccda28a0a1
+mel matchinglocalPDBb8e15e18... a knownsymbolPASS predstartem. Frozenobserver
+a11f96c8.../storageobserver131678f7.../sampler88c5ed25... mely predstartem
+shared-read/owned-count/missing-not-PASS a4collector guard proofs. Zadny
+novy actualcapture se v techto guards nevybral. PrivateRead observer sdili
+Read/Write/Delete a pouze uklada ownencryptedmanifestcopies; decode azporunu.
+
+JEDINY120s beh owned62368/native/38344/collector mel actualready/ownimage/
+scope verified. Pri kolekci zadny localbuild/testload/repo/frozensourceedit;
+original1280B40ms50slots/2s+30sstop/5sfixturejoin, zadne physical/GUI/auth/
+realbackend/registry/clipboard/input/Azure/paidAI/personalcaches.
+
+Beh je FAILED/INCOMPLETE, NE120s/3840000bytePASS. Nejprve se objevil generic
+nativeRecoveryStoragefailure, controller spravne oznamil incomplete/
+onlydurableprefix/no delivery. Pak synthetic Ports.try_feed unwrapnul chybejici
+sender (fixtureline356) a ztratil finalproducercontext; producer-failure.json
+NEVZNIKL. Lastobservedprogress20.1938115s ma accepted/received641280,
+completed640000, saved581120, confirmed576000. Queuepeak18, neFull50.
+Finaladmissiontotal/producerfailuretime nejsou zmerenymi fakty.
+Native testtotal33.27s zahrnuje warmup, neni actualcaptureduration.
+Konkretnistorage NativeError je v currentSessionErrorDisplay maskovany;
+OS/kernel/quotalimit nebo pricinaobserverem se z toho NEVYVOZUJE.
+
+Raw3warm+19partialcapturerows/2ten-second owner snapshots/native stderr/
+encryptedfailure-state jsou v controller-120s-b7d016d. Root/engine completed
+maxholds790.913/790.986ms, enginewaitpri20s759.4387ms zustavaji scoped
+observations, nikoli acceptance thresholds.
+Read-only verification prokazala manifestdurableprefix581120bytes/
+confirmed576000/capture_complete=false/originalbinding a5120referencedpending
+PCM sample-exact, ciphertextnezmeneny. Navic zachovan UNREFERENCED orphan14
+58880PCMbytes; pattern odpovida kandidatnimu581120..640000, ale neni z nej
+udelany committedcursor ani slib allacceptedsaved. FinalacceptedNOT_OBSERVED/
+allacceptedsavedNOT_PROVEN je vyslovne ulozeno.
+
+External observedcounts nejsou atomic snapshot: initial0journals/1file/0bytes;
+10s6manifestentries/2files/20038chargedbytes;20s14entries/4files/85026bytes.
+Pre-cleanup finalentries/chargesNOT_OBSERVED_EXTERNALLY a final-return-idle
+NOT_REACHED; nula se zpetne nedovozuje. Missingfile neni readPASS.
+Observererrors=[]/threadjoined; obaownedprocessesabsent/controltempremoved,
+failedstate retained. Process exit neni normaljoinedcontrollerPASS.
+Zadny retry60/120/fullhour, quietprofile nebo physicalbeh.
+
+Nejmensi zbyvajici sourceblocker je exactstorageerrorchain a typedWorker misto
+senderNonepanic s durablefinalcountercontext. Source navic obsahuje kandidatni
+last-pin deferreddelete mimo rootlock vs quota enumeration race; dokud neni
+deterministicky overena a exacterror dolozen, netvrdi se jako pricina tohoto
+behu. Predchozi0f/a10/ed760/4430/b00 failures i scopedstructural/CI proofs zustavaji.
