@@ -122,7 +122,7 @@ The separately ignored
 current `DictationHost::run`, real streaming engine, DPAPI Recovery, atomic History,
 polisher and periodic audit outbox through private synthetic ports on the same
 two-thread Tokio runtime shape as the native client. It uses ordered 16-kHz PCM
-at actual 20-ms intervals, checks every sample, durable confirmation cursors and
+at the native1280-byte/40-ms capture intervals, checks every sample, durable confirmation cursors and
 the real 50-minute stream rotation. Only the synthetic UI handoff is acknowledged;
 no window, tray, renderer, hotkey, microphone, clipboard, Google or real backend
 transport is constructed.

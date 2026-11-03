@@ -10,7 +10,8 @@ use windows::Win32::Media::Audio::{
     waveInPrepareHeader, waveInReset, waveInStart, waveInUnprepareHeader,
 };
 
-const BUFFER_BYTES: usize = 1280;
+pub(crate) const BUFFER_BYTES: usize = 1280;
+pub(crate) const OUTPUT_BUFFER_COUNT: usize = 50;
 const BUFFER_COUNT: usize = 8;
 const WHDR_DONE_FLAG: u32 = 1;
 
@@ -209,7 +210,7 @@ fn enqueue(output: &mpsc::Sender<CaptureBuffer>, pcm: &[u8]) -> Result<(), Captu
 
 impl Microphone {
     pub fn start() -> Result<(Self, mpsc::Receiver<CaptureBuffer>), CaptureError> {
-        let (output, receiver) = mpsc::channel(50);
+        let (output, receiver) = mpsc::channel(OUTPUT_BUFFER_COUNT);
         let (error_sender, error) = watch::channel(None);
         let stop = Arc::new(AtomicBool::new(false));
         let stopped = stop.clone();

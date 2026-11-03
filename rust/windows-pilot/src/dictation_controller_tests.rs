@@ -27,6 +27,25 @@ fn failure() -> ApiError {
     }
 }
 
+#[test]
+fn synthetic_capture_matches_native_packets_and_refuses_overflow_without_successful_drop() {
+    let ports = Ports::new();
+    let (_capture, mut receiver) = ports.start_capture().unwrap();
+    let frame = vec![0; crate::microphone::BUFFER_BYTES];
+    assert_eq!(frame.len(), 1280);
+    assert_eq!(frame.len() * 25, 32000);
+    for _ in 0..crate::microphone::OUTPUT_BUFFER_COUNT {
+        assert!(ports.try_feed(&frame).is_ok());
+    }
+    assert_eq!(ports.try_feed(&frame), Err(CaptureError::Overflow));
+    let mut bytes = 0;
+    while let Ok(buffer) = receiver.try_recv() {
+        bytes += buffer.0.len();
+    }
+    assert_eq!(bytes, 1280 * 50);
+    assert!(ports.try_feed(&frame).is_ok());
+}
+
 #[derive(Default)]
 struct BackendState {
     batches: Mutex<Vec<Vec<u8>>>,
@@ -263,7 +282,7 @@ struct Capture(Arc<Probe>);
 impl Ports {
     fn new() -> Self {
         let (auth, _) = watch::channel(AuthState::SignedIn);
-        let (sender, receiver) = mpsc::channel(50);
+        let (sender, receiver) = mpsc::channel(crate::microphone::OUTPUT_BUFFER_COUNT);
         Self(Arc::new(Probe {
             auth,
             backend: Arc::new(Backend::default()),
@@ -281,6 +300,10 @@ impl Ports {
     }
 
     fn feed(&self, bytes: &[u8]) {
+        self.try_feed(bytes).unwrap();
+    }
+
+    fn try_feed(&self, bytes: &[u8]) -> Result<(), CaptureError> {
         self.0
             .capture
             .lock()
@@ -289,7 +312,10 @@ impl Ports {
             .as_ref()
             .unwrap()
             .try_send(CaptureBuffer(bytes.to_vec()))
-            .unwrap();
+            .map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => CaptureError::Overflow,
+                mpsc::error::TrySendError::Closed(_) => CaptureError::Worker,
+            })
     }
 }
 
@@ -627,31 +653,53 @@ async fn run_controller_capture(
         .store(true, Ordering::Release);
     harness.begin(DictationMode::Toggle).await;
     let started = tokio::time::Instant::now();
-    let mut timer = tokio::time::interval(Duration::from_millis(20));
+    const FRAME_BYTES: usize = crate::microphone::BUFFER_BYTES;
+    const FRAME_MILLISECONDS: u64 = FRAME_BYTES as u64 * 1000 / 32000;
+    const FRAMES_PER_SECOND: u64 = 1000 / FRAME_MILLISECONDS;
+    let mut timer = tokio::time::interval(Duration::from_millis(FRAME_MILLISECONDS));
     timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Burst);
     let mut maximum_lateness = Duration::ZERO;
-    let mut frame = [0; 640];
-    for index in 0..seconds * 50 {
+    let mut frame = [0; FRAME_BYTES];
+    for index in 0..seconds * FRAMES_PER_SECOND {
         timer.tick().await;
-        let due = started + Duration::from_millis(index * 20);
+        let due = started + Duration::from_millis(index * FRAME_MILLISECONDS);
         maximum_lateness =
             maximum_lateness.max(tokio::time::Instant::now().saturating_duration_since(due));
         for (offset, bytes) in frame.chunks_exact_mut(2).enumerate() {
-            let sample = ((index * 320 + offset as u64) % 97) as i16 - 48;
+            let sample = ((index * (FRAME_BYTES / 2) as u64 + offset as u64) % 97) as i16 - 48;
             bytes.copy_from_slice(&sample.to_le_bytes());
         }
-        harness.ports.feed(&frame);
-        if (index + 1) % 3000 == 0 {
+        if let Err(error) = harness.ports.try_feed(&frame) {
+            if let Some(root) = diagnostics {
+                hour_publish(
+                    root,
+                    "producer-failure.json",
+                    serde_json::json!({
+                        "phase":"producer-overflow-or-closed","error":error.to_string(),
+                        "frame_index":index,"frame_bytes":FRAME_BYTES,
+                        "frame_interval_ms":FRAME_MILLISECONDS,
+                        "elapsed_seconds":started.elapsed().as_secs_f64(),
+                        "lateness_ms":tokio::time::Instant::now().saturating_duration_since(due).as_secs_f64()*1000.0,
+                        "produced_bytes":index*FRAME_BYTES as u64,
+                        "source_queue_slots":crate::microphone::OUTPUT_BUFFER_COUNT,
+                        "capture_sample_bytes_not_dropped_as_success":true
+                    }),
+                );
+            }
+            harness.close().await;
+            panic!("Synthetic capture producer failed: {error}");
+        }
+        if (index + 1) % (60 * FRAMES_PER_SECOND) == 0 {
             if let Some(root) = diagnostics {
                 let rows = harness.recovery.list().unwrap();
                 assert_eq!(rows.len(), 1);
                 let saved = harness.recovery.fixture_snapshot(&rows[0].id).unwrap();
                 hour_publish(
                     root,
-                    &format!("progress-{:04}.json", (index + 1) / 50),
+                    &format!("progress-{:04}.json", (index + 1) / FRAMES_PER_SECOND),
                     serde_json::json!({
                         "phase":"capturing","elapsed_seconds":started.elapsed().as_secs_f64(),
-                        "captured_bytes":(index+1)*640,"saved_bytes":saved.captured_bytes,
+                        "captured_bytes":(index+1)*FRAME_BYTES as u64,"saved_bytes":saved.captured_bytes,
                         "confirmed_bytes":saved.confirmed_bytes,
                         "provider_bytes":harness.ports.0.backend.0.stream_bytes.load(Ordering::Acquire),
                         "maximum_lateness_ms":maximum_lateness.as_secs_f64()*1000.0
@@ -728,6 +776,7 @@ async fn run_controller_capture(
         "verified_provider_bytes":expected,"stream_starts":starts,
         "confirmed_cursors":cursors,"maximum_producer_lateness_ms":maximum_lateness.as_secs_f64()*1000.0,
         "history_saved_before_handoff":true,"capture_joined":true,"polisher_exercised":true
+        ,"capture_frame_bytes":FRAME_BYTES,"capture_frame_interval_ms":FRAME_MILLISECONDS
     })
 }
 

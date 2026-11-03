@@ -414,6 +414,7 @@ def run(
                 in {
                     "ready.json",
                     "producer-complete.json",
+                    "producer-failure.json",
                     "capture-sealed.json",
                     "transcription-complete.json",
                     "shutdown-complete.json",

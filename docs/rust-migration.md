@@ -3185,3 +3185,36 @@ JSONL header+kazdyprivate/working-set/CPU/thread/handle sample. Finalrawreport
 musi exactmatchvsechnyjournalrows, aby externalinterrupt neztratilcelecapture
 telemetry. Puvodni samplery bez optionalSampleJournalPath se nemeni. Novy3s
 journalsmoke prosel identity/shape/exactrawrows/cleanup, staleverdictincomplete.
+
+### Aktualni controller houra10c336: FAILED/INCOMPLETE, bez opakovani
+
+Jeden povoleny actualhour nad frozen84fd1292.../sourcea10c336 byl spusten
+a ownPID31964/readiness overeny. Warm301rawsamples byly dokoncene; capture
+skoncil pri source try_send Full(..) na boundedqueue a proces neziskal normalni
+stop. Sampler spravne odmitl completecapture report. Zachovano2837captureJSONL
+rawrows (lastelapsed2836.0344511s),301warmrows, immutableprogress a
+encryptedfailure-state/stdout/stderr/failure.json. Lastprogress2820.0202126s:
+90240000produced/90176000saved/90176000confirmed/90239360provider bytes,
+lastrecordedmaxproducerlateness941.9132ms. Lastsampleprivate5353472/WS27803648.
+
+FailureSHA428eed16997a0fe62a093d22b890037e985b505ec0cf2b3f64e00335dad751c0,
+warmFA19D86.../capturejournalE110906... a partial-result-summary.json jsou
+zachovane. Ownprocessgone/controltempremoved; failure-state se nemaze.
+Neni3600s,real50minrotation,postidle ani10MiBPASS a nic se nere-labeluje
+ze starehoenginehour/071 profilu. Druhyactualhour NEBYL spusten.
+
+Zdrojova kontrola po selhani overila konkretni framing mismatch fixture:
+fakecapture640B/20ms a50queue slots=1sbuffer, nativeMicrophone ma1280B/40ms
+a stejnych50slots=2sbuffer. To a Full jsou prokazane; presny podil hostscheduling/
+controllerIO na tomto selhani se z dostupneho progressu netvrdi. Oprava testports
+sdili puvodni native1280B/40ms/50slots constants; hodnoty produkcniho capture
+ani kapacita se nezvetsuji. Overflow zustava explicitfailure, ne drop/success.
+Producer pred panikou nyni ulozi ownfailure kontext/frameindex/due-lateness/
+queue config a joinne controller/capture, aby nebyl maskovan backend/driver fail.
+
+Novy NoPortsunit naplni50native-sized packets,51.odmitneOverflow,overi vsech
+64000queuedbytes a znovupouzitelnost po drain. Native100regular/Clippy/fmt PASS.
+Pouze bounded3s/3+3rawjournal smoke po oprave prosel96000sampleexactbytes,
+History/outbox/joins/cleanup; verdictincomplete. Neni opravenyhodinovyPASS.
+Dalsi realhour je konkretni samostatne rozhodnuti po tomto retainedFAIL,
+ne automaticky retry nebo genericka human/device otazka.
