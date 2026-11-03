@@ -1,9 +1,13 @@
+#[cfg(test)]
+use crate::lock_trace::Guard as MutexGuard;
 use std::collections::{HashMap, HashSet};
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read};
 use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock, Weak};
+#[cfg(not(test))]
+use std::sync::MutexGuard;
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use time::OffsetDateTime;
 use voiceprompt_client_protocol::recovery::{
@@ -25,6 +29,40 @@ struct RecoveryRoot {
     active: Mutex<HashSet<String>>,
     #[cfg(test)]
     next_write_pause: Mutex<Option<Arc<FixtureWritePause>>>,
+    #[cfg(test)]
+    io_probe: FixtureIoProbe,
+    #[cfg(test)]
+    trace: Arc<crate::lock_trace::Lock>,
+}
+
+#[cfg(test)]
+struct FixtureIoProbe {
+    clock: std::time::Instant,
+    phase: std::sync::atomic::AtomicU8,
+    phase_started_ns: std::sync::atomic::AtomicU64,
+    last_phase: std::sync::atomic::AtomicU8,
+}
+
+#[cfg(test)]
+impl FixtureIoProbe {
+    fn enter(&self, phase: u8) {
+        use std::sync::atomic::Ordering;
+        self.phase_started_ns
+            .store(self.clock.elapsed().as_nanos() as u64, Ordering::Release);
+        self.phase.store(phase, Ordering::Release);
+    }
+}
+
+#[cfg(test)]
+pub(crate) struct FixtureIoEnd<'a>(&'a FixtureIoProbe);
+
+#[cfg(test)]
+impl Drop for FixtureIoEnd<'_> {
+    fn drop(&mut self) {
+        use std::sync::atomic::Ordering;
+        let phase = self.0.phase.swap(0, Ordering::AcqRel);
+        self.0.last_phase.store(phase, Ordering::Release);
+    }
 }
 
 #[cfg(test)]
@@ -156,6 +194,15 @@ impl NativeRecoveryStore {
             active: Mutex::new(HashSet::new()),
             #[cfg(test)]
             next_write_pause: Mutex::new(None),
+            #[cfg(test)]
+            io_probe: FixtureIoProbe {
+                clock: std::time::Instant::now(),
+                phase: std::sync::atomic::AtomicU8::new(0),
+                phase_started_ns: std::sync::atomic::AtomicU64::new(0),
+                last_phase: std::sync::atomic::AtomicU8::new(0),
+            },
+            #[cfg(test)]
+            trace: crate::lock_trace::Lock::new("recovery-root"),
         });
         roots.insert(root, Arc::downgrade(&shared));
         Ok(Self(shared))
@@ -171,6 +218,7 @@ impl NativeRecoveryStore {
         let mut active = self.0.lock()?;
         let manifest = RecoveryManifest::create(language, context, streaming, utc_ticks(now)?)?;
         let directory = self.0.session_path(&manifest.id)?;
+        guard_recovery_path(&directory)?;
         std::fs::create_dir(&directory)
             .map_err(|error| NativeError::Io("create recovery session", error))?;
         self.0.write_manifest(&manifest)?;
@@ -232,6 +280,33 @@ impl NativeRecoveryStore {
         (FixtureWriteRelease(pause), observed)
     }
 
+    #[cfg(test)]
+    pub(crate) fn fixture_io_progress(&self) -> serde_json::Value {
+        use std::sync::atomic::Ordering;
+        let probe = &self.0.io_probe;
+        let phase = probe.phase.load(Ordering::Acquire);
+        let name = |phase| match phase {
+            0 => "idle",
+            1 => "protect",
+            2 => "validate-target-path",
+            3 => "atomic-write",
+            4 => "fixture-pause",
+            5 => "read-encrypted",
+            6 => "unprotect",
+            7 => "remove-confirmed-audio",
+            8 => "publishing-engine-progress",
+            9 => "quota-scan",
+            _ => "invalid-phase",
+        };
+        let elapsed = (probe.clock.elapsed().as_nanos() as u64)
+            .saturating_sub(probe.phase_started_ns.load(Ordering::Acquire));
+        serde_json::json!({
+            "phase":name(phase),"active_ms":if phase==0{None}else{Some(elapsed as f64/1_000_000.0)},
+            "last_phase":name(probe.last_phase.load(Ordering::Acquire)),
+            "root_lock":self.0.trace.snapshot()
+        })
+    }
+
     pub fn delete_idle(&self, id: &str) -> Result<(), NativeError> {
         let active = self.0.lock()?;
         if active.contains(id) {
@@ -260,10 +335,20 @@ impl NativeRecoveryStore {
 }
 
 impl RecoveryRoot {
+    #[track_caller]
     fn lock(&self) -> Result<MutexGuard<'_, HashSet<String>>, NativeError> {
-        self.active
+        #[cfg(test)]
+        let wait = self
+            .trace
+            .wait(&format!("{}", std::panic::Location::caller()));
+        let guard = self
+            .active
             .lock()
-            .map_err(|_| NativeError::Verification("Recovery journal lock is poisoned."))
+            .map_err(|_| NativeError::Verification("Recovery journal lock is poisoned."))?;
+        #[cfg(test)]
+        return Ok(wait.acquired(guard));
+        #[cfg(not(test))]
+        Ok(guard)
     }
 
     fn session_path(&self, id: &str) -> Result<PathBuf, NativeError> {
@@ -272,9 +357,8 @@ impl RecoveryRoot {
                 "Recovery ID must be a lowercase GUID in N format.",
             ));
         }
-        let path = self.path.join(id);
-        guard_recovery_path(&path)?;
-        Ok(path)
+        // I/O entry points validate the full path; constructing it must not duplicate that walk.
+        Ok(self.path.join(id))
     }
 
     fn audio_path(&self, id: &str, index: u32) -> Result<PathBuf, NativeError> {
@@ -359,7 +443,8 @@ impl RecoveryRoot {
                         "Recovery storage has too many entries.",
                     ));
                 }
-                let metadata = std::fs::symlink_metadata(entry.path())
+                let metadata = entry
+                    .metadata()
                     .map_err(|error| NativeError::Io("inspect recovery quota entry", error))?;
                 if metadata.file_attributes() & 0x400 != 0 {
                     return Err(NativeError::Verification(
@@ -383,9 +468,15 @@ impl RecoveryRoot {
 
     fn write_encrypted(&self, path: &Path, plain: &[u8], limit: usize) -> Result<(), NativeError> {
         #[cfg(test)]
+        let _probe = {
+            self.io_probe.enter(1);
+            FixtureIoEnd(&self.io_probe)
+        };
+        #[cfg(test)]
         {
             let pause = self.next_write_pause.lock().unwrap().take();
             if let Some(pause) = pause {
+                self.io_probe.enter(4);
                 if let Some(entered) = pause.entered.lock().unwrap().take() {
                     let _ = entered.send(());
                 }
@@ -400,15 +491,23 @@ impl RecoveryRoot {
                 "Recovery plaintext exceeds bounds.",
             ));
         }
+        #[cfg(test)]
+        self.io_probe.enter(1);
         let cipher = protect(plain)?;
         if cipher.is_empty() || cipher.len() > limit + ENCRYPTION_ALLOWANCE {
             return Err(NativeError::Verification(
                 "Encrypted recovery payload exceeds bounds.",
             ));
         }
+        #[cfg(test)]
+        self.io_probe.enter(2);
         guard_recovery_path(path)?;
         // The previous target and any orphan/staging files stay charged during replacement.
+        #[cfg(test)]
+        self.io_probe.enter(9);
         self.ensure_quota(cipher.len())?;
+        #[cfg(test)]
+        self.io_probe.enter(3);
         atomic_write(path, &cipher, WriteMode::Replace)
     }
 
@@ -421,6 +520,11 @@ impl RecoveryRoot {
     }
 
     fn read_encrypted(&self, path: &Path, limit: usize) -> Result<Vec<u8>, NativeError> {
+        #[cfg(test)]
+        let _probe = {
+            self.io_probe.enter(5);
+            FixtureIoEnd(&self.io_probe)
+        };
         guard_recovery_path(path)?;
         let file = File::open(path)
             .map_err(|error| NativeError::Io("open encrypted recovery file", error))?;
@@ -445,6 +549,8 @@ impl RecoveryRoot {
                 "Encrypted recovery file exceeds supported bounds.",
             ));
         }
+        #[cfg(test)]
+        self.io_probe.enter(6);
         let mut plain = unprotect(&cipher)?;
         if plain.len() > limit {
             plain.fill(0);
@@ -456,6 +562,11 @@ impl RecoveryRoot {
     }
 
     fn remove_audio(&self, id: &str, index: u32) -> Result<(), NativeError> {
+        #[cfg(test)]
+        let _probe = {
+            self.io_probe.enter(7);
+            FixtureIoEnd(&self.io_probe)
+        };
         let path = self.audio_path(id, index)?;
         guard_recovery_path(&path)?;
         match std::fs::remove_file(path) {
@@ -474,6 +585,7 @@ impl RecoveryRoot {
 
     fn delete_flat(&self, id: &str) -> Result<(), NativeError> {
         let directory = self.session_path(id)?;
+        guard_recovery_path(&directory)?;
         let entries = match std::fs::read_dir(&directory) {
             Ok(entries) => entries,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
@@ -507,6 +619,12 @@ impl RecoveryRoot {
 }
 
 impl NativeRecoveryJournal {
+    #[cfg(test)]
+    pub(crate) fn fixture_publish_progress(&self) -> FixtureIoEnd<'_> {
+        self.root.io_probe.enter(8);
+        FixtureIoEnd(&self.root.io_probe)
+    }
+
     pub fn id(&self) -> &str {
         &self.id
     }

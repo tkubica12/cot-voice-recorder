@@ -21,6 +21,15 @@ pub(crate) trait DictationPorts: Clone + Send + Sync + 'static {
     fn start_capture(&self)
     -> Result<(Self::Capture, mpsc::Receiver<CaptureBuffer>), CaptureError>;
     fn stop_capture(capture: Self::Capture) -> Result<(), CaptureError>;
+
+    #[cfg(test)]
+    fn capture_write_started(&self, _bytes: usize) {}
+
+    #[cfg(test)]
+    fn capture_write_finished(&self, _success: bool) {}
+
+    #[cfg(test)]
+    fn register_capture_trace(&self, _trace: Arc<crate::lock_trace::Lock>) {}
 }
 
 #[derive(Clone)]

@@ -188,6 +188,33 @@ async fn shutdown_joins_an_already_started_journal_write_before_releasing_owners
 }
 
 #[tokio::test]
+async fn async_readers_do_not_bypass_a_pending_synchronous_capture_writer() {
+    let directory = TemporaryRoot::new();
+    let (_store, journal) = saved(&directory, 0);
+    let session = LegacySession::start(journal, Backend::new(false)).unwrap();
+    session
+        .inner
+        .synchronous_waiters
+        .store(1, Ordering::Release);
+    let reader = session.inner.clone();
+    let pending = tokio::spawn(async move {
+        drop(reader.async_lock("fixture-async-reader").await.unwrap());
+    });
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    let bypassed_writer = pending.is_finished();
+    session
+        .inner
+        .synchronous_waiters
+        .store(0, Ordering::Release);
+    pending.await.unwrap();
+    assert!(
+        !bypassed_writer,
+        "An immediate async reader bypassed a queued capture write."
+    );
+    session.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn stop_timeout_and_shutdown_keep_pending_audio_for_restart_recovery() {
     let directory = TemporaryRoot::new();
     let (store, journal) = saved(&directory, 2);

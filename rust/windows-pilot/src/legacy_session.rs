@@ -1,7 +1,12 @@
+#[cfg(test)]
+use crate::lock_trace::Guard as MutexGuard;
 use std::collections::{BTreeMap, HashSet};
 use std::fmt;
 use std::future::Future;
-use std::sync::{Arc, Mutex, MutexGuard};
+#[cfg(not(test))]
+use std::sync::MutexGuard;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio::sync::{Notify, watch};
@@ -133,6 +138,9 @@ struct Inner<S: BatchBackend> {
     journal: NativeRecoveryJournal,
     service: Arc<S>,
     state: Mutex<State>,
+    synchronous_waiters: AtomicUsize,
+    #[cfg(test)]
+    trace: Arc<crate::lock_trace::Lock>,
     progress: watch::Sender<DictationProgress>,
     wake: Notify,
     cancel: watch::Sender<bool>,
@@ -177,6 +185,9 @@ impl<S: BatchBackend> LegacySession<S> {
             journal,
             service,
             state: Mutex::new(state),
+            synchronous_waiters: AtomicUsize::new(0),
+            #[cfg(test)]
+            trace: crate::lock_trace::Lock::new("legacy-state"),
             progress: sender,
             wake: Notify::new(),
             cancel,
@@ -194,6 +205,10 @@ impl<S: BatchBackend> LegacySession<S> {
     }
     pub fn progress(&self) -> watch::Receiver<DictationProgress> {
         self.inner.progress.subscribe()
+    }
+    #[cfg(test)]
+    pub(crate) fn fixture_lock_trace(&self) -> Arc<crate::lock_trace::Lock> {
+        self.inner.trace.clone()
     }
 
     pub fn append(&self, pcm: &[u8]) -> Result<(), SessionError> {
@@ -272,10 +287,26 @@ impl<S: BatchBackend> Drop for LegacySession<S> {
 }
 
 impl<S: BatchBackend> Inner<S> {
-    async fn async_lock(&self) -> Result<MutexGuard<'_, State>, SessionError> {
+    async fn async_lock(
+        &self,
+        operation: &'static str,
+    ) -> Result<MutexGuard<'_, State>, SessionError> {
+        #[cfg(not(test))]
+        let _ = operation;
+        #[cfg(test)]
+        let wait = self.trace.wait(operation);
         loop {
+            if self.synchronous_waiters.load(Ordering::Acquire) != 0 {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+                continue;
+            }
             match self.state.try_lock() {
-                Ok(state) => return Ok(state),
+                Ok(state) => {
+                    #[cfg(test)]
+                    return Ok(wait.acquired(state));
+                    #[cfg(not(test))]
+                    return Ok(state);
+                }
                 Err(std::sync::TryLockError::Poisoned(_)) => {
                     return Err(SessionError::Storage(NativeError::Verification(
                         "Dictation state lock is poisoned.",
@@ -287,12 +318,24 @@ impl<S: BatchBackend> Inner<S> {
         }
     }
 
+    #[track_caller]
     fn lock(&self) -> Result<MutexGuard<'_, State>, SessionError> {
-        self.state.lock().map_err(|_| {
+        #[cfg(test)]
+        let wait = self
+            .trace
+            .wait(&format!("{}", std::panic::Location::caller()));
+        self.synchronous_waiters.fetch_add(1, Ordering::AcqRel);
+        let result = self.state.lock();
+        self.synchronous_waiters.fetch_sub(1, Ordering::AcqRel);
+        let guard = result.map_err(|_| {
             SessionError::Storage(NativeError::Verification(
                 "Dictation state lock is poisoned.",
             ))
-        })
+        })?;
+        #[cfg(test)]
+        return Ok(wait.acquired(guard));
+        #[cfg(not(test))]
+        Ok(guard)
     }
 
     fn ensure_open(&self, state: &State) -> Result<(), SessionError> {
@@ -308,6 +351,8 @@ impl<S: BatchBackend> Inner<S> {
     }
 
     fn publish(&self, state: &State) {
+        #[cfg(test)]
+        let _probe = self.journal.fixture_publish_progress();
         self.progress.send_replace(progress(state));
     }
 
@@ -430,7 +475,10 @@ async fn transcribe<S: BatchBackend>(inner: Arc<Inner<S>>, index: u32) -> Result
         return Err(JobError::Cancelled);
     }
     let (language, context) = {
-        let state = inner.async_lock().await.map_err(|_| JobError::Worker)?;
+        let state = inner
+            .async_lock("legacy-request-context")
+            .await
+            .map_err(|_| JobError::Worker)?;
         (
             state.manifest.language.clone(),
             state.manifest.context.clone(),
@@ -451,7 +499,6 @@ async fn transcribe<S: BatchBackend>(inner: Arc<Inner<S>>, index: u32) -> Result
             .journal
             .save_result(index, text, time::OffsetDateTime::now_utc())?;
         let mut state = writer
-            .state
             .lock()
             .map_err(|_| NativeError::Verification("Dictation state lock is poisoned."))?;
         state.manifest = writer.journal.snapshot()?;
@@ -474,7 +521,7 @@ async fn run<S: BatchBackend>(inner: Arc<Inner<S>>) {
             break;
         }
         {
-            let state = match inner.async_lock().await {
+            let state = match inner.async_lock("legacy-job-discovery").await {
                 Ok(state) => state,
                 Err(error) => {
                     eprintln!("Legacy dictation pump: {error}");
@@ -515,7 +562,7 @@ async fn run<S: BatchBackend>(inner: Arc<Inner<S>>) {
                     Ok((index, outcome)) => {
                         running.remove(&index);
                         if let Err(error) = outcome {
-                            let mut state = match inner.async_lock().await { Ok(state) => state, Err(_) => break };
+                            let mut state = match inner.async_lock("legacy-job-result").await { Ok(state) => state, Err(_) => break };
                             match error {
                                 JobError::Api(kind) => {
                                     let attempts = state.errors.get(&index).map_or(1, |old| old.attempts.saturating_add(1));

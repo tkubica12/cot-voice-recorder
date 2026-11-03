@@ -29,6 +29,33 @@ fn failure() -> ApiError {
 }
 
 #[test]
+fn writer_probe_distinguishes_queue_admission_received_and_completed_samples() {
+    let ports = Ports::new();
+    let (_capture, mut receiver) = ports.start_capture().unwrap();
+    let frame = vec![0; crate::microphone::BUFFER_BYTES];
+    ports.try_feed(&frame).unwrap();
+    assert_eq!(
+        ports.0.accepted_bytes.load(Ordering::Acquire),
+        frame.len() as u64
+    );
+    assert_eq!(ports.0.writer_received_bytes.load(Ordering::Acquire), 0);
+    let buffer = receiver.try_recv().unwrap();
+    ports.capture_write_started(buffer.0.len());
+    assert!(ports.0.writer_active.load(Ordering::Acquire));
+    assert_eq!(
+        ports.0.writer_received_bytes.load(Ordering::Acquire),
+        frame.len() as u64
+    );
+    assert_eq!(ports.0.writer_completed_bytes.load(Ordering::Acquire), 0);
+    ports.capture_write_finished(true);
+    assert!(!ports.0.writer_active.load(Ordering::Acquire));
+    assert_eq!(
+        ports.0.writer_completed_bytes.load(Ordering::Acquire),
+        frame.len() as u64
+    );
+}
+
+#[test]
 fn synthetic_capture_matches_native_packets_and_refuses_overflow_without_successful_drop() {
     let ports = Ports::new();
     let (_capture, mut receiver) = ports.start_capture().unwrap();
@@ -273,6 +300,15 @@ struct Probe {
     stopped: AtomicUsize,
     fail_open: AtomicBool,
     fail_stop: AtomicBool,
+    clock: Instant,
+    accepted_bytes: AtomicU64,
+    writer_received_bytes: AtomicU64,
+    writer_completed_bytes: AtomicU64,
+    writer_packet_bytes: AtomicU64,
+    writer_active: AtomicBool,
+    writer_started_ns: AtomicU64,
+    writer_last_duration_ns: AtomicU64,
+    capture_trace: std::sync::OnceLock<Arc<crate::lock_trace::Lock>>,
 }
 
 #[derive(Clone)]
@@ -297,6 +333,15 @@ impl Ports {
             stopped: AtomicUsize::new(0),
             fail_open: AtomicBool::new(false),
             fail_stop: AtomicBool::new(false),
+            clock: Instant::now(),
+            accepted_bytes: AtomicU64::new(0),
+            writer_received_bytes: AtomicU64::new(0),
+            writer_completed_bytes: AtomicU64::new(0),
+            writer_packet_bytes: AtomicU64::new(0),
+            writer_active: AtomicBool::new(false),
+            writer_started_ns: AtomicU64::new(0),
+            writer_last_duration_ns: AtomicU64::new(0),
+            capture_trace: std::sync::OnceLock::new(),
         }))
     }
 
@@ -316,6 +361,11 @@ impl Ports {
             .map_err(|error| match error {
                 mpsc::error::TrySendError::Full(_) => CaptureError::Overflow,
                 mpsc::error::TrySendError::Closed(_) => CaptureError::Worker,
+            })
+            .map(|()| {
+                self.0
+                    .accepted_bytes
+                    .fetch_add(bytes.len() as u64, Ordering::AcqRel);
             })
     }
 }
@@ -375,6 +425,41 @@ impl DictationPorts for Ports {
         } else {
             Ok(())
         }
+    }
+
+    fn capture_write_started(&self, bytes: usize) {
+        self.0
+            .writer_received_bytes
+            .fetch_add(bytes as u64, Ordering::AcqRel);
+        self.0
+            .writer_packet_bytes
+            .store(bytes as u64, Ordering::Release);
+        self.0
+            .writer_started_ns
+            .store(self.0.clock.elapsed().as_nanos() as u64, Ordering::Release);
+        self.0.writer_active.store(true, Ordering::Release);
+    }
+
+    fn capture_write_finished(&self, success: bool) {
+        let elapsed = (self.0.clock.elapsed().as_nanos() as u64)
+            .saturating_sub(self.0.writer_started_ns.load(Ordering::Acquire));
+        self.0
+            .writer_last_duration_ns
+            .store(elapsed, Ordering::Release);
+        if success {
+            self.0.writer_completed_bytes.fetch_add(
+                self.0.writer_packet_bytes.load(Ordering::Acquire),
+                Ordering::AcqRel,
+            );
+        }
+        self.0.writer_active.store(false, Ordering::Release);
+    }
+
+    fn register_capture_trace(&self, trace: Arc<crate::lock_trace::Lock>) {
+        assert!(
+            self.0.capture_trace.set(trace).is_ok(),
+            "Synthetic capture trace can be registered once."
+        );
     }
 }
 
@@ -672,6 +757,10 @@ async fn run_controller_capture(
         }
         if let Err(error) = harness.ports.try_feed(&frame) {
             if let Some(root) = diagnostics {
+                let probe = &harness.ports.0;
+                let active = probe.writer_active.load(Ordering::Acquire);
+                let age = (probe.clock.elapsed().as_nanos() as u64)
+                    .saturating_sub(probe.writer_started_ns.load(Ordering::Acquire));
                 hour_publish(
                     root,
                     "producer-failure.json",
@@ -681,9 +770,17 @@ async fn run_controller_capture(
                         "frame_interval_ms":FRAME_MILLISECONDS,
                         "elapsed_seconds":started.elapsed().as_secs_f64(),
                         "lateness_ms":tokio::time::Instant::now().saturating_duration_since(due).as_secs_f64()*1000.0,
+                        "maximum_producer_lateness_ms":maximum_lateness.as_secs_f64()*1000.0,
                         "produced_bytes":index*FRAME_BYTES as u64,
                         "source_queue_slots":crate::microphone::OUTPUT_BUFFER_COUNT,
-                        "capture_sample_bytes_not_dropped_as_success":true
+                        "capture_sample_bytes_not_dropped_as_success":true,
+                        "accepted_bytes":probe.accepted_bytes.load(Ordering::Acquire),
+                        "writer_received_bytes":probe.writer_received_bytes.load(Ordering::Acquire),
+                        "writer_completed_bytes":probe.writer_completed_bytes.load(Ordering::Acquire),
+                        "writer_active":active,"writer_active_age_ms":if active {Some(age as f64/1_000_000.0)}else{None},
+                        "writer_last_duration_ms":probe.writer_last_duration_ns.load(Ordering::Acquire) as f64/1_000_000.0,
+                        "recovery_io":harness.recovery.fixture_io_progress()
+                        ,"engine_lock":probe.capture_trace.get().map(|trace|trace.snapshot())
                     }),
                 );
             }
@@ -703,7 +800,10 @@ async fn run_controller_capture(
                         "captured_bytes":(index+1)*FRAME_BYTES as u64,"saved_bytes":saved.captured_bytes,
                         "confirmed_bytes":saved.confirmed_bytes,
                         "provider_bytes":harness.ports.0.backend.0.stream_bytes.load(Ordering::Acquire),
-                        "maximum_lateness_ms":maximum_lateness.as_secs_f64()*1000.0
+                        "maximum_lateness_ms":maximum_lateness.as_secs_f64()*1000.0,
+                        "accepted_bytes":harness.ports.0.accepted_bytes.load(Ordering::Acquire),
+                        "writer_received_bytes":harness.ports.0.writer_received_bytes.load(Ordering::Acquire),
+                        "writer_completed_bytes":harness.ports.0.writer_completed_bytes.load(Ordering::Acquire)
                     }),
                 );
             }
@@ -872,6 +972,10 @@ async fn realtime_synthetic_controller_hour() {
         .collect();
     names.sort();
     assert_eq!(names, expected_names);
+    let owner_trace = std::env::var("VOICEPROMPT_LOCK_TRACE").as_deref() == Ok("owner-phases");
+    if owner_trace {
+        crate::lock_trace::verify_fixture_symbols();
+    }
     let state_root = root.join("controller-state");
     let mut warm = Harness::new_at(state_root.clone(), true, true, None);
     let warm_outbox = HourOutbox::start(&warm);
@@ -880,6 +984,18 @@ async fn realtime_synthetic_controller_hour() {
     warm.close().await;
     warm_outbox.close().await;
     drop(warm);
+    if owner_trace {
+        crate::lock_trace::freeze_context_capture();
+        hour_publish(
+            &root,
+            "lock-trace-ready.json",
+            serde_json::json!({
+                "known_fixture_symbols_verified":true,"stack_capture_frozen_after_warmup":true,
+                "max_contexts":64,"max_stack_bytes":16384,"acquisition_context_only":true,
+                "not_current_suspended_stack":true
+            }),
+        );
+    }
     let mut harness = Harness::new_at(state_root.clone(), true, true, None);
     let outbox = HourOutbox::start(&harness);
     tokio::time::sleep(Duration::from_secs(2)).await;
@@ -1213,6 +1329,11 @@ async fn blocked_native_checkpoint_keeps_stop_discard_auth_and_shutdown_responsi
                 .await
                 .unwrap()
                 .unwrap();
+            assert!(harness.ports.0.writer_active.load(Ordering::Acquire));
+            assert_eq!(
+                harness.recovery.fixture_io_progress()["phase"],
+                "fixture-pause"
+            );
             let packet = pcm(crate::microphone::BUFFER_BYTES / 2);
             for _ in 0..crate::microphone::OUTPUT_BUFFER_COUNT {
                 harness.ports.feed(&packet);

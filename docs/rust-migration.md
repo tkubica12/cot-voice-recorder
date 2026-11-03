@@ -3279,3 +3279,105 @@ obsahuje release/stagedbefc0abdfafcb67ad59b50686f0aa950f868669a615f3af05cf198893
 Nebylo instalovano ani pouzito pro novyphysical/hour/scopedstartupprofile.
 Presne noveCIbudeovereno samostatne; olded760CI/071memory metrics se na tuto
 opravunere-labeluji.
+
+### Treti samostatne zadany controller hour: FAILED, dalsi jen bounded diagnostika
+
+Presny `4430f8e` prosel vsemi peti joby RustCI41643604662. Koordinator pote
+konkretne zadal jeden novy actual3600s test. Byl zmrazen source i release-optimized
+libtest oracle2df1ba0d...; profil je priznan a neprepisuje starsi debug FAILs,
+071 idle nebo produkcni EXE. OwnPID30612 byl overen pred kolekci.
+
+Tento beh take skoncil Overflow: elapsed38.0813763s, frame952, prijato1218560
+bytes, nativni1280B/40ms/50slots nezmenene. Producer lateness pri faultu pouze
+1.377ms; nelze tedy tvrdit, ze problem je pouze dohaneni zpozdeneho timeru.
+Zachovano301warm+38capture rawrows, producercontext/stderr/encryptedfailure-state.
+Neni3600s,50minrotation,postidle ani10MiBPASS. Ownprocess skoncil a dalsi
+fullhour automaticky NESPUSTEN.
+
+Read-only kontrola failed Recovery overila vsech1218560prijatychbytes jako
+ulozene, confirmed1152000, capture_complete a puvodni synthetic binding.
+Vsech66560nepotvrzenychPCMbytes overeno proti absolutnimu97-sample vzoru;
+ciphertext pred/po nezmenen. Exact hashy a rozsah jsou v
+controller-hour-4430f8e/partial-result-summary.json. Toto je ochrana dat po
+preruseni, nikoliv nahrazeni hodinove akceptace.
+
+Nasledovala pouze ohranicena30s/60s NoPorts diagnostika. Test-only probes
+rozlisuji source admission, writer-received a completed-append bytes, vek
+probihajiciho append a faze Recovery read/unprotect/protect/path/quota/
+atomic-write/delete/progress-publication. Neukladaji PCM/token contents.
+Dokonceny append neni vydavan za durable nebo confirmed cursor.
+Tyto behy opet skoncily backlog/Overflow; nektere nedokoncily ani bounded
+shutdown, vsechny failure-state a rawjournals zustavaji. Zadny neni PASS.
+
+Konkretnimi pozorovanimi jsou append trvajici pres2s s nevycerpanou frontou
+a jeden snapshot ve fazi path-metadata/quota1067.5209ms. Jejich presny
+OS/scheduling/lock/filesystem podil ani definitivni odstraneni priciny nejsou
+prokazane. Sampler pri zaniklem procesu nekdy vratil property Count chybu,
+jindy explicitprocess-exit; v zadnem pripade nevydal kompletni capture report.
+
+Zdrojova oprava admission fairness: async try_lock nesmi predbehnout jizcekajici
+synchronous writer. Dve deterministicke engine skupiny tento invariant overuji.
+Quota scan take znovupouziva enumerovana DirEntry metadata namisto dalsiho
+per-entry syscallu. [Oficialni Rust dokumentace](https://doc.rust-lang.org/std/fs/struct.DirEntry.html#method.metadata)
+potvrzuje non-following symlink semantics a zadny dalsi Windows syscall.
+Root/path checks, reparse rejection, vsechny quota bounds a charging predchoziho
+targetu/orphans se zachovavaji; actual C#/Rust Recovery7groups vcetnejunction/
+ownership/data parity prochazeji. Tato optimalizace neni dukazem hodinoveho PASS.
+
+Nove native110regular/fmt/Clippy a encryptedRecovery7groups PASS. Bounded
+diagnostika stale FAILED/INCOMPLETE; zadne dalsi genericke keyboard/human okno,
+quietprofile, physicalcapture/clipboard/auth/install/Azure nebo paidAI scope
+se nepredpoklada. Cele dokonceni zustava neuzavrene; nutny je dokazatelne
+stabilni current-controller wallclock a oddelene GUI/human/upgrade/privateAzure
+akceptace, ne slepe opakovani hodin bez vysvetleni priciny.
+
+### Internal owner/phase diagnostika bez instalace debuggeru
+
+Po zadani koordinatora byla pridana test-only instrumentation skutecnych
+streaming/legacy-state a recovery-root mutex guards. Zaznamenava acquire/wait/
+release monotonic timestamp, konkretni operaci a vlastni Rust-thread key.
+Monitor nepouziva sledovany mutex: pouze atomics a samostatny try_lock cache.
+Omezene acquisition contexts jsou nejvyse64x16KiB; std::backtrace::force_capture
+se vyvolava z owner threadu pri acquire a dalsi stack captures jsou po warmup
+zmrazene. Neni to aktualni suspended kernel stack, OS thread ID, memory nebo
+environment dump ani WinDbg sampling.
+
+Diagnosticky release s debuginfo2/localPDB overil znamy fixture callsite pred
+jedinym30s owner behom. Prvni known-marker assertion odhalila tail-call
+optimalizaci pomocneho markeru; postcall black_box ji odstranil a exactsymbol
+test nasledne prosel0.24s. Puvodni failedverification/exe zachovany. Novy
+oracle46c294d7... a PDB26f7be9a... byly overene, zadne tooling/packageinstalls
+nebo externi symbolserver/searchpath se nepouzily.
+
+Owner probe skoncil FAILED/INCOMPLETE10.8118359s na Overflow. Jeho nove
+konkretni dukazy: stable streaming-state epoch1136, Rustthread2,
+operation send-audio-read, age1405.4594ms; stable recovery-root epoch1137,
+stejny Rustthread2, NativeRecoveryJournal::read_audio, age1405.388ms.
+Capturewriter Rustthread5 cekal v StreamingSession::append na state mutex.
+Accepted345600/received281600/completed280320bytes; append-age1399.4276ms,
+producermaxlateness1520.0907ms/currentlateness11.8371ms. Acquisitioncontext
+ze sameho ownerthreadu propojuje read_audio->read_range->send_audio.
+Generic symbol names mohou v optimized buildu sdilet kod; authoritative
+owner je instrumented lockkind/operation/epoch, nikoliv odhad livecallstacku.
+Raw owner/IO context a failedstate jsou v controller-owner-diagnostic-work.
+Neni to hodina, performancePASS nebo prokazany OS/kernel latency cause.
+
+Audit vsech session_path/audio_path callers odhalil redundantni filesystem
+ancestor validation uz pri konstrukci path, nasledovanou stejnou plnou fresh
+validaci v read_encrypted/write_encrypted/remove_audio. Konstrukce je nyni
+lexical s puvodni strict GUID validaci. Skutecne I/O entry nadale overuji
+plny aktualni target/ancestors/reparse/bounds; create/delete directory navic
+maji explicitni guard hned pred filesystem operaci. Zadna validace se
+necacheuje mezi operacemi a zadny cil/quota/budget se nesnizuje.
+
+Aktualni308workspace/112native regular tests, fmt/all-target-all-feature
+Clippy/release a7actual C#/Rust Recoveryparitygroups vcetne junction/escape/
+ownership/data parity PASS. ExactcurrentCI a relevantni native/ikonove surface
+validation se ulozi samostatne. Dalsi fullhour/quietprofile/device/CUI/human/
+install/Azure scope se nepredpoklada; ownerdiagnostics neni jeho nahrada.
+
+Aktualni6hidden lifecycle a7DPAPI/IPC/PE-icon groups take PASS.
+Build-only setup36d15520a5528fd14ae33c11f1f802d6879113d2a4b14fe06f416a936b724e88
+obsahuje release/stagedbedd72a93bd6f41bd5978d1b9e98bfa4785b85b80118675dd57b95aeb0824726.
+Installer nebyl spusten/instalovan/publikovan a nebyl pouzit k nove physical
+akceptaci. Presne CI tohoto source inkrementu zustava oddelenym dukazem.

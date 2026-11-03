@@ -167,6 +167,40 @@ of unwritable samples; the client reports that limit explicitly rather than
 claiming all queued audio is durable. Neither this repair nor a short smoke
 establishes the still-incomplete current-controller wall-clock-hour acceptance.
 
+Async state readers now respect an already-waiting synchronous capture writer
+instead of repeatedly winning an immediate `try_lock`. This is admission
+fairness, not a larger audio queue or a relaxed deadline. Recovery quota walks
+reuse each directory entry's non-symlink-following enumeration metadata on
+Windows while retaining root/path, reparse, quota and ciphertext bounds.
+
+Test-only diagnostics distinguish accepted queue bytes, bytes received by the
+writer, successful `append` calls, durable saved bytes and confirmed cursors.
+They record writer age and the current Recovery read/protect/unprotect/path/
+quota/write/delete/progress-publication phase without recording PCM or tokens.
+An append completion is not itself durable confirmation. These diagnostics
+have exposed additional backlog in bounded runs; neither their instrumentation
+nor the fairness/metadata changes establish a completed hour or resolved
+historical latency cause.
+
+The optional test-only `VOICEPROMPT_LOCK_TRACE=owner-phases` mode wraps the
+actual state/journal mutex guards. It records process-monotonic ownership,
+wait and release timestamps, opaque Rust-thread keys and bounded operation
+contexts. Its monitor uses atomics and a separate `try_lock` cache, never the
+blocked mutex. Local PDB symbolization is verified on a known fixture callsite
+before a diagnostic run; stack acquisition is frozen after warmup. At most64
+contexts of16KiB are retained. These are owner-thread **acquisition contexts**,
+not a current suspended kernel stack, OS thread ID, memory/environment dump
+or WinDbg sampling. Optimized generic function names can share code; the
+instrumented lock kind, operation and epoch identify the actual owner.
+
+That diagnostic identified `send-audio-read` and `NativeRecoveryJournal::read_audio`
+holding the streaming state and recovery-root locks while capture waited.
+Path construction is now lexical: the complete fresh reparse/path validation
+remains at every actual read/write/delete/create entry, without an extra
+ancestor walk merely to construct the same path. No validation is cached across
+operations. The change has passed data/ownership/junction regression; it is not
+yet a completed wall-clock-hour proof.
+
 ```powershell
 # Use an explicitly chosen isolated directory; do not use installed app state for tests.
 rust\target\release\VoicePromptRustPilot.exe --instance-key isolated-client `

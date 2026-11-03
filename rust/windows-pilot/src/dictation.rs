@@ -102,6 +102,13 @@ enum CapturePersistence<S: StreamingBackend> {
 }
 
 impl<S: StreamingBackend> Session<S> {
+    #[cfg(test)]
+    fn fixture_lock_trace(&self) -> Arc<crate::lock_trace::Lock> {
+        match self {
+            Self::Legacy(session) => session.fixture_lock_trace(),
+            Self::Streaming(session) => session.fixture_lock_trace(),
+        }
+    }
     fn append(&self, bytes: &[u8]) -> Result<(), SessionError> {
         match self {
             Self::Legacy(session) => session.append(bytes),
@@ -641,9 +648,18 @@ impl<P: DictationPorts> DictationHost<P> {
             let writer = match audio.take() {
                 Some(receiver) => {
                     let discard = discard_capture.clone();
+                    #[cfg(test)]
+                    let probe = self.ports.clone();
+                    #[cfg(test)]
+                    probe.register_capture_trace(session.fixture_lock_trace());
                     let worker = tokio::task::spawn_blocking(move || {
                         let result = persist_capture(receiver, &discard, &capture_stopped, |pcm| {
-                            session.append(pcm)
+                            #[cfg(test)]
+                            probe.capture_write_started(pcm.len());
+                            let result = session.append(pcm);
+                            #[cfg(test)]
+                            probe.capture_write_finished(result.is_ok());
+                            result
                         });
                         finish_capture(session, result, discard.load(Ordering::Acquire))
                     });

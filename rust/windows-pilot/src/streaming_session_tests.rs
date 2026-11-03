@@ -204,6 +204,34 @@ fn journal(directory: &TemporaryRoot) -> (NativeRecoveryStore, NativeRecoveryJou
 }
 
 #[tokio::test]
+async fn async_readers_do_not_bypass_a_pending_synchronous_capture_writer() {
+    let directory = TemporaryRoot::new();
+    let (_store, journal) = journal(&directory);
+    let service = Service::new(Mode::Healthy);
+    let session = StreamingSession::start(journal, Arc::new(service), false).unwrap();
+    session
+        .inner
+        .synchronous_waiters
+        .store(1, Ordering::Release);
+    let reader = session.inner.clone();
+    let pending = tokio::spawn(async move {
+        drop(reader.async_lock("fixture-async-reader").await.unwrap());
+    });
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    let bypassed_writer = pending.is_finished();
+    session
+        .inner
+        .synchronous_waiters
+        .store(0, Ordering::Release);
+    pending.await.unwrap();
+    assert!(
+        !bypassed_writer,
+        "An immediate async reader bypassed a queued capture write."
+    );
+    session.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn confirmed_prefix_survives_failure_and_replay_starts_at_the_durable_cursor() {
     let directory = TemporaryRoot::new();
     let (_store, journal) = journal(&directory);
