@@ -37,6 +37,7 @@ znovu v odpovidajicim scope.
 | Engine longevity | Actual3600s synthetic PCM/real50min rotation,115200000 exact bytes; worst idle growth1.645MiB<10MiB, engine-only PASS |
 | CI nativniho inkrementu | 7b4aff4 original-icon/reactive-overlay Windows/Linux/MSRV1.85/container RustCI a C#WindowsCI PASS; nasledne observer/input inkrementy maji vlastni CI, nejde o real-world cutover |
 | OAuth/token-store/PubSub klient | Native flow implementovany; samostatny live Google auth-only/local-signout a assisted manual clipboard probe PASS, full signed-in backend/automatic dictation paste stale chybi |
+| Automatic DesktopGuard paste port | NOVYexactonephysicalpostfix5b test PASS:one4eventnativeCtrlV/exactownfieldmarker/normalclosed,no retry. Nejdenifullcontroller/hold-toggle/hour/realbackend acceptance;older50040BLOCKED/45788assisted zustavaji |
 | Diktovani/recovery UI | Native microphone/hotkeys/overlay/paste controller, oba enginy, journal, polishing a outbox implementovany; real-world a rozsahlejsi fault/E2E akceptace zbyva |
 | History cache | JSON/retence/200 entries, atomicka persistence, native list/text a manual copy latest/selected/original implementovany; C# file parity overena |
 | Settings a instalator | Vsechna C# JSON pole, nativni Settings/History/Recovery, DPI fonty, per-user autostart a kompatibilni IPC; installer sestaven, nebyl instalovan |
@@ -2939,3 +2940,44 @@ noveclipboardcontents. Takovy souhlas tedneni kdispozici a neni
 odvozenzpredchoziho50040failure/071performance nebo obecnehoresume.
 Real automatic/fullcontroller/human/upgrade/privateAzure acceptance
 staleNEuzavrena.
+
+### NOVY po-fix ONEphysicalDesktopGuard port: actualPASS
+
+Uzivatel NOVE vybral "Ano,povoluji jeden novy test po tetooprave",
+se scope pouzejedno3min ownisolatedtopmost/active-monitorwindow,
+personalRun+1shands-off,NOmanualCtrlV,onefixedmarkeroverwrite,
+500msguards/atmostoneDesktopGuardbatch,bez retry/Enter/Save/jineappky/
+mic/hotkeys/accounts/install/cloud aonlypost-close owner/seqmetadata.
+Fresh frozen8ffabe37f5c2fdb16d20e80dc54d45990b12b04a5e4f503212694673f3729479,
+PID10776/window8784554,testsource5bcaee5. ActualacceptedRun/focus/
+armed/delivering/result opetexistovalypredagentprompt; agent proto
+NEZADAL druhyklik. OwnPID/image/title/presentation iimmutablephases
+bylyovereny, nejdeorecycle50040.
+
+TentokratactualDesktopGuardnative_emission_invoked=true,
+native_events4/expected4/input_senttrue,guard_rejectionNULL,
+zadny release-onlycleanup,druhybatchneboretry. Onepublication
+prescheckedClose->seq->ownOwner succeeded. Po250ms skutecny
+GetWindowText ownfieldprokazal presny approvedmarker;
+marker_observation_attempted/observedtrue. Independentread-onlyCUI
+navicvratilo exactfieldValue iDocumenttext
+"VoicePrompt synthetic guarded paste test 2026",disabledRun aPASSstatus.
+AgentnezapsalmanualCtrlV/clipboard ani necetl/neobnovil oldclipboard.
+Neprohlasuje current contents poemukonceni,zadne posthocsystemread.
+
+Normalnilifetime3min/closed,file,no failureartifact,ownprocessgone,
+onlyown.lnkremoved. Result
+693f97615e26f0515966265672f08ac1a65356199370750faf515223679f58f8,
+closedf012b1f969fa3cde99f6767e938549e1094a8c3562422143def1a19682801a27,
+completeverified-result.json vguarded-paste-authorized-5bcaee5.
+NovypovolenyONEtestjespotrebovany;zadnedalsiwindow/opakovani.
+Starsifyzicke50040BLOCKED/no-emitter i45788assisted-only se ponechavaji
+pravdive,zadne zpetne upravenePASS nebo tvrzenipricinyvsecholdincrements.
+
+Totoje actual scoped ONEautomaticDesktopGuardportPASS. Neprokazuje
+celou dictationcontroller microphone/hotkey/capture/stream/durableHistory/
+stop/focusselection/clipdelivery pipeline,oba hold/toggle modes/hour,
+realGoogle/backend/model,userdestination/accessibility/monitor/installer/
+privateAzure acceptance. Current071performancefrozen76e3... zustava
+source071,nikolinewscreenshot/toolbinary5b. Cele prepisani/akceptace
+se proto dale NEPROHLASUJI zaperfektne/uplne dokoncenou.
