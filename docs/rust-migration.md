@@ -35,7 +35,7 @@ znovu v odpovidajicim scope.
 | Mereni Windows klienta | NOVA vyslovne schvalena quiet-window current071/checkout86f3b0f full-runtime signed-out30+30/3paired301-point PASS: p95Rust257.948ms,meanprivate3.427MiB,observedpeak3.992MiB. Vsechnyrawvalues/pairedthresholds/cleanup nezavisleovereny;starsi7bPASS ia2d/3f4FAILEDINCOMPLETE zachovany,neprepisuji se na signed-in/physical scope |
 | Microphone readiness | Jeden actual240ms probe a samostatne schvalena30+30 paired serie prosly; first-PCM p95Rust80.75% C#baseline, bez audio souboru/uploadu |
 | Engine longevity | Actual3600s synthetic PCM/real50min rotation,115200000 exact bytes; worst idle growth1.645MiB<10MiB, engine-only PASS |
-| Current controller longevity | Tri actualcontrollerhour a post-dedup60s b00 FAILED/INCOMPLETE s raw/encrypted state zachovanymi; current0f60489 immutable-reader oprava ma316tests/all5CI PASS, nikoli novy3600s/rotation/postidle proof |
+| Current controller longevity | Ctyri actualcontrollerhour vcetne noveho0f60489 a post-dedup60s b00 FAILED/INCOMPLETE s raw/encrypted state zachovanymi; pinned-reader source ma316tests/all5CI PASS, nikoli3600s/rotation/postidle proof |
 | CI nativniho inkrementu | Current0f60489 pinned-reader Windows/Linux/MSRV1.85/container RustCI41682844962 ALL5PASS; predchozi icon/UI/adapter doklady zustavaji revision-scoped, nejde o real-world cutover |
 | OAuth/token-store/PubSub klient | Native flow implementovany; samostatny live Google auth-only/local-signout a assisted manual clipboard probe PASS, full signed-in backend/controller dictation stale chybi; samostatny automatic DesktopGuard port viz dalsi radek |
 | Automatic DesktopGuard paste port | NOVYexactonephysicalpostfix5b test PASS:one4eventnativeCtrlV/exactownfieldmarker/normalclosed,no retry. Nejdenifullcontroller/hold-toggle/hour/realbackend acceptance;older50040BLOCKED/45788assisted zustavaji |
@@ -3517,3 +3517,58 @@ failedhour, kratkysmoke nebo engine-only proof ho nenahrazuje. GUI/physical
 pipeline, keyboard dispatcher/ctecka/monitor, instalace/upgrade/rollback
 a skutecne privateAzure/deployedACA/IAM/cutover hranice zustavaji oddelene
 neuzavrene. Tento vysledek neoznacuje kompletnimigraci za hotovou.
+
+### Novy explicitne zadany0f60489 controller hour: FAILED, writer checkpoint
+
+Po ALL5 exactCI41682844962 koordinator zadal prave jeden NOVY currentNoPorts
+actual3600s beh, nikoli retry starych nonce nebo fyzickou nahravku.
+Code0f60489/doc8150971/Rusttree2b1b8eb3/sourcearchive98cfb461... byly zmrazene.
+Merena byla RELEASEoptimized native LIBTEST optlevel3/debuginfo2
+cfcb0b0d327515a55c581d62c3aee4bd99639bb18a2b42fc7f0c138bb20a9d47,
+NE produktove EXE. MatchinglocalPDBaf2286ad... a known-symbol callsite
+prosly predstartem. Sampler88c5ed25... zustal nezmeneny; frozenobserver7e45735e...
+pouze pridal create-new owner metadata a bounded16MiB/flushed native logs.
+Jeho4 name/zero-test/failure/pipe guards prosly bez capture. Reader/queue
+diagnostika zustala atomic/try-lock10s, warmupcontexts64x16KiB pak frozen.
+
+Owned68368/native a62796/collector byly skutecne ready a ownimage/header
+hash/scope overeny. Currentcontroller/singlewriter/pinnedreads/cooperativelocks/
+seal/join/stream/polisher/DPAPIRecoveryHistory/periodicoutbox byly pritomne;
+zadne GUI/Main/tray/realOAuth/PubSub/backend/physical/registry/clipboard/
+SendInput/Azure/paidAI/personalstate ports. Source se pri kolekci nemenil
+a nebyl dalsi localbuild/testload. Original1280B40ms50slots/boundedoverflow/
+stopbudgety zustaly stejne.
+
+Beh FAILED/INCOMPLETE: producerOverflow po90.0155125s, frame2250;
+produced/accepted2880000bytes, writerreceived2816000/completed2814720 pri
+failure, observedqueue50. Currentlateness15.5132ms/maxobserved505.5248ms.
+301warm a96partialcapturerawrows,9ten-second owner snapshots, frozeninputs
+a flushed native stderr/producercontext/encryptedfailure-state jsou uchovany
+v controller-hour-0f60489. Nenastala3600s/115200000byte/50minrotation/postidle
+akceptace a <=10MiBgrowth se nema z ceho vyhodnotit.
+
+Nove actual owner evidence neni puvodni reader: Rustthreadkey15 drzel engine
+ve StreamingSession.append a recovery-root v NativeRecoveryJournal.checkpoint.
+Maximumcompletedenginehold1589.1547ms/wait1561.9383ms;
+rootcompletedhold1314.0446ms/wait142.1638ms. Pri failure mel ownerage
+engine1329.2142/root1329.1261ms, aktualni phase quota-scan363.6216ms
+a activepinnedreads0. Maxima jsou observedcompleted holds, aktualni age je
+samostatny udaj. Quota-scan phase neprokazuje quota-limit error ani to,
+ze cely root hold tvori quota; nejde o OS/kernelpricinu nebo percentuallatencyodhad.
+Mutable manifest/quota/file-write criticalsections stale zustavaji protected.
+
+Existing5s fixture controllerjoin take TIMEOUT. Read-only nezavisla Recovery
+kontrola presto overila vsech2880000acceptedbytes durable/sealed, confirmed2752000,
+128000pendingPCM sample-exact, originalbinding a nezmeneny ciphertext.
+Obaownedprocesses absent/puvodnicontroltempremoved, failedstate retained.
+Process exit neni normaljoinedcontroller/read/outbox cleanup PASS.
+Partial-result-summary.json nezavisle kontroluje vsechny397rawsamples,
+monotoniccounters/progress/source/profile/hash a oddeluje durableprefix od
+failed normalshutdown. Zadny dalsi fullhour, quietprofile nebo physicaltest.
+
+Current pinned-reader source/316tests/ALL5CI dukaz se nerusi ani nepretvari
+ve wallclockPASS. Nejmensi konkretni blocker je nyni capturewriter checkpoint/
+protected mutation I/O spolu s nedokazanym joinedshutdown; dalsi bounded
+diagnostika musi rozlisit jeho skutecne phase/ownership, ne odhadovat OS nebo
+automaticky zvetsovat frontu/rozpocty. GUI/physical/accessibility/installation/
+privateAzure hranice i vsechny starsi scope proofs zustavaji oddelene.
