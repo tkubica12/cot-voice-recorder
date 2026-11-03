@@ -36,7 +36,7 @@ znovu v odpovidajicim scope.
 | Microphone readiness | Jeden actual240ms probe a samostatne schvalena30+30 paired serie prosly; first-PCM p95Rust80.75% C#baseline, bez audio souboru/uploadu |
 | Engine longevity | Actual3600s synthetic PCM/real50min rotation,115200000 exact bytes; worst idle growth1.645MiB<10MiB, engine-only PASS |
 | Current controller longevity | Ctyri actualcontrollerhour vcetne0f60489, post-dedup60s b00 a b7actual120s FAILED/INCOMPLETE, raw/encrypted state zachovany; b7finalaccepted NOT_OBSERVED, orphan14 neni committed. Nova bounded error/admission sourceproof neni3600s/rotation/postidle proof |
-| CI nativniho inkrementu | Bounded error/admission inkrement local326tests/strictClippy/fmt/release+7Recovery/7platform/6lifecycle PASS; matchingCI zatim pending. Predchozi exactb7 CI41699794216 ALL5PASS zustava revision-scoped, nejde o real-world cutover |
+| CI nativniho inkrementu | Exact76b25da error/admission source ma CI41737781150 Windows/Linux/MSRV1.85/container ALL5PASS a local326tests/strictClippy/fmt/release+7Recovery/7platform/6lifecycle PASS; quotaNotFound nepotvrzen, nejde o runtimehour ani real-world cutover |
 | OAuth/token-store/PubSub klient | Native flow implementovany; samostatny live Google auth-only/local-signout a assisted manual clipboard probe PASS, full signed-in backend/controller dictation stale chybi; samostatny automatic DesktopGuard port viz dalsi radek |
 | Automatic DesktopGuard paste port | NOVYexactonephysicalpostfix5b test PASS:one4eventnativeCtrlV/exactownfieldmarker/normalclosed,no retry. Nejdenifullcontroller/hold-toggle/hour/realbackend acceptance;older50040BLOCKED/45788assisted zustavaji |
 | Diktovani/recovery UI | Native microphone/hotkeys/overlay/paste controller, oba enginy, journal, polishing a outbox implementovany; real-world a rozsahlejsi fault/E2E akceptace zbyva |
@@ -3749,8 +3749,16 @@ jeho tehdy generic logu. Proto zadny speculative locking refactor, quota cache,
 general metadataNotFound swallow ani nova Drop mutatingIO semantika.
 
 Local current source326workspace/130native, fmt, strictalltarget/allfeatureClippy,
-releasebuild a7Recovery+7platform+6hiddenlifecycle parity PASS; matchingCI bude
-uvedeno az po exactcommit overeni. Existing lastpin/confirm/delete/reconnect/
+releasebuild a7Recovery+7platform+6hiddenlifecycle parity PASS. Exactcode
+76b25da6a97d9010f54cefd059d91796788a26bb/Rusttree
+d3ff9eb084442b409ef9b94946af47290697ae1b je committed/pushed; matching
+[CI41737781150](https://github.com/tkubica12/cot-voice-recorder/actions/runs/41737781150)
+ma VSECH5 jobs completed/success, Windows completed2026-11-03T23:31:51Z.
+Head/jobs i130native test count byly nezavisle overeny a rawWindowslog
+b9db93cf9c093be41594d059db855e069441ef54b5b5543338c2b20a4414cd14 zachovan.
+Exactcode sourcearchive cbf9a89a... a debuglibtest390b922f... jsou oddelene od
+build-only releaseproduct44398faa...; kratke unit smokes byly DEBUG/unoptimized,
+nikoli release performance nebo novy produktovy profile. Existing lastpin/confirm/delete/reconnect/
 cancellation/blockedcheckpoint Stop/auth/shutdown/deadline tests zustaly PASS.
 Original1280B40ms50slots,2s/30sstop a5sfixturejoin se nemenily, zadna nova PCM
 fronta/drop/durabilitydelay. Failed b7/0f/a10/ed760/4430/b00 raw/encryptedstate a
