@@ -3091,3 +3091,31 @@ Zadna instalace, skutecna device/copy akce nebo produkcni zmena neprobehla.
 Schvaleny keyboard countdown jeste NEZACAL a zadne keyboard okno nebylo otevrene.
 Opraveny presny build, dalsi parity/CI a pripadne novy volume dukaz budou
 zaznamenany pred dalsimi tvrzenimi o akceptaci. Cela migrace stale neni uzavrena.
+
+Nasledne presnyffde6d3 RustCI41603157120 skoncil ALL5JOBSSUCCESS,
+Windows2026-11-03T08:41:06Z. RESTrun/jobs a existujici watcher nezavisle
+potvrdily stejny head a vsech5success jobu; watcher exit0/no active helper.
+Opraveny count-only controller volume na frozenD41...take PASS:
+115200000captured/streamed bytes, kazdy sample byte overen, durable History/audit,
+joined capture a skutecne uklizeny ownroot,272.9983441s. Rawlog
+07f2b60bf8fb24eaee3d274ba9edca14c94692dcb3bf988f44e8097854bae952
+a controller-volume-ffde6d3-result.json zustavaji samostatne od prvnihoFAIL.
+Je to accelerated sample volume, nikoliv real-hour,50min rotation nebo nativeGUI
+memory proof; predchozi actualhour a current071 evidence se neprejmenovavaji.
+
+Jeden schvaleny manual keyboard case otevrel47232/window3804432,
+frozenD41.../actualready144DPI/History3/Recovery2/actionsdisabled. User mel
+nejprve pozorovani ze okno vidi, ale po jedine child otazce odpovedel:
+"okno mezitim zmizelo,myslim,ze tohle mas delat sam pres computer use".
+Actualclosed/processgone, vsech8baselinefilesSHAexact/noToken, onlyownlauncher
+removed. ReadyD2EF09.../closed8143CB... zustavaji; keyboard/humanPASS z toho
+NEPLYNE a prvni case se neopakuje jako jeho pokracovani.
+
+Nove user-directed prevzeti pres Computer Use autorizuje jeden nezbytny dalsi
+automatizacni NoPorts case se stejnymi UI/runtime guards, osobni stav/clipboard/
+device/backend/OS/install stale zakazane. Test-only automation entry ma fresh
+single-native-keyboard-automation-fixture marker a bounded600s lifetime,
+nikoliv dalsi2min lidsky zavod. Bezny klient/puvodni180smanualcase se nemeni.
+Nove native99regular/fmt/Clippy PASS; automatedcase bude overen z actualCUI
+focus/control/selection/text/SettingsCancel/files, ne jako screen-reader nebo
+lidska accessibility akceptace.

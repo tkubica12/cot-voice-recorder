@@ -129,6 +129,8 @@ thread_local! {
     static UI_PREVIEW_MINIMUM: Cell<bool> = const { Cell::new(false) };
     #[cfg(test)]
     static UI_PREVIEW_KEYBOARD: Cell<bool> = const { Cell::new(false) };
+    #[cfg(test)]
+    static UI_PREVIEW_AUTOMATED: Cell<bool> = const { Cell::new(false) };
     static UI_HISTORY: RefCell<Option<std::sync::Arc<Vec<voiceprompt_client_protocol::history::HistoryEntry>>>> =
         const { RefCell::new(None) };
     static UI_RECOVERY: RefCell<Option<std::sync::Arc<Vec<crate::NativeRecoveryInfo>>>> =
@@ -2041,7 +2043,8 @@ fn dispatch(
                 "window":hwnd.0 as usize,"history_count":count,"physical_ports":false,"auth":"not_configured","dpi":crate::dpi::window_dpi(hwnd),
                 "client_width":bounds.right-bounds.left,"client_height":bounds.bottom-bounds.top,"foreground_unchanged":true,
                 "hidden_history_format_calls":0,"action_controls_disabled":true,
-                "keyboard_only":UI_PREVIEW_KEYBOARD.with(Cell::get)}))
+                "keyboard_only":UI_PREVIEW_KEYBOARD.with(Cell::get),
+                "automated_keyboard":UI_PREVIEW_AUTOMATED.with(Cell::get)}))
                 .map_err(|_|NativeError::Verification("Encode visual client readiness failed."))?;
             atomic_write(
                 &root.join("ui-preview-ready.json"),
@@ -3161,6 +3164,24 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "One user-directed automated Computer Use keyboard-only10min NoPorts fixture; no physical/account/destructive ports."]
+    fn automated_native_client_keyboard_preview() {
+        let root = std::env::current_dir().unwrap();
+        let marker: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(root.join("keyboard-fixture.json")).unwrap())
+                .unwrap();
+        assert_eq!(
+            marker,
+            serde_json::json!({"scope":"single-native-keyboard-automation-fixture"})
+        );
+        UI_PREVIEW_KEYBOARD.with(|value| value.set(true));
+        UI_PREVIEW_AUTOMATED.with(|value| value.set(true));
+        run_native_client_preview(false);
+        UI_PREVIEW_AUTOMATED.with(|value| value.set(false));
+        UI_PREVIEW_KEYBOARD.with(|value| value.set(false));
+    }
+
+    #[test]
     fn read_only_preview_only_allows_settings_navigation_and_normal_controls_are_unchanged() {
         let mut options = ClientOptions {
             state_directory: PathBuf::new(),
@@ -3206,7 +3227,11 @@ mod tests {
             instance_key: key,
             ready_file: None,
             fixture_ready_file: Some(root.join("ui-host-ready.json")),
-            run_for_seconds: Some(180),
+            run_for_seconds: Some(if UI_PREVIEW_AUTOMATED.with(Cell::get) {
+                600
+            } else {
+                180
+            }),
             self_test: false,
             client: Some(ClientOptions {
                 state_directory: root.clone(),

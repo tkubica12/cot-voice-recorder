@@ -108,6 +108,13 @@ controls before readiness and opens one three-minute keyboard-only preview.
 User keyboard participation requires its own permission; this does not enable
 clipboard, global hotkeys, devices, accounts, backend operations or installation.
 
+`platform::tests::automated_native_client_keyboard_preview` is a separate,
+user-directed Computer Use case with the same read-only guards and a bounded
+ten-minute lifetime. Its fresh keyboard marker must be exactly
+`{"scope":"single-native-keyboard-automation-fixture"}`. It does not reuse an
+expired human case or turn automated control/focus evidence into screen-reader
+or human-accessibility acceptance.
+
 ```powershell
 # Use an explicitly chosen isolated directory; do not use installed app state for tests.
 rust\target\release\VoicePromptRustPilot.exe --instance-key isolated-client `
