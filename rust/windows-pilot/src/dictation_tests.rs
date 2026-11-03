@@ -1,5 +1,6 @@
 use super::*;
 use crate::recovery_store::tests::TemporaryRoot;
+use std::sync::{Condvar, Mutex};
 use voiceprompt_client_protocol::recovery::AudioCheckpoint;
 
 #[test]
@@ -111,6 +112,110 @@ async fn persistence_failure_is_not_reported_as_success_and_no_more_writes_are_a
     .await;
     assert!(matches!(result, Err(SessionError::Storage(_))));
     assert_eq!(attempts, 1);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn blocking_capture_checkpoint_leaves_async_timers_and_control_messages_responsive() {
+    let (sender, receiver) = mpsc::channel(2);
+    sender.try_send(CaptureBuffer(vec![1, 0])).unwrap();
+    sender.try_send(CaptureBuffer(vec![2, 0])).unwrap();
+    let discard = Arc::new(AtomicBool::new(false));
+    let gate = Arc::new((Mutex::new(false), Condvar::new()));
+    let release = gate.clone();
+    let (began, started) = oneshot::channel();
+    let (stopped, mut observed) = watch::channel(false);
+    let worker = tokio::task::spawn_blocking(move || {
+        let mut began = Some(began);
+        let mut bytes = Vec::new();
+        let result = persist_capture(receiver, &discard, &stopped, |pcm| {
+            if let Some(began) = began.take() {
+                began.send(()).unwrap();
+                let (lock, changed) = &*gate;
+                let mut ready = lock.lock().unwrap();
+                while !*ready {
+                    ready = changed.wait(ready).unwrap();
+                }
+            }
+            bytes.extend_from_slice(pcm);
+            Ok(())
+        });
+        (bytes, result)
+    });
+    started.await.unwrap();
+    let (command, mut commands) = mpsc::channel(1);
+    command.send(DictationCommand::Interrupt).await.unwrap();
+    let responsiveness = tokio::time::timeout(Duration::from_millis(100), async {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        assert!(matches!(
+            commands.recv().await,
+            Some(DictationCommand::Interrupt)
+        ));
+    })
+    .await;
+    let (lock, changed) = &*release;
+    *lock.lock().unwrap() = true;
+    changed.notify_one();
+    drop(sender);
+    let (bytes, result) = worker.await.unwrap();
+    assert!(
+        responsiveness.is_ok(),
+        "Blocked persistence starved the async control runtime."
+    );
+    assert_eq!(bytes, [1, 0, 2, 0]);
+    assert!(result.is_ok());
+    observed.changed().await.unwrap();
+    assert!(*observed.borrow());
+}
+
+#[tokio::test]
+async fn capture_write_failure_notifies_controller_before_source_close_and_drains_without_retry() {
+    let (sender, receiver) = mpsc::channel(2);
+    sender.try_send(CaptureBuffer(vec![1, 0])).unwrap();
+    sender.try_send(CaptureBuffer(vec![2, 0])).unwrap();
+    let (stopped, mut observed) = watch::channel(false);
+    let worker = tokio::task::spawn_blocking(move || {
+        let mut writes = 0;
+        let result = persist_capture(receiver, &AtomicBool::new(false), &stopped, |_| {
+            writes += 1;
+            Err(SessionError::Storage(NativeError::Verification(
+                "Synthetic blocked-writer failure.",
+            )))
+        });
+        (writes, result)
+    });
+    observed.changed().await.unwrap();
+    assert!(*observed.borrow());
+    assert!(
+        !worker.is_finished(),
+        "An open source is drained only after capture shutdown."
+    );
+    drop(sender);
+    let (writes, result) = worker.await.unwrap();
+    assert_eq!(writes, 1);
+    assert!(matches!(result, Err(SessionError::Storage(_))));
+}
+
+#[tokio::test]
+async fn explicit_discard_invalidates_queued_worker_audio_but_interruption_preserves_it() {
+    for discarded in [false, true] {
+        let receiver = buffers().unwrap();
+        let (stopped, _) = watch::channel(false);
+        let worker = tokio::task::spawn_blocking(move || {
+            let mut bytes = Vec::new();
+            let result = persist_capture(receiver, &AtomicBool::new(discarded), &stopped, |pcm| {
+                bytes.extend_from_slice(pcm);
+                Ok(())
+            });
+            (bytes, result)
+        });
+        let (bytes, result) = worker.await.unwrap();
+        assert!(result.is_ok());
+        if discarded {
+            assert!(bytes.is_empty());
+        } else {
+            assert_eq!(bytes, [1, 0, 2, 0, 3, 0, 4, 0]);
+        }
+    }
 }
 
 fn delivery() -> (

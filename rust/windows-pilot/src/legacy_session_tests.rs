@@ -153,6 +153,40 @@ async fn out_of_order_results_remain_contiguous_and_never_exceed_two_requests() 
     assert_eq!(backend.active.load(Ordering::Acquire), 0);
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shutdown_joins_an_already_started_journal_write_before_releasing_ownership() {
+    let directory = TemporaryRoot::new();
+    let (store, journal) = saved(&directory, 1);
+    let id = journal.id().to_owned();
+    let backend = Backend::new(true);
+    let session = LegacySession::start(journal, backend.clone()).unwrap();
+    backend.calls(1).await;
+    let (release, blocked) = store.pause_next_fixture_write();
+    backend.gates[0].notify_one();
+    tokio::time::timeout(Duration::from_secs(5), blocked)
+        .await
+        .unwrap()
+        .unwrap();
+    let shutdown = tokio::spawn(session.shutdown());
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    let prematurely_finished = shutdown.is_finished();
+    drop(release);
+    tokio::time::timeout(Duration::from_secs(5), shutdown)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert!(
+        !prematurely_finished,
+        "Shutdown detached an active durable write."
+    );
+    let reopened = store.open(&id).unwrap();
+    let manifest = reopened.snapshot().unwrap();
+    assert_eq!(manifest.context, "synthetic context");
+    assert_eq!(manifest.captured_bytes, 640);
+    assert_eq!(manifest.chunks[0].text.as_deref(), Some("word1"));
+}
+
 #[tokio::test]
 async fn stop_timeout_and_shutdown_keep_pending_audio_for_restart_recovery() {
     let directory = TemporaryRoot::new();

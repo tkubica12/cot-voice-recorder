@@ -3218,3 +3218,64 @@ Pouze bounded3s/3+3rawjournal smoke po oprave prosel96000sampleexactbytes,
 History/outbox/joins/cleanup; verdictincomplete. Neni opravenyhodinovyPASS.
 Dalsi realhour je konkretni samostatne rozhodnuti po tomto retainedFAIL,
 ne automaticky retry nebo genericka human/device otazka.
+
+### Druhy actualcontrollerhour ed760: FAILED/INCOMPLETE a blocking-persistence oprava
+
+Koordinator konkretne zadal jeden NOVY correctedsource beh po ed760CI41628312416
+ALL5success. FrozenoracleE2E34D.../sourceed760/readinessPID60204 overeny,
+native1280B/40ms/50slots zachovany. Beh presto skoncil po128.8987879s na
+producerOverflow,frameindex3205/4102400prijatychbytes/lateness698.7898ms.
+Lastimmutableprogress120.0812945s/maxrecordedlate1723.9439ms;
+301warm+128capturerawrowszustavaji,postidlezadne. Ownprocessgone a
+failure-state/controllerlogs/producercontext/rawjournalsretained. Dalsi
+fullhour automaticky NESPUSTEN a zadny3600/rotation/10MiBPASS z nej neplyne.
+
+Read-only vlastni encryptedfailurestate nasledne overena: capture_complete,
+captured4102400 (vsechny prijatebytes), confirmed3968000, puvodni synthetic
+backend/accountbinding exact. Vsech134400neconfirmedPCMbytes overeno sample-exact
+proti absolutnimu97-sample vzoru; ciphertext soubory pred/po probe byteexact.
+Failure2E4D31.../producer18FEC3.../journalD2FFBF.../preservationCF448D... a
+controller-hour-ed760da/partial-result-summary.json uchovane. Tato ochrana dat
+neni dokoncena hodina; stary a10FAILED/enginehour/071/5bport/CUIBLOCKED se
+neprepisuji ani nespojuji do novehoPASS.
+
+Zdrojove prokazana dalsi vazba: DictationHost volal Session.append a finalseal
+synchrone s DPAPI/diskem v Tokio captureselect; enginepumpy navic blokovaly
+state mutexy. Puvodni capturequeue se nyni cte jednim joined blockingworkerem.
+Nevznikla druha fronta, kapacita50 se nemenila, Overflow zustava error a
+stopbudget2s/reserved250ms se neprodluzuje. Stop/Esc/auth/shutdown zustavaji
+na asynccontrolleru; worker vlastni session az do drain/seal/join, explicitDiscard
+jediny invaliduje queuedaudio. Finishing status se publikuje pred cekanim na
+durablejoin; kontendovane enginestate locks cekaji kooperativne, ne blokuji
+asyncworker. Taskabort uz v legacycleanup neodpoji rozpracovanyjournalwrite:
+networkwait se zrusi prescancelwatch, I/Oworker se dokonci pred uvolnenimowner.
+
+Nove deterministicke NoPorts dukazy: current-thread timer/controlmessages pri
+blockedpersistcallback, okamzita errornotification pred sourceclose a zadny
+retry dalsichwrites; explicitdiscard/preserve poradi; skutecny per-root writegate
+na obouengines, plna originalqueue/51.packetOverflow a Stop/Discard/Interrupt/
+auth/shutdownresponsiveness, presne accepted/savedbindingbytes; blockedfinalseal
+timer i latecancel bez UIhandoff; lockedmanifestfilefailure a durableprefix
+bez fakecapturecomplete; legacyshutdown musi cekat na jizspustenyjournalwrite.
+Vsechny testports/writegate jsou pouze cfg(test), produkcniDPAPIformat unchanged.
+
+Real storage writefailure nema zaruku durablezapisu neulozitelnychsamples:
+test zde overuje ulozenyprefix/binding a explicitni error, ne fakeallcapturedPASS.
+UI tuto hranici nowvyslovnehlasi. Pokuddiskneumoznizapis, pouzeexistingRecovery
+je prokazane durable; sourcefix nevydava memory/queue admission za ulozeneaudio.
+Nove local303allfeatureworkspace/107native/fmt/Clippy/releasePASS.
+Prvni coupledregression odhalila jizpotvrzenychunk/nativemarker"" a odpojeny
+legacywrite pri shutdown; assertion byla opravena na skutecnyconfirmedtext/
+sampleexacttransport a legacyownershipbug byl opraven, ne skryt relaxedtestem.
+PresnyOS/scheduling/IOpodil na historicalOverflow stale neznamy. Nove
+wall-clockhour/performance/realdevice/fullGUI dukazy stale potreba; zatim pouze
+boundedNoPorts validace, nikoliv automaticky treti hourlyrun.
+
+Aktualni6hidden lifecycle a7C#/Rust DPAPI/IPC/original-icon parity groups take
+PASS. Pouze3s/3+3rawjournal smoke po rootfix prosel96000exactbytes/durableHistory/
+outbox/capturejoins/cleanup; verdictincomplete, nikoliv hourthreshold.
+Build-only setupc3b6c567822ae7b1aeff45adf30f36c3ace9b8ead4058538ea4e7e87835cd874
+obsahuje release/stagedbefc0abdfafcb67ad59b50686f0aa950f868669a615f3af05cf19889348766c3.
+Nebylo instalovano ani pouzito pro novyphysical/hour/scopedstartupprofile.
+Presne noveCIbudeovereno samostatne; olded760CI/071memory metrics se na tuto
+opravunere-labeluji.

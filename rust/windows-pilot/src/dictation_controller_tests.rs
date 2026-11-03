@@ -3,6 +3,7 @@ use crate::dictation_ports::DictationPorts;
 use crate::microphone::CaptureError;
 use crate::recovery_store::tests::TemporaryRoot;
 use crate::{AudioSender, BatchBackend, EventReceiver};
+use std::os::windows::fs::OpenOptionsExt;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, AtomicUsize};
@@ -1060,7 +1061,21 @@ async fn discard_deletes_only_its_session_but_interrupt_and_auth_change_retain_a
                 let manifest = journal.snapshot().unwrap();
                 assert_eq!(manifest.captured_bytes, bytes.len() as u64);
                 assert!(manifest.capture_complete);
-                assert_eq!(&journal.read_audio(0).unwrap()[44..], bytes);
+                if manifest.chunks[0].text.is_none() {
+                    assert_eq!(&journal.read_audio(0).unwrap()[44..], bytes);
+                } else {
+                    if streaming {
+                        assert_eq!(manifest.confirmed_text, RAW);
+                        assert_eq!(manifest.confirmed_bytes, bytes.len() as u64);
+                        assert_eq!(*harness.ports.0.backend.0.stream.lock().unwrap(), bytes);
+                    } else {
+                        assert_eq!(manifest.chunks[0].text.as_deref(), Some(RAW));
+                        assert_eq!(
+                            &harness.ports.0.backend.0.batches.lock().unwrap()[0][44..],
+                            bytes
+                        );
+                    }
+                }
             }
             harness.close().await;
         }
@@ -1176,6 +1191,221 @@ async fn shutdown_during_recording_joins_capture_and_preserves_audio_without_del
         assert!(harness.ui.try_recv().is_err());
         assert_eq!(harness.ports.0.stopped.load(Ordering::Acquire), 1);
         assert_eq!(harness.recovery.list().unwrap().len(), 1);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn blocked_native_checkpoint_keeps_stop_discard_auth_and_shutdown_responsive_and_owned() {
+    for streaming in [false, true] {
+        for reason in [
+            StartupInterruption::Stopped,
+            StartupInterruption::Discarded,
+            StartupInterruption::Interrupted,
+            StartupInterruption::AuthChanged,
+            StartupInterruption::Shutdown,
+        ] {
+            let mut harness = Harness::new(streaming, false);
+            harness.begin(DictationMode::Toggle).await;
+            let (release, blocked) = harness.recovery.pause_next_fixture_write();
+            let mut bytes = pcm(32000);
+            harness.ports.feed(&bytes);
+            tokio::time::timeout(Duration::from_secs(5), blocked)
+                .await
+                .unwrap()
+                .unwrap();
+            let packet = pcm(crate::microphone::BUFFER_BYTES / 2);
+            for _ in 0..crate::microphone::OUTPUT_BUFFER_COUNT {
+                harness.ports.feed(&packet);
+                bytes.extend_from_slice(&packet);
+            }
+            assert_eq!(harness.ports.try_feed(&packet), Err(CaptureError::Overflow));
+            match reason {
+                StartupInterruption::Stopped => harness.stop().await,
+                StartupInterruption::Discarded => harness
+                    .commands
+                    .send(DictationCommand::Discard)
+                    .await
+                    .unwrap(),
+                StartupInterruption::Interrupted => harness
+                    .commands
+                    .send(DictationCommand::Interrupt)
+                    .await
+                    .unwrap(),
+                StartupInterruption::AuthChanged => {
+                    harness.ports.0.auth.send_replace(AuthState::SignedOut);
+                }
+                StartupInterruption::Shutdown => {
+                    harness.shutdown.send_replace(true);
+                }
+            }
+            let responsive = tokio::time::timeout(Duration::from_millis(500), async {
+                while harness.ports.0.stopped.load(Ordering::Acquire) != 1 {
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            })
+            .await;
+            // Release the blocked write even if a responsiveness assertion fails.
+            drop(release);
+            assert!(
+                responsive.is_ok(),
+                "Stop/cancel was starved by an owned blocking checkpoint."
+            );
+            if reason == StartupInterruption::Stopped {
+                let (_, _, reply) = harness.delivery().await;
+                reply.send(DeliveryResult::CopiedOnly).unwrap();
+                harness.stage(DictationStage::PasteSkipped).await;
+                harness.idle().await;
+                assert_eq!(harness.entries()[0].body, RAW);
+                if streaming {
+                    assert_eq!(*harness.ports.0.backend.0.stream.lock().unwrap(), bytes);
+                } else {
+                    assert_eq!(
+                        &harness.ports.0.backend.0.batches.lock().unwrap()[0][44..],
+                        bytes
+                    );
+                }
+            } else {
+                harness.idle().await;
+                assert!(harness.entries().is_empty());
+                assert!(harness.ui.try_recv().is_err());
+            }
+            let rows = harness.recovery.list().unwrap();
+            if reason == StartupInterruption::Discarded
+                || reason == StartupInterruption::Stopped && !streaming
+            {
+                assert!(rows.is_empty());
+            } else {
+                assert_eq!(rows.len(), 1);
+                let journal = harness.recovery.open(&rows[0].id).unwrap();
+                let manifest = journal.snapshot().unwrap();
+                assert_eq!(manifest.context, format!("{URL}\n{EMAIL}"));
+                assert_eq!(manifest.captured_bytes, bytes.len() as u64);
+                assert!(manifest.capture_complete);
+                assert!(manifest.confirmed_bytes <= manifest.captured_bytes);
+                for chunk in manifest.chunks.iter().filter(|chunk| chunk.text.is_none()) {
+                    let audio = journal.read_audio(chunk.index).unwrap();
+                    let length = audio.len() - 44;
+                    let end = usize::try_from(chunk.end_byte).unwrap();
+                    assert_eq!(&audio[44..], &bytes[end - length..end]);
+                }
+                drop(journal);
+            }
+            harness.close().await;
+            assert_eq!(harness.ports.0.stopped.load(Ordering::Acquire), 1);
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn final_seal_does_not_starve_timers_and_pending_cancellation_cannot_deliver_late_text() {
+    for streaming in [false, true] {
+        for reason in [
+            StartupInterruption::Discarded,
+            StartupInterruption::AuthChanged,
+            StartupInterruption::Shutdown,
+        ] {
+            let mut harness = Harness::new(streaming, false);
+            harness.begin(DictationMode::Hold).await;
+            let (release, blocked) = harness.recovery.pause_next_fixture_write();
+            let bytes = pcm(640);
+            harness.ports.feed(&bytes);
+            harness.stop().await;
+            tokio::time::timeout(Duration::from_secs(5), blocked)
+                .await
+                .unwrap()
+                .unwrap();
+            match reason {
+                StartupInterruption::Discarded => harness
+                    .commands
+                    .send(DictationCommand::Discard)
+                    .await
+                    .unwrap(),
+                StartupInterruption::AuthChanged => {
+                    harness.ports.0.auth.send_replace(AuthState::SignedOut);
+                }
+                StartupInterruption::Shutdown => {
+                    harness.shutdown.send_replace(true);
+                }
+                _ => unreachable!(),
+            }
+            let timer = tokio::time::timeout(Duration::from_millis(200), async {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+                assert!(
+                    harness.policy.dictation_busy(),
+                    "A blocked seal cannot report an idle success."
+                );
+            })
+            .await;
+            drop(release);
+            assert!(timer.is_ok());
+            harness.idle().await;
+            assert!(harness.entries().is_empty());
+            assert!(harness.ui.try_recv().is_err());
+            let rows = harness.recovery.list().unwrap();
+            if reason == StartupInterruption::Discarded {
+                assert!(rows.is_empty());
+            } else {
+                assert_eq!(rows.len(), 1);
+                let manifest = harness.recovery.fixture_snapshot(&rows[0].id).unwrap();
+                assert_eq!(manifest.context, format!("{URL}\n{EMAIL}"));
+                assert_eq!(manifest.captured_bytes, bytes.len() as u64);
+                assert!(manifest.capture_complete);
+            }
+            harness.close().await;
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn disk_write_failure_preserves_the_durable_prefix_binding_and_is_not_false_full_capture() {
+    for streaming in [false, true] {
+        let mut harness = Harness::new(streaming, false);
+        harness.begin(DictationMode::Hold).await;
+        let prefix = pcm(32000);
+        harness.ports.feed(&prefix);
+        let rows = harness.recovery.list().unwrap();
+        assert_eq!(rows.len(), 1);
+        let id = rows[0].id.clone();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let saved = harness.recovery.fixture_snapshot(&id).unwrap();
+                if saved.captured_bytes == prefix.len() as u64 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let path = harness.root.join("recovery").join(&id).join("manifest.enc");
+        let held = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(1)
+            .open(&path)
+            .unwrap();
+        harness.ports.feed(&prefix);
+        harness.idle().await;
+        drop(held);
+        assert!(harness.status.borrow().issue.is_some());
+        assert!(harness.entries().is_empty());
+        assert!(harness.ui.try_recv().is_err());
+        let journal = harness.recovery.open(&id).unwrap();
+        let saved = journal.snapshot().unwrap();
+        assert_eq!(saved.context, format!("{URL}\n{EMAIL}"));
+        assert_eq!(saved.captured_bytes, prefix.len() as u64);
+        assert!(
+            !saved.capture_complete,
+            "Unwritten samples must not appear as durable completion."
+        );
+        if streaming {
+            assert_eq!(&journal.read_audio(0).unwrap()[44..], prefix);
+        } else {
+            let tail = voiceprompt_client_protocol::legacy_checkpoint::parse(&saved.tail).unwrap();
+            assert_eq!(tail.audio, prefix);
+            assert!(tail.frame.is_empty());
+        }
+        drop(journal);
+        harness.close().await;
     }
 }
 

@@ -148,6 +148,25 @@ The current-controller collector additionally enables an explicit sampler
 sample survive an interrupted capture. Completed journals must match every row
 of the final raw report. Ordinary sampling without this optional path is unchanged.
 
+Capture persistence consumes the original bounded microphone queue on one
+joined blocking worker, not on the controller's Tokio `select!` thread. Stop,
+auth changes and interruption stop capture and join queued writes and final
+sealing; only explicit Discard invalidates queued audio. There is no second
+queue, capacity increase, dropped-success fallback or stop-budget extension.
+Engine pumps acquire contended state locks cooperatively so a blocked journal
+writer cannot occupy all async workers. Legacy shutdown cancels network waits
+but joins any already-started journal read/write before releasing ownership.
+The reactive status changes to Finishing before the pending write is joined.
+
+Deterministic NoPorts tests block the actual isolated Recovery write and prove
+timer/control responsiveness, both-engine original-binding sample preservation,
+full-queue overflow refusal, final-seal cancellation and joined legacy writes.
+A separate locked-file failure proves that the durable prefix survives and is
+not reported as completed capture. Storage failure cannot guarantee persistence
+of unwritable samples; the client reports that limit explicitly rather than
+claiming all queued audio is durable. Neither this repair nor a short smoke
+establishes the still-incomplete current-controller wall-clock-hour acceptance.
+
 ```powershell
 # Use an explicitly chosen isolated directory; do not use installed app state for tests.
 rust\target\release\VoicePromptRustPilot.exe --instance-key isolated-client `

@@ -96,6 +96,11 @@ enum Session<S: StreamingBackend> {
     Streaming(StreamingSession<S>),
 }
 
+enum CapturePersistence<S: StreamingBackend> {
+    Live(tokio::task::JoinHandle<(Session<S>, Result<(), SessionError>)>),
+    Recovery(Session<S>),
+}
+
 impl<S: StreamingBackend> Session<S> {
     fn append(&self, bytes: &[u8]) -> Result<(), SessionError> {
         match self {
@@ -404,6 +409,47 @@ async fn stop_microphone<P: DictationPorts>(microphone: Option<P::Capture>) -> b
     }
 }
 
+fn persist_capture(
+    mut receiver: mpsc::Receiver<CaptureBuffer>,
+    discard: &AtomicBool,
+    stopped: &watch::Sender<bool>,
+    mut persist: impl FnMut(&[u8]) -> Result<(), SessionError>,
+) -> Result<(), SessionError> {
+    let mut failure = None;
+    while let Some(buffer) = receiver.blocking_recv() {
+        if !discard.load(Ordering::Acquire) && failure.is_none() {
+            if let Err(error) = persist(&buffer.0) {
+                eprintln!("Audio persistence worker: {error}");
+                failure = Some(error);
+                stopped.send_replace(true);
+            }
+        }
+    }
+    stopped.send_replace(true);
+    match failure {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
+
+fn finish_capture<S: StreamingBackend>(
+    session: Session<S>,
+    result: Result<(), SessionError>,
+    discard: bool,
+) -> (Session<S>, Result<(), SessionError>) {
+    let finished = if discard { Ok(()) } else { session.finish() };
+    let result = match (result, finished) {
+        (Err(error), finished) => {
+            if let Err(failure) = finished {
+                eprintln!("Final recovery checkpoint after capture failure: {failure}");
+            }
+            Err(error)
+        }
+        (Ok(()), finished) => finished,
+    };
+    (session, result)
+}
+
 struct CancelOnDrop(Arc<AtomicBool>);
 impl Drop for CancelOnDrop {
     fn drop(&mut self) {
@@ -590,6 +636,21 @@ impl<P: DictationPorts> DictationHost<P> {
             let mut discard = false;
             let mut explicit_discard = false;
             let mut preserve = false;
+            let discard_capture = Arc::new(AtomicBool::new(false));
+            let (capture_stopped, mut capture_finished) = watch::channel(false);
+            let writer = match audio.take() {
+                Some(receiver) => {
+                    let discard = discard_capture.clone();
+                    let worker = tokio::task::spawn_blocking(move || {
+                        let result = persist_capture(receiver, &discard, &capture_stopped, |pcm| {
+                            session.append(pcm)
+                        });
+                        finish_capture(session, result, discard.load(Ordering::Acquire))
+                    });
+                    CapturePersistence::Live(worker)
+                }
+                None => CapturePersistence::Recovery(session),
+            };
             update(
                 &self.status,
                 generation,
@@ -613,12 +674,7 @@ impl<P: DictationPorts> DictationHost<P> {
                             Some(DictationCommand::Interrupt) | None => { preserve = true; break; }
                             _ => {},
                         },
-                        buffer = next_audio(&mut audio) => match buffer {
-                            Some(buffer) => if let Err(error) = session.append(&buffer.0) {
-                                eprintln!("Audio persistence: {error}"); preserve = true; break;
-                            },
-                            None => { preserve = true; break; },
-                        },
+                        _ = capture_finished.changed() => { preserve = true; break; },
                         result = progress.changed() => {
                             if result.is_err() || progress.borrow().storage_failed { preserve = true; break; }
                             let preview = progress.borrow().preview.clone();
@@ -629,30 +685,6 @@ impl<P: DictationPorts> DictationHost<P> {
                 }
             }
             let stopped = tokio::time::Instant::now();
-            if let Some(polisher) = &polisher {
-                polisher.stop(Duration::from_millis(u64::from(
-                    polishing_settings.dictation_final_wait_milliseconds,
-                )));
-            }
-            let capture_ok = stop_microphone::<P>(microphone.take()).await;
-            preserve |= !capture_ok;
-            if let Err(error) = drain_capture(&mut audio, discard, |pcm| session.append(pcm)).await
-            {
-                eprintln!("Final capture checkpoint: {error}");
-                preserve = true;
-            }
-            if !discard {
-                if let Err(error) = session.finish() {
-                    eprintln!("Final recovery checkpoint: {error}");
-                    preserve = true;
-                }
-            }
-            if preserve {
-                report(
-                    &self.status,
-                    "Dictation was interrupted. Saved audio is in Recovery; nothing was pasted.",
-                );
-            }
             update(
                 &self.status,
                 generation,
@@ -660,6 +692,57 @@ impl<P: DictationPorts> DictationHost<P> {
                 DictationStage::Finishing,
                 progress.borrow().preview.clone(),
             );
+            discard_capture.store(discard, Ordering::Release);
+            if let Some(polisher) = &polisher {
+                polisher.stop(Duration::from_millis(u64::from(
+                    polishing_settings.dictation_final_wait_milliseconds,
+                )));
+            }
+            let capture_ok = stop_microphone::<P>(microphone.take()).await;
+            preserve |= !capture_ok;
+            let writer = match writer {
+                CapturePersistence::Live(worker) => worker,
+                CapturePersistence::Recovery(session) => {
+                    tokio::task::spawn_blocking(move || finish_capture(session, Ok(()), discard))
+                }
+            };
+            let mut checkpoint_failed = false;
+            let session = match writer.await {
+                Ok((session, result)) => {
+                    if let Err(error) = result {
+                        eprintln!("Final capture checkpoint: {error}");
+                        preserve = true;
+                        checkpoint_failed = true;
+                        report(
+                            &self.status,
+                            "Audio checkpointing failed. Recovery retains only successfully saved audio; nothing was pasted.",
+                        );
+                    }
+                    session
+                }
+                Err(error) => {
+                    eprintln!("Audio persistence worker failed: {error}");
+                    report(
+                        &self.status,
+                        "Audio persistence worker failed. Recovery is retained; nothing was pasted.",
+                    );
+                    update(
+                        &self.status,
+                        generation,
+                        mode,
+                        DictationStage::Failed,
+                        String::new(),
+                    );
+                    self.policy.set_dictation_busy(false);
+                    continue;
+                }
+            };
+            if preserve && !checkpoint_failed {
+                report(
+                    &self.status,
+                    "Dictation was interrupted. Saved audio is in Recovery; nothing was pasted.",
+                );
+            }
             if !discard && !preserve {
                 let streaming = matches!(session, Session::Streaming(_));
                 let wait = if recovering.is_some() {
@@ -952,13 +1035,7 @@ impl<P: DictationPorts> DictationHost<P> {
     }
 }
 
-async fn next_audio(receiver: &mut Option<mpsc::Receiver<CaptureBuffer>>) -> Option<CaptureBuffer> {
-    match receiver {
-        Some(receiver) => receiver.recv().await,
-        None => std::future::pending().await,
-    }
-}
-
+#[cfg(test)]
 async fn drain_capture(
     receiver: &mut Option<mpsc::Receiver<CaptureBuffer>>,
     discard: bool,

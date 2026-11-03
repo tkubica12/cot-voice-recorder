@@ -272,6 +272,21 @@ impl<S: BatchBackend> Drop for LegacySession<S> {
 }
 
 impl<S: BatchBackend> Inner<S> {
+    async fn async_lock(&self) -> Result<MutexGuard<'_, State>, SessionError> {
+        loop {
+            match self.state.try_lock() {
+                Ok(state) => return Ok(state),
+                Err(std::sync::TryLockError::Poisoned(_)) => {
+                    return Err(SessionError::Storage(NativeError::Verification(
+                        "Dictation state lock is poisoned.",
+                    )));
+                }
+                Err(std::sync::TryLockError::WouldBlock) => {}
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    }
+
     fn lock(&self) -> Result<MutexGuard<'_, State>, SessionError> {
         self.state.lock().map_err(|_| {
             SessionError::Storage(NativeError::Verification(
@@ -397,30 +412,38 @@ enum JobError {
     Api(ApiErrorKind),
     Storage(NativeError),
     Worker,
+    Cancelled,
 }
 
 async fn transcribe<S: BatchBackend>(inner: Arc<Inner<S>>, index: u32) -> Result<(), JobError> {
+    let mut cancel = inner.cancel.subscribe();
+    if *cancel.borrow() {
+        return Err(JobError::Cancelled);
+    }
     let loader = inner.clone();
     let audio =
         tokio::task::spawn_blocking(move || loader.journal.read_audio(index).map(AudioBuffer))
             .await
             .map_err(|_| JobError::Worker)?
             .map_err(JobError::Storage)?;
+    if *cancel.borrow() {
+        return Err(JobError::Cancelled);
+    }
     let (language, context) = {
-        let state = inner.state.lock().map_err(|_| JobError::Worker)?;
+        let state = inner.async_lock().await.map_err(|_| JobError::Worker)?;
         (
             state.manifest.language.clone(),
             state.manifest.context.clone(),
         )
     };
-    let text = inner
-        .service
-        .transcribe(&audio.0, &language, &context)
-        .await
-        .map_err(|error| {
+    let text = tokio::select! {
+        biased;
+        _ = cancel.changed() => return Err(JobError::Cancelled),
+        result = inner.service.transcribe(&audio.0, &language, &context) => result.map_err(|error| {
             eprintln!("Legacy dictation ASR: {error}");
             JobError::Api(error.kind)
-        })?;
+        })?,
+    };
     drop(audio);
     let writer = inner.clone();
     tokio::task::spawn_blocking(move || {
@@ -451,7 +474,7 @@ async fn run<S: BatchBackend>(inner: Arc<Inner<S>>) {
             break;
         }
         {
-            let state = match inner.lock() {
+            let state = match inner.async_lock().await {
                 Ok(state) => state,
                 Err(error) => {
                     eprintln!("Legacy dictation pump: {error}");
@@ -492,7 +515,7 @@ async fn run<S: BatchBackend>(inner: Arc<Inner<S>>) {
                     Ok((index, outcome)) => {
                         running.remove(&index);
                         if let Err(error) = outcome {
-                            let mut state = match inner.lock() { Ok(state) => state, Err(_) => break };
+                            let mut state = match inner.async_lock().await { Ok(state) => state, Err(_) => break };
                             match error {
                                 JobError::Api(kind) => {
                                     let attempts = state.errors.get(&index).map_or(1, |old| old.attempts.saturating_add(1));
@@ -501,6 +524,7 @@ async fn run<S: BatchBackend>(inner: Arc<Inner<S>>) {
                                 }
                                 JobError::Storage(error) => { eprintln!("Legacy dictation storage: {error}"); state.storage_failed = true; }
                                 JobError::Worker => { eprintln!("Legacy dictation worker failed."); state.storage_failed = true; }
+                                JobError::Cancelled => {}
                             }
                             inner.publish(&state);
                         }
@@ -516,7 +540,8 @@ async fn run<S: BatchBackend>(inner: Arc<Inner<S>>) {
             _ = tick.tick() => {},
         }
     }
-    jobs.abort_all();
+    // Network waits cancel cooperatively; already-started journal I/O must join before ownership is released.
+    inner.cancel.send_replace(true);
     while let Some(result) = jobs.join_next().await {
         if let Err(error) = result {
             if !error.is_cancelled() {

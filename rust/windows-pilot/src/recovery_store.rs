@@ -23,6 +23,26 @@ struct RecoveryRoot {
     maximum_bytes: u64,
     _writer: File,
     active: Mutex<HashSet<String>>,
+    #[cfg(test)]
+    next_write_pause: Mutex<Option<Arc<FixtureWritePause>>>,
+}
+
+#[cfg(test)]
+struct FixtureWritePause {
+    entered: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    released: Mutex<bool>,
+    changed: std::sync::Condvar,
+}
+
+#[cfg(test)]
+pub(crate) struct FixtureWriteRelease(Arc<FixtureWritePause>);
+
+#[cfg(test)]
+impl Drop for FixtureWriteRelease {
+    fn drop(&mut self) {
+        *self.0.released.lock().unwrap() = true;
+        self.0.changed.notify_all();
+    }
 }
 
 #[derive(Clone)]
@@ -134,6 +154,8 @@ impl NativeRecoveryStore {
             maximum_bytes,
             _writer: writer,
             active: Mutex::new(HashSet::new()),
+            #[cfg(test)]
+            next_write_pause: Mutex::new(None),
         });
         roots.insert(root, Arc::downgrade(&shared));
         Ok(Self(shared))
@@ -187,6 +209,27 @@ impl NativeRecoveryStore {
     pub(crate) fn fixture_snapshot(&self, id: &str) -> Result<RecoveryManifest, NativeError> {
         let _active = self.0.lock()?;
         self.0.load(id, true)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pause_next_fixture_write(
+        &self,
+    ) -> (FixtureWriteRelease, tokio::sync::oneshot::Receiver<()>) {
+        let (entered, observed) = tokio::sync::oneshot::channel();
+        let pause = Arc::new(FixtureWritePause {
+            entered: Mutex::new(Some(entered)),
+            released: Mutex::new(false),
+            changed: std::sync::Condvar::new(),
+        });
+        assert!(
+            self.0
+                .next_write_pause
+                .lock()
+                .unwrap()
+                .replace(pause.clone())
+                .is_none()
+        );
+        (FixtureWriteRelease(pause), observed)
     }
 
     pub fn delete_idle(&self, id: &str) -> Result<(), NativeError> {
@@ -339,6 +382,19 @@ impl RecoveryRoot {
     }
 
     fn write_encrypted(&self, path: &Path, plain: &[u8], limit: usize) -> Result<(), NativeError> {
+        #[cfg(test)]
+        {
+            let pause = self.next_write_pause.lock().unwrap().take();
+            if let Some(pause) = pause {
+                if let Some(entered) = pause.entered.lock().unwrap().take() {
+                    let _ = entered.send(());
+                }
+                let mut released = pause.released.lock().unwrap();
+                while !*released {
+                    released = pause.changed.wait(released).unwrap();
+                }
+            }
+        }
         if plain.len() > limit {
             return Err(NativeError::Verification(
                 "Recovery plaintext exceeds bounds.",

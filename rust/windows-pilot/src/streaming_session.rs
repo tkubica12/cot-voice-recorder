@@ -359,6 +359,21 @@ fn make_progress(state: &State) -> DictationProgress {
 }
 
 impl<S: StreamingBackend> Inner<S> {
+    async fn async_lock(&self) -> Result<MutexGuard<'_, State>, Failure> {
+        loop {
+            match self.state.try_lock() {
+                Ok(state) => return Ok(state),
+                Err(std::sync::TryLockError::Poisoned(_)) => {
+                    return Err(Failure::Storage(NativeError::Verification(
+                        "Streaming state lock is poisoned.",
+                    )));
+                }
+                Err(std::sync::TryLockError::WouldBlock) => {}
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    }
+
     fn lock(&self) -> Result<MutexGuard<'_, State>, Failure> {
         self.state.lock().map_err(|_| {
             Failure::Storage(NativeError::Verification(
@@ -537,7 +552,7 @@ async fn send_audio<S: StreamingBackend>(
     let began = tokio::time::Instant::now();
     loop {
         let audio = {
-            let mut state = inner.lock()?;
+            let mut state = inner.async_lock().await?;
             inner.read_range(&mut state, position, 640)?
         };
         if !audio.0.is_empty() {
@@ -558,7 +573,7 @@ async fn send_audio<S: StreamingBackend>(
             position += audio.0.len() as u64;
             if quiet >= 12_800 && position - committed >= 64_000 {
                 {
-                    let mut state = inner.lock()?;
+                    let mut state = inner.async_lock().await?;
                     if !state.manifest.capture_complete {
                         inner.checkpoint(&mut state, false)?;
                     }
@@ -573,7 +588,7 @@ async fn send_audio<S: StreamingBackend>(
             }
         } else {
             let complete = {
-                let state = inner.lock()?;
+                let state = inner.async_lock().await?;
                 state.manifest.capture_complete && position == state.captured
             };
             if complete {
@@ -586,7 +601,7 @@ async fn send_audio<S: StreamingBackend>(
         }
     }
     {
-        let mut state = inner.lock()?;
+        let mut state = inner.async_lock().await?;
         if !state.manifest.capture_complete {
             inner.checkpoint(&mut state, false)?;
         }
@@ -609,7 +624,7 @@ async fn receive_text<S: StreamingBackend>(
             .await
             .map_err(|error| Failure::Api(error.kind))?;
         let delta = matches!(&event, DictationMessage::Delta { .. });
-        let mut state = inner.lock()?;
+        let mut state = inner.async_lock().await?;
         state.service_error = None;
         match event {
             DictationMessage::Confirmed {
@@ -677,7 +692,7 @@ async fn stream<S: StreamingBackend>(
     cancel: &mut watch::Receiver<bool>,
 ) -> Result<(), Failure> {
     let (language, context, start) = {
-        let mut state = inner.lock()?;
+        let mut state = inner.async_lock().await?;
         state.hypotheses.clear();
         state.cache = None;
         (
@@ -734,7 +749,7 @@ fn join_result(result: Result<Result<(), Failure>, tokio::task::JoinError>) -> R
 
 async fn fallback<S: StreamingBackend>(inner: Arc<Inner<S>>) -> Result<(), Failure> {
     let (cursor, context, captured, language, binding) = {
-        let state = inner.lock()?;
+        let state = inner.async_lock().await?;
         (
             state.manifest.confirmed_bytes,
             AudioBuffer(state.manifest.tail.clone()),
@@ -759,7 +774,7 @@ async fn fallback<S: StreamingBackend>(inner: Arc<Inner<S>>) -> Result<(), Failu
                 .transcribe(&audio.0, &language, &binding)
                 .await;
             let text = text.map_err(|error| Failure::Api(error.kind))?;
-            let mut state = inner.lock()?;
+            let mut state = inner.async_lock().await?;
             let full = append_preserving_prefix(
                 &state.manifest.confirmed_text,
                 &text,
@@ -779,7 +794,7 @@ async fn fallback<S: StreamingBackend>(inner: Arc<Inner<S>>) -> Result<(), Failu
             break;
         }
         let audio = {
-            let mut state = inner.lock()?;
+            let mut state = inner.async_lock().await?;
             inner.read_range(&mut state, position, 64_000)?
         };
         if audio.0.is_empty() {
@@ -804,7 +819,7 @@ async fn pump<S: StreamingBackend>(inner: Arc<Inner<S>>) {
         if *cancel.borrow() {
             return;
         }
-        let complete = match inner.lock() {
+        let complete = match inner.async_lock().await {
             Ok(state) => state.manifest.capture_complete,
             Err(error) => {
                 eprintln!("Streaming state: {error}");
@@ -821,7 +836,7 @@ async fn pump<S: StreamingBackend>(inner: Arc<Inner<S>>) {
             }
             tokio::select! { result = fallback(inner.clone()) => result, _ = cancel.changed() => return }
         } else {
-            let done = match inner.lock() {
+            let done = match inner.async_lock().await {
                 Ok(state) => {
                     state.manifest.capture_complete
                         && state.manifest.confirmed_bytes == state.captured
@@ -845,7 +860,7 @@ async fn pump<S: StreamingBackend>(inner: Arc<Inner<S>>) {
                     Failure::Api(kind) => Some(kind),
                     _ => None,
                 };
-                if let Ok(mut state) = inner.lock() {
+                if let Ok(mut state) = inner.async_lock().await {
                     state.hypotheses.clear();
                     state.service_error = kind;
                     state.storage_failed |= kind.is_none();
