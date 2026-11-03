@@ -115,6 +115,34 @@ ten-minute lifetime. Its fresh keyboard marker must be exactly
 expired human case or turn automated control/focus evidence into screen-reader
 or human-accessibility acceptance.
 
+### Current controller wall-clock longevity, without physical or GUI ports
+
+The separately ignored
+`dictation::controller_tests::realtime_synthetic_controller_hour` drives the
+current `DictationHost::run`, real streaming engine, DPAPI Recovery, atomic History,
+polisher and periodic audit outbox through private synthetic ports on the same
+two-thread Tokio runtime shape as the native client. It uses ordered 16-kHz PCM
+at actual 20-ms intervals, checks every sample, durable confirmation cursors and
+the real 50-minute stream rotation. Only the synthetic UI handoff is acknowledged;
+no window, tray, renderer, hotkey, microphone, clipboard, Google or real backend
+transport is constructed.
+
+`scripts\measure_synthetic_capture.py --controller` requires an explicitly frozen
+`VoicePromptNativeControllerFixture.exe`. It samples 301 warm-idle observations,
+3601 capture observations and 301 post-idle observations for the full3600s case.
+The same controller and outbox stay alive across measured pre/post idle. Synthetic
+History and Recovery return to the declared empty baseline only after durable
+History, capture stop and outbox acknowledgment are proved. Raw process samples,
+sanitized progress/logs and failure state are retained; the final report is
+published only after owned-process/control-directory cleanup. The original
+worst-post-idle-growth limit remains10MiB. A short smoke is explicitly incomplete,
+not an hour or full-GUI acceptance.
+
+The hidden Settings lifecycle also queries real Win32 forward/backward tab order
+for all ten controls at both viewport sizes, checking disabled Save is skipped.
+This emits no keyboard/input or activation and does not replace the blocked CUI
+dispatcher or screen-reader/human acceptance.
+
 ```powershell
 # Use an explicitly chosen isolated directory; do not use installed app state for tests.
 rust\target\release\VoicePromptRustPilot.exe --instance-key isolated-client `

@@ -183,6 +183,12 @@ impl NativeRecoveryStore {
         self.0.list()
     }
 
+    #[cfg(test)]
+    pub(crate) fn fixture_snapshot(&self, id: &str) -> Result<RecoveryManifest, NativeError> {
+        let _active = self.0.lock()?;
+        self.0.load(id, true)
+    }
+
     pub fn delete_idle(&self, id: &str) -> Result<(), NativeError> {
         let active = self.0.lock()?;
         if active.contains(id) {

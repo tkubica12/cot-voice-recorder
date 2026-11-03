@@ -1,4 +1,4 @@
-"""Owned native-engine synthetic PCM longevity, not full-client/device acceptance."""
+"""Owned engine or current-controller synthetic PCM longevity, never physical/GUI acceptance."""
 
 from __future__ import annotations
 
@@ -20,6 +20,8 @@ from typing import BinaryIO
 ROOT = Path(__file__).resolve().parents[1]
 SCOPE = "native-streaming-engine-realtime-synthetic-pcm"
 TEST = "streaming_session::longevity_tests::realtime_synthetic_hour"
+CONTROLLER_SCOPE = "native-controller-realtime-synthetic-pcm"
+CONTROLLER_TEST = "dictation::controller_tests::realtime_synthetic_controller_hour"
 
 
 def create(path: Path, data: bytes) -> None:
@@ -43,7 +45,9 @@ def wait(path: Path, process: subprocess.Popen, seconds: int) -> dict:
     began = time.monotonic()
     while not path.exists():
         if process.poll() is not None:
-            raise RuntimeError(f"Synthetic engine exited before {path.name}: {process.returncode}")
+            raise RuntimeError(
+                f"Synthetic engine exited before {path.name}: {process.returncode}"
+            )
         if time.monotonic() - began > seconds:
             raise TimeoutError(f"Synthetic engine did not publish {path.name}.")
         time.sleep(0.01)
@@ -51,7 +55,12 @@ def wait(path: Path, process: subprocess.Popen, seconds: int) -> dict:
 
 
 def sample(
-    process: subprocess.Popen, binary_hash: str, output: Path, count: int, revision: str
+    process: subprocess.Popen,
+    binary_hash: str,
+    output: Path,
+    count: int,
+    revision: str,
+    scope: str = SCOPE,
 ) -> dict:
     subprocess.run(
         [
@@ -63,7 +72,7 @@ def sample(
             "-ProcessId",
             str(process.pid),
             "-Scenario",
-            SCOPE,
+            scope,
             "-SampleCount",
             str(count),
             "-IntervalMilliseconds",
@@ -79,7 +88,7 @@ def sample(
     report = json.loads(output.read_text(encoding="utf-8-sig"))
     if (
         report["status"] != "complete"
-        or report["scenario"] != SCOPE
+        or report["scenario"] != scope
         or report["source_revision"] != revision
         or report["process"]["id"] != process.pid
         or report["process"]["binary_sha256"].lower() != binary_hash
@@ -94,12 +103,28 @@ def sample(
 
 
 def run(
-    binary: Path, directory: Path, revision: str, audio_seconds: int, idle_samples: int
+    binary: Path,
+    directory: Path,
+    revision: str,
+    audio_seconds: int,
+    idle_samples: int,
+    controller: bool = False,
 ) -> None:
-    if os.name != "nt" or binary.name != "VoicePromptNativeCaptureFixture.exe":
-        raise ValueError("An explicitly named frozen Windows libtest fixture is required.")
+    scope = CONTROLLER_SCOPE if controller else SCOPE
+    test = CONTROLLER_TEST if controller else TEST
+    expected_binary = (
+        "VoicePromptNativeControllerFixture.exe"
+        if controller
+        else "VoicePromptNativeCaptureFixture.exe"
+    )
+    if os.name != "nt" or binary.name != expected_binary:
+        raise ValueError(
+            "An explicitly named frozen Windows libtest fixture is required."
+        )
     if not 2 <= audio_seconds <= 3600 or not 2 <= idle_samples <= 301:
-        raise ValueError("Synthetic PCM and idle sampling must use bounded explicit counts.")
+        raise ValueError(
+            "Synthetic PCM and idle sampling must use bounded explicit counts."
+        )
     directory = directory.resolve(strict=True)
     if any(directory.iterdir()):
         raise ValueError("A new empty evidence directory is required.")
@@ -122,7 +147,7 @@ def run(
             control.joinpath("capture-options.json"),
             json.dumps(
                 {
-                    "scope": SCOPE,
+                    "scope": scope,
                     "nonce": nonce,
                     "audio_seconds": audio_seconds,
                 }
@@ -131,7 +156,14 @@ def run(
         environment = dict(os.environ)
         environment["VOICEPROMPT_SYNTHETIC_HOUR_DIRECTORY"] = str(control)
         process = subprocess.Popen(
-            [str(binary), TEST, "--exact", "--ignored", "--nocapture", "--test-threads=1"],
+            [
+                str(binary),
+                test,
+                "--exact",
+                "--ignored",
+                "--nocapture",
+                "--test-threads=1",
+            ],
             env=environment,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -158,24 +190,51 @@ def run(
 
         try:
             ready = wait(control.joinpath("ready.json"), process, 15)
-            if ready != {
-                "scope": SCOPE,
+            expected_ready = {
+                "scope": scope,
                 "pid": process.pid,
                 "physical_ports": False,
                 "network_or_auth": False,
                 "full_client_profile": False,
-            }:
-                raise RuntimeError("Engine fixture readiness did not prove the expected scope.")
-            print(f"Sampling warm engine idle, owned PID {process.pid}", flush=True)
+            }
+            if controller:
+                expected_ready.update(
+                    {
+                        "current_controller": True,
+                        "renderer": False,
+                        "main_ui_or_tray": False,
+                        "real_auth_or_pubsub": False,
+                        "polisher_and_outbox": True,
+                    }
+                )
+            if ready != expected_ready:
+                raise RuntimeError(
+                    "Engine fixture readiness did not prove the expected scope."
+                )
+            print(
+                f"Sampling warm {'controller' if controller else 'engine'} idle, owned PID {process.pid}",
+                flush=True,
+            )
             before = sample(
-                process, digest, directory.joinpath("before.json"), idle_samples, revision
+                process,
+                digest,
+                directory.joinpath("before.json"),
+                idle_samples,
+                revision,
+                scope,
             )
             create(control.joinpath("begin"), nonce.encode())
             print(
-                f"Sampling actual {audio_seconds}s synthetic capture; no physical input", flush=True
+                f"Sampling actual {audio_seconds}s synthetic capture; no physical input",
+                flush=True,
             )
             during = sample(
-                process, digest, directory.joinpath("capture.json"), audio_seconds + 1, revision
+                process,
+                digest,
+                directory.joinpath("capture.json"),
+                audio_seconds + 1,
+                revision,
+                scope,
             )
             completed = wait(control.joinpath("idle-ready.json"), process, 30)
             if (
@@ -191,12 +250,39 @@ def run(
                 raise RuntimeError(
                     "Exact PCM, durable completion or real-time duration was not proved."
                 )
+            if controller and (
+                not completed.get("current_controller")
+                or completed.get("renderer") is not False
+                or not completed.get("history_saved_before_handoff")
+                or not completed.get("capture_joined")
+                or not completed.get("polisher_exercised")
+                or not completed.get("outbox_acknowledged")
+                or not completed.get("confirmed_cursors")
+                or completed["confirmed_cursors"][-1] != audio_seconds * 32000
+                or any(
+                    left >= right
+                    for left, right in zip(
+                        completed["confirmed_cursors"],
+                        completed["confirmed_cursors"][1:],
+                    )
+                )
+            ):
+                raise RuntimeError(
+                    "Current controller, outbox or ordered confirmation proof is incomplete."
+                )
             print(
-                "Sampling the same warmed empty-recovery idle after joined engine shutdown",
+                "Sampling the same current-controller idle after capture join/outbox acknowledgment"
+                if controller
+                else "Sampling the same warmed empty-recovery idle after joined engine shutdown",
                 flush=True,
             )
             after = sample(
-                process, digest, directory.joinpath("after.json"), idle_samples, revision
+                process,
+                digest,
+                directory.joinpath("after.json"),
+                idle_samples,
+                revision,
+                scope,
             )
             create(control.joinpath("finish"), nonce.encode())
             process.wait(timeout=15)
@@ -206,10 +292,39 @@ def run(
                     f"Synthetic engine failed: {process.returncode}; {out!r} {error!r}"
                 )
             if b"1 passed" not in out or b"0 ignored" not in out:
-                raise RuntimeError("The exact ignored fixture test did not actually execute.")
+                raise RuntimeError(
+                    "The exact ignored fixture test did not actually execute."
+                )
             if hashlib.sha256(binary.read_bytes()).hexdigest() != digest:
-                raise RuntimeError("Frozen native fixture changed during the measurement.")
-            baseline = statistics.mean(row["private_bytes"] for row in before["samples"])
+                raise RuntimeError(
+                    "Frozen native fixture changed during the measurement."
+                )
+            if controller:
+                exit_proof = json.loads(
+                    control.joinpath("normal-exit.json").read_bytes()
+                )
+                if (
+                    not exit_proof.get("current_controller")
+                    or exit_proof.get("physical_ports") is not False
+                ):
+                    raise RuntimeError(
+                        "Current controller did not finish its normal owned shutdown."
+                    )
+            for name, data in (("stdout.txt", out), ("stderr.txt", error)):
+                create(directory.joinpath(name), data)
+            progress = {
+                path.name: json.loads(path.read_bytes())
+                for path in control.glob("*.json")
+                if path.name != "capture-options.json"
+                and path.name != "migration-fixture.json"
+            }
+            create(
+                directory.joinpath("progress-evidence.json"),
+                json.dumps(progress, indent=2).encode(),
+            )
+            baseline = statistics.mean(
+                row["private_bytes"] for row in before["samples"]
+            )
             final = statistics.mean(row["private_bytes"] for row in after["samples"])
             growth = final - baseline
             maximum_growth = max(
@@ -218,7 +333,7 @@ def run(
             result = {
                 "status": "complete",
                 "schema_version": 1,
-                "scope": SCOPE,
+                "scope": scope,
                 "source_revision": revision,
                 "binary_sha256": digest,
                 "pid": process.pid,
@@ -226,6 +341,8 @@ def run(
                 "whole_migration_acceptance": False,
                 "physical_ports_or_user_data": False,
                 "network_or_auth": False,
+                "current_controller": controller,
+                "renderer": False,
                 "audio_seconds": audio_seconds,
                 "idle_sample_count": idle_samples,
                 "actual_capture": completed,
@@ -234,14 +351,18 @@ def run(
                 "private_growth_bytes": growth,
                 "maximum_idle_growth_bytes": maximum_growth,
                 "sufficient_for_synthetic_engine_hour": audio_seconds == 3600
-                and idle_samples == 301,
+                and idle_samples == 301
+                and not controller,
+                "sufficient_for_synthetic_controller_hour": audio_seconds == 3600
+                and idle_samples == 301
+                and controller,
                 "observed_growth_at_most_10_mib": maximum_growth <= 10 * 1024 * 1024,
                 "peak_capture_private_bytes": max(
                     row["private_bytes"] for row in during["samples"]
                 ),
                 "raw_reports": ["before.json", "capture.json", "after.json"],
                 "exclusions": [
-                    "full GUI/controller",
+                    "native GUI/renderer/tray" if controller else "full GUI/controller",
                     "microphone",
                     "clipboard/paste",
                     "auth",
@@ -249,20 +370,6 @@ def run(
                     "signed-in client acceptance",
                 ],
             }
-            create(
-                directory.joinpath("synthetic-engine-hour.json"),
-                json.dumps(result, indent=2).encode(),
-            )
-            print(
-                json.dumps(
-                    {
-                        key: value
-                        for key, value in result.items()
-                        if key not in {"actual_capture", "exclusions"}
-                    }
-                ),
-                flush=True,
-            )
         except BaseException as error:
             if process.poll() is None:
                 process.kill()
@@ -288,7 +395,7 @@ def run(
                 json.dumps(
                     {
                         "status": "failed",
-                        "scope": SCOPE,
+                        "scope": scope,
                         "source_revision": revision,
                         "pid": process.pid,
                         "binary_sha256": digest,
@@ -301,7 +408,9 @@ def run(
                     indent=2,
                 ).encode(),
             )
-            error.add_note(f"Native fixture stderr: {failure.decode(errors='replace')[-4096:]}")
+            error.add_note(
+                f"Native fixture stderr: {failure.decode(errors='replace')[-4096:]}"
+            )
             raise
         finally:
             if process.poll() is None:
@@ -310,6 +419,34 @@ def run(
             logs()
             process.stdout.close()
             process.stderr.close()
+    if control.exists():
+        raise RuntimeError("Owned synthetic controller directory was not removed.")
+    result["owned_control_directory_removed"] = True
+    result["acceptance_status"] = (
+        "incomplete"
+        if audio_seconds != 3600 or idle_samples != 301
+        else "pass"
+        if result["observed_growth_at_most_10_mib"]
+        else "fail"
+    )
+    create(
+        directory.joinpath(
+            "synthetic-controller-hour.json"
+            if controller
+            else "synthetic-engine-hour.json"
+        ),
+        json.dumps(result, indent=2).encode(),
+    )
+    print(
+        json.dumps(
+            {
+                key: value
+                for key, value in result.items()
+                if key not in {"actual_capture", "exclusions"}
+            }
+        ),
+        flush=True,
+    )
 
 
 if __name__ == "__main__":
@@ -319,6 +456,7 @@ if __name__ == "__main__":
     parser.add_argument("--source-revision", required=True)
     parser.add_argument("--audio-seconds", type=int, default=3600)
     parser.add_argument("--idle-samples", type=int, default=301)
+    parser.add_argument("--controller", action="store_true")
     args = parser.parse_args()
     run(
         args.oracle.resolve(strict=True),
@@ -326,4 +464,5 @@ if __name__ == "__main__":
         args.source_revision,
         args.audio_seconds,
         args.idle_samples,
+        args.controller,
     )

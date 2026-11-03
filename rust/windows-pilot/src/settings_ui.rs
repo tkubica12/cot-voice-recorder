@@ -856,6 +856,23 @@ pub(crate) fn self_test(owner: HWND, settings: &AppSettings) -> Result<(), Nativ
             ));
         }
         ui.scroll_to(0)?;
+        for (index, field) in ui.fields.into_iter().enumerate() {
+            for previous in [false, true] {
+                let expected = if previous {
+                    (index + ui.fields.len() - 1) % ui.fields.len()
+                } else {
+                    (index + 1) % ui.fields.len()
+                };
+                let next = native("Inspect native Settings tab navigation", unsafe {
+                    GetNextDlgTabItem(ui.window, Some(field), previous)
+                })?;
+                if next != ui.fields[expected] {
+                    return Err(NativeError::Verification(
+                        "Settings tab order skipped a field or included disabled Save.",
+                    ));
+                }
+            }
+        }
         if ui.values()?.encode()? != settings.encode()? {
             return Err(NativeError::Verification(
                 "Settings scrolling changed its fields.",

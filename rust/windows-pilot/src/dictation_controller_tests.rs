@@ -3,6 +3,7 @@ use crate::dictation_ports::DictationPorts;
 use crate::microphone::CaptureError;
 use crate::recovery_store::tests::TemporaryRoot;
 use crate::{AudioSender, BatchBackend, EventReceiver};
+use std::path::PathBuf;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, AtomicUsize};
 use tokio::sync::Notify;
@@ -38,6 +39,8 @@ struct BackendState {
     count_only: AtomicBool,
     stream_bytes: AtomicU64,
     confirmed_to: AtomicU64,
+    ordered_samples: AtomicBool,
+    confirmed_cursors: Mutex<Vec<u64>>,
     changed: Notify,
 }
 
@@ -94,9 +97,19 @@ impl AudioSender for StreamSender {
             .stream_bytes
             .fetch_add(pcm.len() as u64, Ordering::AcqRel);
         if self.backend.0.count_only.load(Ordering::Acquire) {
-            let pattern = [12i16.to_le_bytes(), (-12i16).to_le_bytes()].concat();
-            for (index, byte) in pcm.iter().enumerate() {
-                assert_eq!(*byte, pattern[((start + index as u64) % 4) as usize]);
+            if self.backend.0.ordered_samples.load(Ordering::Acquire) {
+                for (index, bytes) in pcm.chunks_exact(2).enumerate() {
+                    assert_eq!(
+                        i16::from_le_bytes([bytes[0], bytes[1]]),
+                        ((start / 2 + index as u64) % 97) as i16 - 48,
+                        "Controller PCM was duplicated, reordered or replaced."
+                    );
+                }
+            } else {
+                let pattern = [12i16.to_le_bytes(), (-12i16).to_le_bytes()].concat();
+                for (index, byte) in pcm.iter().enumerate() {
+                    assert_eq!(*byte, pattern[((start + index as u64) % 4) as usize]);
+                }
             }
         } else {
             self.backend.0.stream.lock().unwrap().extend_from_slice(pcm);
@@ -118,6 +131,7 @@ impl AudioSender for StreamSender {
             let end = self.end.load(Ordering::Acquire);
             let previous = self.backend.0.confirmed_to.swap(end, Ordering::AcqRel);
             if end > previous {
+                self.backend.0.confirmed_cursors.lock().unwrap().push(end);
                 self.events
                     .send(Ok(DictationMessage::Confirmed {
                         item_id: "synthetic".into(),
@@ -185,6 +199,9 @@ impl StreamingBackend for Backend {
     ) -> Result<(StreamSender, StreamReceiver), ApiError> {
         assert_eq!(language, "cs");
         assert_eq!(context, format!("{URL}\n{EMAIL}"));
+        if self.0.ordered_samples.load(Ordering::Acquire) {
+            assert_eq!(start, self.0.stream_bytes.load(Ordering::Acquire));
+        }
         self.0.starts.lock().unwrap().push(start);
         let (events, receiver) = mpsc::channel(16);
         Ok((
@@ -345,14 +362,24 @@ struct Harness {
     history: Arc<NativeHistoryStore>,
     recovery: NativeRecoveryStore,
     policy: Arc<DeliveryPolicy>,
-    directory: TemporaryRoot,
+    root: PathBuf,
+    _directory: Option<TemporaryRoot>,
 }
 
 impl Harness {
     fn new(streaming: bool, refinement: bool) -> Self {
         let directory = TemporaryRoot::new();
-        let recovery = open_recovery(directory.0.join("recovery")).unwrap();
-        let history = Arc::new(NativeHistoryStore::new(directory.0.join("history.json")).unwrap());
+        Self::new_at(directory.0.clone(), streaming, refinement, Some(directory))
+    }
+
+    fn new_at(
+        root: PathBuf,
+        streaming: bool,
+        refinement: bool,
+        directory: Option<TemporaryRoot>,
+    ) -> Self {
+        let recovery = open_recovery(root.join("recovery")).unwrap();
+        let history = Arc::new(NativeHistoryStore::new(root.join("history.json")).unwrap());
         let ports = Ports::new();
         let (commands, command_receiver) = mpsc::channel(8);
         let (shutdown, stopping) = watch::channel(false);
@@ -393,7 +420,8 @@ impl Harness {
             history,
             recovery,
             policy,
-            directory,
+            root,
+            _directory: directory,
         }
     }
 
@@ -532,6 +560,327 @@ fn volume_pcm(samples: usize) -> Vec<u8> {
         .collect()
 }
 
+const HOUR_SCOPE: &str = "native-controller-realtime-synthetic-pcm";
+
+fn hour_publish(root: &std::path::Path, name: &str, value: serde_json::Value) {
+    crate::platform::atomic_write(
+        &root.join(name),
+        &serde_json::to_vec(&value).unwrap(),
+        crate::platform::WriteMode::CreateNew,
+    )
+    .unwrap();
+}
+
+async fn hour_control(root: &std::path::Path, name: &str, nonce: &str) {
+    tokio::time::timeout(Duration::from_secs(600), async {
+        loop {
+            let path = root.join(name);
+            crate::platform::guard_recovery_path(&path).unwrap();
+            if path.try_exists().unwrap() {
+                assert_eq!(std::fs::read_to_string(path).unwrap(), nonce);
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("Synthetic controller-hour observer did not respond.");
+}
+
+struct HourUpload(Arc<AtomicUsize>);
+impl crate::audit_outbox::AuditUploader for HourUpload {
+    async fn context(&self) -> Option<String> {
+        Some(format!("{URL}\n{EMAIL}"))
+    }
+
+    async fn upload(
+        &self,
+        state: &voiceprompt_client_protocol::recovery::RecoveryManifest,
+    ) -> Result<(), ApiError> {
+        assert_eq!(state.context, format!("{URL}\n{EMAIL}"));
+        assert!(state.capture_complete);
+        assert_eq!(state.captured_bytes, state.confirmed_bytes);
+        assert!(state.audit.is_some());
+        self.0.fetch_add(1, Ordering::AcqRel);
+        Ok(())
+    }
+}
+
+async fn run_controller_capture(
+    harness: &mut Harness,
+    seconds: u64,
+    diagnostics: Option<&std::path::Path>,
+) -> serde_json::Value {
+    harness
+        .ports
+        .0
+        .backend
+        .0
+        .count_only
+        .store(true, Ordering::Release);
+    harness
+        .ports
+        .0
+        .backend
+        .0
+        .ordered_samples
+        .store(true, Ordering::Release);
+    harness.begin(DictationMode::Toggle).await;
+    let started = tokio::time::Instant::now();
+    let mut timer = tokio::time::interval(Duration::from_millis(20));
+    timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Burst);
+    let mut maximum_lateness = Duration::ZERO;
+    let mut frame = [0; 640];
+    for index in 0..seconds * 50 {
+        timer.tick().await;
+        let due = started + Duration::from_millis(index * 20);
+        maximum_lateness =
+            maximum_lateness.max(tokio::time::Instant::now().saturating_duration_since(due));
+        for (offset, bytes) in frame.chunks_exact_mut(2).enumerate() {
+            let sample = ((index * 320 + offset as u64) % 97) as i16 - 48;
+            bytes.copy_from_slice(&sample.to_le_bytes());
+        }
+        harness.ports.feed(&frame);
+        if (index + 1) % 3000 == 0 {
+            if let Some(root) = diagnostics {
+                let rows = harness.recovery.list().unwrap();
+                assert_eq!(rows.len(), 1);
+                let saved = harness.recovery.fixture_snapshot(&rows[0].id).unwrap();
+                hour_publish(
+                    root,
+                    &format!("progress-{:04}.json", (index + 1) / 50),
+                    serde_json::json!({
+                        "phase":"capturing","elapsed_seconds":started.elapsed().as_secs_f64(),
+                        "captured_bytes":(index+1)*640,"saved_bytes":saved.captured_bytes,
+                        "confirmed_bytes":saved.confirmed_bytes,
+                        "provider_bytes":harness.ports.0.backend.0.stream_bytes.load(Ordering::Acquire),
+                        "maximum_lateness_ms":maximum_lateness.as_secs_f64()*1000.0
+                    }),
+                );
+            }
+        }
+    }
+    // The first timer tick is immediate; wait through the final frame's full duration.
+    tokio::time::sleep_until(started + Duration::from_secs(seconds)).await;
+    frame.fill(0);
+    let elapsed = started.elapsed().as_secs_f64();
+    if let Some(root) = diagnostics {
+        hour_publish(
+            root,
+            "producer-complete.json",
+            serde_json::json!({
+                "phase":"producer-complete","elapsed_seconds":elapsed,
+                "captured_bytes":seconds*32000
+            }),
+        );
+    }
+    harness.stop().await;
+    let (text, cancelled, reply) = harness.delivery().await;
+    assert_eq!(harness.entries()[0].body, text);
+    assert!(!cancelled.load(Ordering::Acquire));
+    assert!(harness.policy.dictation_busy());
+    let rows = harness.recovery.list().unwrap();
+    assert_eq!(rows.len(), 1);
+    let state = harness.recovery.fixture_snapshot(&rows[0].id).unwrap();
+    let expected = seconds * 32000;
+    assert_eq!(state.captured_bytes, expected);
+    assert_eq!(state.confirmed_bytes, expected);
+    assert!(state.capture_complete && state.audit.is_some());
+    assert_eq!(
+        harness
+            .ports
+            .0
+            .backend
+            .0
+            .stream_bytes
+            .load(Ordering::Acquire),
+        expected
+    );
+    assert!(harness.ports.0.backend.0.batches.lock().unwrap().is_empty());
+    let starts = harness.ports.0.backend.0.starts.lock().unwrap().clone();
+    let cursors = harness
+        .ports
+        .0
+        .backend
+        .0
+        .confirmed_cursors
+        .lock()
+        .unwrap()
+        .clone();
+    assert_eq!(starts[0], 0);
+    assert!(cursors.windows(2).all(|pair| pair[0] < pair[1]));
+    assert_eq!(cursors.last().copied(), Some(expected));
+    if seconds > 3000 {
+        assert!(
+            starts.len() >= 2,
+            "Current orchestration never exercised real50min rotation."
+        );
+    }
+    assert_eq!(harness.ports.0.opened.load(Ordering::Acquire), 1);
+    assert_eq!(harness.ports.0.stopped.load(Ordering::Acquire), 1);
+    assert!(harness.ports.0.refiner.calls.load(Ordering::Acquire) > 0);
+    reply.send(DeliveryResult::CopiedOnly).unwrap();
+    harness.stage(DictationStage::PasteSkipped).await;
+    harness.idle().await;
+    serde_json::json!({
+        "audio_seconds":seconds,"actual_capture_seconds":elapsed,
+        "captured_bytes":expected,"confirmed_bytes":expected,
+        "verified_provider_bytes":expected,"stream_starts":starts,
+        "confirmed_cursors":cursors,"maximum_producer_lateness_ms":maximum_lateness.as_secs_f64()*1000.0,
+        "history_saved_before_handoff":true,"capture_joined":true,"polisher_exercised":true
+    })
+}
+
+struct HourOutbox {
+    engine: Arc<crate::audit_outbox::AuditOutbox<HourUpload>>,
+    uploads: Arc<AtomicUsize>,
+    stop: watch::Sender<bool>,
+    worker: tokio::task::JoinHandle<()>,
+}
+
+impl HourOutbox {
+    fn start(harness: &Harness) -> Self {
+        let uploads = Arc::new(AtomicUsize::new(0));
+        let engine = Arc::new(crate::audit_outbox::AuditOutbox::new(
+            harness.recovery.clone(),
+            harness.history.clone(),
+            Arc::new(HourUpload(uploads.clone())),
+        ));
+        let (stop, mut stopping) = watch::channel(false);
+        let policy = harness.policy.clone();
+        let background = engine.clone();
+        let worker = tokio::spawn(async move {
+            let mut timer = tokio::time::interval(Duration::from_secs(30));
+            loop {
+                tokio::select! {
+                    _ = stopping.changed() => return,
+                    _ = timer.tick() => {
+                        let result = background.drain(&policy, time::OffsetDateTime::now_utc()).await.unwrap();
+                        assert_eq!(result.failed, 0);
+                    }
+                }
+            }
+        });
+        Self {
+            engine,
+            uploads,
+            stop,
+            worker,
+        }
+    }
+
+    async fn close(self) {
+        self.stop.send_replace(true);
+        self.worker.await.unwrap();
+    }
+}
+
+async fn hour_cleanup(harness: &mut Harness, outbox: &HourOutbox) {
+    let result = outbox
+        .engine
+        .drain(&harness.policy, time::OffsetDateTime::now_utc())
+        .await
+        .unwrap();
+    assert_eq!(result.failed, 0);
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while outbox.uploads.load(Ordering::Acquire) == 0
+            || !harness.recovery.list().unwrap().is_empty()
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(outbox.uploads.load(Ordering::Acquire), 1);
+    assert!(harness.recovery.list().unwrap().is_empty());
+    assert_eq!(harness.entries().len(), 1);
+    assert!(
+        harness.ui.try_recv().is_err(),
+        "Audit must not queue automatic paste."
+    );
+    harness.history.clear().unwrap();
+    assert!(harness.entries().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "One marked-root current controller wall-clock capture; physical, GUI, account and real network ports absent."]
+async fn realtime_synthetic_controller_hour() {
+    let root = std::env::var_os("VOICEPROMPT_SYNTHETIC_HOUR_DIRECTORY")
+        .map(PathBuf::from)
+        .expect("An explicit synthetic observer directory is required.");
+    crate::fixtures::validate(&root, None).unwrap();
+    let options: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(root.join("capture-options.json")).unwrap()).unwrap();
+    assert_eq!(options["scope"], HOUR_SCOPE);
+    let seconds = options["audio_seconds"].as_u64().unwrap();
+    assert!((2..=3600).contains(&seconds));
+    let nonce = options["nonce"].as_str().unwrap();
+    let expected_names = ["capture-options.json", "migration-fixture.json"];
+    let mut names: Vec<_> = std::fs::read_dir(&root)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    assert_eq!(names, expected_names);
+    let state_root = root.join("controller-state");
+    let mut warm = Harness::new_at(state_root.clone(), true, true, None);
+    let warm_outbox = HourOutbox::start(&warm);
+    run_controller_capture(&mut warm, 2, None).await;
+    hour_cleanup(&mut warm, &warm_outbox).await;
+    warm.close().await;
+    warm_outbox.close().await;
+    drop(warm);
+    let mut harness = Harness::new_at(state_root.clone(), true, true, None);
+    let outbox = HourOutbox::start(&harness);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert!(!harness.policy.dictation_busy());
+    assert!(harness.entries().is_empty() && harness.recovery.list().unwrap().is_empty());
+    hour_publish(
+        &root,
+        "ready.json",
+        serde_json::json!({
+            "scope":HOUR_SCOPE,"pid":std::process::id(),"physical_ports":false,
+            "network_or_auth":false,"full_client_profile":false,"current_controller":true,
+            "renderer":false,"main_ui_or_tray":false,"real_auth_or_pubsub":false,
+            "polisher_and_outbox":true
+        }),
+    );
+    hour_control(&root, "begin", nonce).await;
+    let mut result = run_controller_capture(&mut harness, seconds, Some(&root)).await;
+    hour_publish(
+        &root,
+        "transcription-complete.json",
+        serde_json::json!({
+            "phase":"transcription-complete","confirmed_bytes":seconds*32000
+        }),
+    );
+    hour_cleanup(&mut harness, &outbox).await;
+    assert!(!harness.policy.dictation_busy());
+    assert!(harness.entries().is_empty() && harness.recovery.list().unwrap().is_empty());
+    hour_publish(
+        &root,
+        "shutdown-complete.json",
+        serde_json::json!({
+            "phase":"capture-stopped-and-joined","controller_and_outbox_still_running":true
+        }),
+    );
+    result["scope"] = HOUR_SCOPE.into();
+    result["current_controller"] = true.into();
+    result["renderer"] = false.into();
+    result["outbox_acknowledged"] = true.into();
+    hour_publish(&root, "idle-ready.json", result);
+    hour_control(&root, "finish", nonce).await;
+    harness.close().await;
+    outbox.close().await;
+    drop(harness);
+    hour_publish(
+        &root,
+        "normal-exit.json",
+        serde_json::json!({
+            "phase":"normal-exit","physical_ports":false,"current_controller":true
+        }),
+    );
+}
 #[tokio::test]
 async fn both_modes_and_engines_drain_stop_tail_and_persist_history_before_synthetic_ui_handoff() {
     for streaming in [false, true] {
@@ -550,7 +899,7 @@ async fn both_modes_and_engines_drain_stop_tail_and_persist_history_before_synth
             assert!(!cancelled.load(Ordering::Acquire));
             assert_eq!(harness.entries()[0].body, text);
             let persisted = voiceprompt_client_protocol::history::parse_history(
-                &std::fs::read(harness.directory.0.join("history.json")).unwrap(),
+                &std::fs::read(harness.root.join("history.json")).unwrap(),
             )
             .unwrap();
             assert_eq!(persisted[0].body, text);
@@ -708,7 +1057,7 @@ async fn capture_start_and_stop_failures_are_visible_and_never_handoff_text() {
 async fn failed_history_write_keeps_recovery_and_never_requests_clipboard_or_paste() {
     for streaming in [false, true] {
         let mut harness = Harness::new(streaming, false);
-        std::fs::create_dir(harness.directory.0.join("history.json")).unwrap();
+        std::fs::create_dir(harness.root.join("history.json")).unwrap();
         harness.begin(DictationMode::Hold).await;
         harness.ports.feed(&pcm(16000));
         harness.stop().await;
@@ -1004,7 +1353,7 @@ async fn count_only_volume_fixture_confirms_durable_prefixes_before_stop_and_joi
         1_280_000
     );
     harness.close().await;
-    let owned_path = harness.directory.0.clone();
+    let owned_path = harness.root.clone();
     drop(harness);
     assert!(!owned_path.exists());
 }
@@ -1074,7 +1423,7 @@ async fn accelerated_controller_hour_sample_volume() {
     harness.close().await;
     assert_eq!(harness.ports.0.opened.load(Ordering::Acquire), 1);
     assert_eq!(harness.ports.0.stopped.load(Ordering::Acquire), 1);
-    let owned_path = harness.directory.0.clone();
+    let owned_path = harness.root.clone();
     drop(harness);
     assert!(
         !owned_path.exists(),

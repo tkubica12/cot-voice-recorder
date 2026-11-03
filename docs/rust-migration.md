@@ -3145,3 +3145,38 @@ Presnyc5d3117 RustCI41606601832 take ALL5JOBSSUCCESS, Windows dokoncen
 puvodni180smanualcase. Cela migrace stale potrebuje opravdove full-controller/
 GUI-hour, keyboard/screenreader/monitor, upgrade/rollback a privateAzure dukazy;
 zadne z techto neprovedenych hranic se neuzavira timto scoped CI/volume/UI vysledkem.
+
+### Priprava aktualniho controller wall-clock hour, ne stareho engine-only testu
+
+Koordinator zadal dalsi konkretni povolenou synthetic akceptaci: jeden skutecny
+3600s wall-clock beh AKTUALNI controller orchestrace s izolovanym stavem a fake
+porty, raw warm/capture/postidle private/working-set/CPU, sample-exact poradi,
+confirmed cursory/rotation/normalstop/returnidle a puvodni<=10MiBpostidlegrowth.
+Nejde o novy30+30quietprofile, physicalhour nebo produkcni souhlas.
+
+Novy typed-port fixture pouziva skutecny soucasny DictationHost.run, streaming
+session, DPAPI journal, atomic History, polisher a periodic AuditOutbox engine,
+synthetic20ms/monoPCM16/16kHz a dva Tokio worker threads. Worker controlleru i
+outbox zustavaji v procesu i pro stejny post-idle; declaredbaseline ma prazdnou
+History/Recovery po overenem warmup. Real50min timer zustava beze zmeny. Kazdy
+vzorek se porovnava s absolutnim97-sample vzorem, potvrzene cursory musi rust a
+capture/transmit/confirmed bytes musi byt115200000. FakeUploader nenahradi realIAM/
+Azure; pouze proveruje skutecny outboxack+fixeddurableHistory/noautopaste flow.
+
+Renderer, main/tray UI, globalhotkeys, physicalcapture/clipboard/SendInput,
+skutecnyOAuth/PubSub/backend/model/OS/registry/install/Azure se v teto kompozici
+NEVYTVAREJI. CUIkeyboardBLOCKED a predchozi indexedUI dukazy se neprepisuji.
+Novy report ma current_controller=true/renderer=false/full_client_profile=false,
+nikoliv full-GUI claim. Collector uchovava rawreports/progress/stdout/stderr;
+finalcomplete report se publikuje az po process a ownedcontrolroot cleanup.
+Original10MiB growth threshold neni snizen. Smokes budou incomplete; real-hour
+PASS se tvrdi jen pro plny3600s/301pre/301post shape a skutecne rawdukazy.
+
+Lokalni smoke3s/3pre/3post na aktualnimtestbinary84fd1292...prosel sample-exact
+96000bytes, History/audit, capture/outbox joins, empty-state returnidle a cleanup.
+Jeho afterprivategrowth602112bytes neni hodinova metrika; verdictincomplete.
+Nove observerguards4groups (engine/controllername,zerotest,pipefail)PASS,
+native99regular/Clippy/fmt a nezavisle6hiddenlifecyclegroupsPASS. SkrytySettings
+selftest navicprosel40skutecnych forward/backwardGetNextDlgTabItem dotazu
+na10poli/dvaviewporty/disabledSave, bez inputu nebo aktivace; nenahrazuje CUIkeys.
+Priprava skutecneho jedinehohodinovehobehu pokracuje, zadnyhourPASS jeste neni.
