@@ -300,6 +300,10 @@ their ownership transaction; they are not hot cursor getters. This source repair
 does not promise that every filesystem operation meets the capture budget.
 Deterministic blocked-open/read/unprotect controller/reconnect tests and a short
 smoke are not a new30s/120s/hour or product-memory acceptance result.
+The accelerated count-only functional unit awaits each of its twenty durable
+64k prefixes rather than treating an unpaced burst as a throughput benchmark.
+Pinned-reader progress tests exercise the owned hot mutation API and join every
+started worker even on their unchanged deadline failure.
 
 While an owned persistence worker is pending, the controller still processes
 auth/shutdown/discard and the existing stop deadline. Expiry reports incomplete

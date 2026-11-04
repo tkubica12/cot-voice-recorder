@@ -2374,7 +2374,24 @@ async fn count_only_volume_fixture_confirms_durable_prefixes_before_stop_and_joi
         .count_only
         .store(true, Ordering::Release);
     harness.begin(DictationMode::Toggle).await;
-    harness.feed_many(&volume_pcm(6400), 100).await;
+    for prefix in 1..=20u64 {
+        harness.feed_many(&volume_pcm(6400), 5).await;
+        let confirmed = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let observed = harness.ports.0.capture_trace.get().unwrap().snapshot();
+                if observed["confirmed_bytes"].as_u64() == Some(prefix * 64000) {
+                    assert!(observed["saved_bytes"].as_u64().unwrap() >= prefix * 64000);
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await;
+        if let Err(error) = confirmed {
+            harness.close().await;
+            panic!("Accelerated functional prefix was not durably confirmed: {error}");
+        }
+    }
     harness
         .view(|view| view.preview.contains("synthetic controller"))
         .await;

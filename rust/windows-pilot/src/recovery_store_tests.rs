@@ -816,20 +816,31 @@ async fn blocked_pinned_file_read_leaves_journal_writes_confirmation_and_timers_
     let writer = journal.clone();
     let second_write = second.clone();
     let began = std::time::Instant::now();
-    let progress = tokio::task::spawn_blocking(move || {
-        writer.checkpoint(&[], 8, &[audio(&second_write, 8)], false, now())?;
-        writer.confirm_streaming(4, "synthetic confirmed".into(), vec![], false, None, now())
+    let mut progress = tokio::task::spawn_blocking(move || {
+        writer.checkpoint_snapshot(&[], 8, &[audio(&second_write, 8)], false, now())?;
+        writer.confirm_streaming_snapshot(
+            4,
+            "synthetic confirmed".into(),
+            vec![],
+            false,
+            None,
+            now(),
+        )
     });
-    let completed = tokio::time::timeout(std::time::Duration::from_secs(1), progress).await;
+    let completed = tokio::time::timeout(std::time::Duration::from_secs(1), &mut progress).await;
     let writer_elapsed_ms = began.elapsed().as_secs_f64() * 1000.0;
     let still_reading = !reader.is_finished();
     drop(release);
+    let audio = reader.await;
+    if completed.is_err() {
+        let _ = progress.await;
+    }
     completed
         .expect("Pinned slow I/O blocked journal progress.")
         .unwrap()
         .unwrap();
     assert!(still_reading);
-    assert_eq!(reader.await.unwrap().unwrap(), first);
+    assert_eq!(audio.unwrap().unwrap(), first);
     let state = journal.snapshot().unwrap();
     assert_eq!(state.captured_bytes, 8);
     assert_eq!(state.confirmed_bytes, 4);

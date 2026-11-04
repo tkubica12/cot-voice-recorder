@@ -3964,3 +3964,16 @@ Timelineactual encrypted-read1 se zmenil na0, zatimco requiredpath/quota/write/
 publication phases zustaly; nejdeostatistickylatencyneboodhadOS_IOpodilu.
 Frozen120sFAILED44.405102/exact1416960allsealed/pending136960 a20sloaderUNKNOWN
 zustaly; oldb7finalaccepted/orphan14 se neprepisuji. Zadny novy longrun.
+
+Prvni matching60de441/CI41757285433 neskoncilALL5PASS:4jobs uspech,
+Windowsnative141PASS/2FAIL na existingunit deadline. Vsechny newmanifest/
+alias/controller/reconnect/drop cases prosly. Pinned-audio progress test dosud
+volal COLD publicmutation s repeatedfreshread a pri1stimeoutudalunjoinedhandle;
+prepnuto na actualHOT ownedAPI, deadline1s zustal a failedpath tedvzdyjoinuje
+writer i reader predassert/fixturedelete. Namereny localhotprogress34.6997ms
+je structuralproof, ne acceptance profile.
+Accelerated count-onlyunit1,280,000bytes drivfloodoval100buffers pakcekal5spreview;
+novyUNITdriver overuje20durablyconfirmed64kprefixu prubezne. Produkcni capture/
+ASR/batching/checkpointtiming se nemeni, startup/preview/join5s i2s30s50queue
+zustaly. Nejde o throughputbenchmark ani relaxcilu. NewmatchingCI bude overeno
+nad novymtest/docscommit, starefailedCI/logs zachovane.
