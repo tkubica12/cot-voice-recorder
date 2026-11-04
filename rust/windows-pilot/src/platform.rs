@@ -2712,6 +2712,31 @@ pub(crate) enum WriteMode {
 }
 
 pub(crate) fn atomic_write(path: &Path, data: &[u8], mode: WriteMode) -> Result<(), NativeError> {
+    atomic_write_inner(
+        path,
+        data,
+        mode,
+        #[cfg(test)]
+        None,
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn atomic_write_observed(
+    path: &Path,
+    data: &[u8],
+    mode: WriteMode,
+    trace: &std::sync::Arc<crate::io_trace::Trace>,
+) -> Result<(), NativeError> {
+    atomic_write_inner(path, data, mode, Some(trace))
+}
+
+fn atomic_write_inner(
+    path: &Path,
+    data: &[u8],
+    mode: WriteMode,
+    #[cfg(test)] trace: Option<&std::sync::Arc<crate::io_trace::Trace>>,
+) -> Result<(), NativeError> {
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let mut temporary_name = path.as_os_str().to_owned();
     temporary_name.push(format!(
@@ -2721,6 +2746,18 @@ pub(crate) fn atomic_write(path: &Path, data: &[u8], mode: WriteMode) -> Result<
     ));
     let temporary_path = PathBuf::from(temporary_name);
     let mut temporary = TemporaryFile(None);
+    #[cfg(test)]
+    let opening = trace.map(|trace| {
+        trace.opening(
+            &temporary_path,
+            "atomic-staging-write",
+            crate::io_trace::WRITE_ACCESS,
+            crate::io_trace::DEFAULT_SHARE,
+            0,
+        )
+    });
+    #[cfg(test)]
+    let staging_handle;
     let mut file = {
         #[cfg(test)]
         let _phase = crate::mutation_trace::span("staging-create");
@@ -2730,6 +2767,21 @@ pub(crate) fn atomic_write(path: &Path, data: &[u8], mode: WriteMode) -> Result<
             .open(&temporary_path)
             .map_err(|source| NativeError::Io("create atomic staging file", source))?
     };
+    #[cfg(test)]
+    {
+        staging_handle = trace.map(|trace| {
+            trace.opened(
+                &file,
+                &temporary_path,
+                "atomic-staging-write",
+                crate::io_trace::WRITE_ACCESS,
+                crate::io_trace::DEFAULT_SHARE,
+                0,
+            )
+        });
+    }
+    #[cfg(test)]
+    drop(opening);
     temporary.0 = Some(temporary_path.clone());
     {
         #[cfg(test)]
@@ -2751,6 +2803,8 @@ pub(crate) fn atomic_write(path: &Path, data: &[u8], mode: WriteMode) -> Result<
         #[cfg(test)]
         let _phase = crate::mutation_trace::span("staging-close");
         drop(file);
+        #[cfg(test)]
+        drop(staging_handle);
     }
     let from = wide(temporary_path.as_os_str())?;
     let to = wide(path.as_os_str())?;
@@ -2758,18 +2812,27 @@ pub(crate) fn atomic_write(path: &Path, data: &[u8], mode: WriteMode) -> Result<
     {
         #[cfg(test)]
         let _phase = crate::mutation_trace::span("staging-rename");
-        match mode {
+        let renamed = match mode {
             WriteMode::CreateNew => api("MoveFileW (publish new file)", unsafe {
                 MoveFileW(PCWSTR(from.as_ptr()), PCWSTR(to.as_ptr()))
-            })?,
+            }),
             WriteMode::Replace => api("MoveFileExW (replace encrypted cache)", unsafe {
                 MoveFileExW(
                     PCWSTR(from.as_ptr()),
                     PCWSTR(to.as_ptr()),
                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
                 )
-            })?,
+            }),
+        };
+        #[cfg(test)]
+        if let (Err(error), Some(trace)) = (&renamed, trace) {
+            let flags = match mode {
+                WriteMode::CreateNew => 0,
+                WriteMode::Replace => (MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH).0,
+            };
+            trace.failed_rename(&temporary_path, path, flags, error);
         }
+        renamed?;
     }
     temporary.0 = None;
     Ok(())

@@ -71,6 +71,8 @@ mod dictation_ui;
 #[cfg(windows)]
 mod hotkeys;
 #[cfg(all(windows, test))]
+mod io_trace;
+#[cfg(all(windows, test))]
 mod lock_trace;
 #[cfg(windows)]
 mod main_layout;

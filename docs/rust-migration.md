@@ -4065,3 +4065,48 @@ beh nebyl zahajen. Stare76Overflow/all-sealed, b7unknownfinalaccepted/orphan14,
 hour failures,071,5b,CUI BLOCKED a failed CI dukazy zustavaji oddelene.
 Aktualni120s/hour/realrotation/postidle10MiB, produkt80MiB, fullGUI/physical,
 instalace a privateAzure akceptace tim nejsou splneny.
+
+### Bounded own-handle diagnostika atomic publication: source/unit faze
+
+Po d00f239 koordinator zadal konkretni test-only root objective: vlastni scoped
+Recovery handle lifetime a prvni failed-rename witness, pak matching exact CI
+a teprve pote JEDEN novy actual max60s NoPorts diagnostic. Nejde o retry stareho
+120s ani souhlas s dalsi hodinou/quiet/GUI/device/install/Azure.
+
+`io_trace` existuje pouze ve Windows libtest. Pokryva vlastni File opens
+writer.lock, live manifestu, immutable aliasu, audia/pinned audia a atomic staging.
+Recordy maji relative path/role/Rust thread/callsite, access/share/custom flags,
+logical/native handle ID a posledni vlastni durable generation/cursory.
+Rust default share7 je dolozen v oficialni dokumentaci OpenOptionsExt; neni to
+odhad skutecneho externiho handle. File identity/link count nejsou jiz dostupne
+v pouzivanych stabilnich metadata polich, proto jsou NOT_COLLECTED.
+OS-internal metadata/link/rename handles, control/witness files a vsechny cizi
+procesy jsou explicitni coverage exclusions; zadna globalni enumerace/dump.
+
+64active/128recent/32publication limity jsou pevne. Try-lock busy/lost update/
+in-flight open -> UNKNOWN; ring eviction je oddelena od active coverage.
+Actual File drop predchazi close recordu, staging flush/close predchazi rename.
+Prvni rename failure vytvori+sync_all vlastni witness mimo Recovery pred staging
+cleanupem: user-mode observed monotonic/UTC result time, source/dest/flags/HRESULT,
+own handles, last durable generations a pointwise atomic admission cursory.
+Neni to globalni atomicky snapshot ani kernel sampling. Post-error attrs/reparse/
+staged-existence maji samostatny casovy bracket a fresh full-path guard.
+Selhani witness persistence explicitne hlaseno; puvodni error se nemaskuje,
+in-memory witness zustava ve first producer failure.
+
+Kontrolovane actual FS jednotky prokazaly own live destination reader -> skutecny
+MoveFileExW0x80070005 + durable witness pred cleanupem; po explicitnim zavreni
+readeru a fresh validaci publish projde. Jiny test vytvari readonly jen na vlastnim
+synthetic souboru, reprodukuje stejny HRESULT bez instrumented readera a presne
+obnovi puvodni permissions. To neni ACL/Defender ani historicky cause proof.
+Normal/alias lifecycle, busy registry, in-flight open, kapacita a selhani witness
+zapisovani jsou pokryty; short existing controller fault test koreluje own reader
+s prvnim witness a immutable admission. Local149native/16ignored, strict Clippy,
+release build a7Recovery/C# parity prosly; matching CI a novy actual60s jsou
+v teto source fazi stale PENDING.
+
+Production MoveFileExW/flags/flush/poison policy, fronta1280B40ms50slots a budgety
+2s/30s/5s zustavaji beze zmeny. Generic final checkpoint po storage_failed skonci
+pred novym I/O; proto jeho hlaska sama neprokazuje druhy OS denial nebo trvale
+nezapisovatelny disk. Puvodni20,480 admitted nedurable a vsechny raw/cipher failed
+dukazy zustavaji. NO_INSTRUMENTED_OWNER_SEEN neni external-actor proof.

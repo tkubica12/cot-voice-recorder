@@ -1,7 +1,9 @@
 #[cfg(test)]
 use crate::lock_trace::Guard as MutexGuard;
 use std::collections::{HashMap, HashSet};
-use std::fs::{File, OpenOptions};
+#[cfg(not(test))]
+use std::fs::File;
+use std::fs::OpenOptions;
 use std::io::{self, Read};
 use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
@@ -15,9 +17,14 @@ use voiceprompt_client_protocol::recovery::{
     utc_ticks, valid_id,
 };
 
-use crate::platform::{
-    NativeError, WriteMode, atomic_write, guard_recovery_path, protect, unprotect,
-};
+#[cfg(not(test))]
+use crate::platform::atomic_write;
+use crate::platform::{NativeError, WriteMode, guard_recovery_path, protect, unprotect};
+
+#[cfg(test)]
+type RecoveryFile = crate::io_trace::TrackedFile;
+#[cfg(not(test))]
+type RecoveryFile = File;
 
 pub const DEFAULT_RECOVERY_QUOTA: u64 = 256 * 1024 * 1024;
 const ENCRYPTION_ALLOWANCE: usize = 64 * 1024;
@@ -26,7 +33,7 @@ const RETENTION_TICKS: i64 = 48 * 60 * 60 * 10_000_000;
 struct RecoveryRoot {
     path: PathBuf,
     maximum_bytes: u64,
-    _writer: File,
+    _writer: RecoveryFile,
     active: Mutex<HashSet<String>>,
     readers: Mutex<HashMap<String, Weak<Mutex<ReaderState>>>>,
     #[cfg(test)]
@@ -45,6 +52,8 @@ struct RecoveryRoot {
     io_probe: FixtureIoProbe,
     #[cfg(test)]
     trace: Arc<crate::lock_trace::Lock>,
+    #[cfg(test)]
+    own_io: Arc<crate::io_trace::Trace>,
 }
 
 #[cfg(test)]
@@ -399,12 +408,31 @@ impl PinnedRecoveryAudio {
     fn read_path(&self, path: &Path) -> Result<Vec<u8>, NativeError> {
         use windows::Win32::Storage::FileSystem::{FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ};
         guard_recovery_path(path)?;
+        #[cfg(test)]
+        let opening = self.root.own_io.opening(
+            path,
+            "pinned-audio-read",
+            crate::io_trace::READ_ACCESS,
+            FILE_SHARE_READ.0,
+            FILE_FLAG_OPEN_REPARSE_POINT.0,
+        );
         let file = OpenOptions::new()
             .read(true)
             .share_mode(FILE_SHARE_READ.0)
             .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT.0)
             .open(path)
             .map_err(|error| NativeError::Io("open pinned recovery audio", error))?;
+        #[cfg(test)]
+        let file = self.root.own_io.track(
+            file,
+            path,
+            "pinned-audio-read",
+            crate::io_trace::READ_ACCESS,
+            FILE_SHARE_READ.0,
+            FILE_FLAG_OPEN_REPARSE_POINT.0,
+        );
+        #[cfg(test)]
+        drop(opening);
         let metadata = file
             .metadata()
             .map_err(|error| NativeError::Io("inspect pinned recovery audio", error))?;
@@ -540,6 +568,16 @@ impl NativeRecoveryStore {
         }
         let lock_path = root.join("writer.lock");
         guard_recovery_path(&lock_path)?;
+        #[cfg(test)]
+        let own_io = crate::io_trace::Trace::new(root.clone());
+        #[cfg(test)]
+        let opening = own_io.opening(
+            &lock_path,
+            "root-writer-lease",
+            crate::io_trace::READ_ACCESS | crate::io_trace::WRITE_ACCESS,
+            0,
+            0,
+        );
         // Share mode zero is an OS-enforced lock across threads, processes and Windows sessions.
         let writer = OpenOptions::new()
             .read(true)
@@ -549,6 +587,17 @@ impl NativeRecoveryStore {
             .share_mode(0)
             .open(&lock_path)
             .map_err(|error| NativeError::Io("acquire exclusive recovery writer", error))?;
+        #[cfg(test)]
+        let writer = own_io.track(
+            writer,
+            &lock_path,
+            "root-writer-lease",
+            crate::io_trace::READ_ACCESS | crate::io_trace::WRITE_ACCESS,
+            0,
+            0,
+        );
+        #[cfg(test)]
+        drop(opening);
         if writer
             .metadata()
             .map_err(|error| NativeError::Io("inspect recovery writer lock", error))?
@@ -586,6 +635,8 @@ impl NativeRecoveryStore {
             },
             #[cfg(test)]
             trace: crate::lock_trace::Lock::new("recovery-root"),
+            #[cfg(test)]
+            own_io,
         });
         roots.insert(root, Arc::downgrade(&shared));
         Ok(Self(shared))
@@ -752,6 +803,11 @@ impl NativeRecoveryStore {
     }
 
     #[cfg(test)]
+    pub(crate) fn fixture_own_io(&self) -> Arc<crate::io_trace::Trace> {
+        self.0.own_io.clone()
+    }
+
+    #[cfg(test)]
     pub(crate) fn fixture_io_progress(&self) -> serde_json::Value {
         use std::sync::atomic::Ordering;
         let probe = &self.0.io_probe;
@@ -791,7 +847,8 @@ impl NativeRecoveryStore {
             "active_manifest_inspections":pinned_reads.map(|counts|counts.1),
             "retained_manifest_capacity_bytes":pinned_reads.map(|counts|counts.2),
             "phase_scope":"root-serialized IO; unlocked manifest inspections excluded",
-            "pin_snapshot_unavailable":pinned_reads.is_none()
+            "pin_snapshot_unavailable":pinned_reads.is_none(),
+            "own_io_handles":self.0.own_io.snapshot()
         })
     }
 
@@ -867,6 +924,9 @@ impl RecoveryRoot {
             .map_err(|_| NativeError::Verification("Recovery reader registry is poisoned."))?;
         registry.retain(|_, readers| readers.strong_count() != 0);
         registry.insert(state.id.clone(), Arc::downgrade(&readers));
+        #[cfg(test)]
+        self.own_io
+            .publication(&state.id, 1, state.captured_bytes, state.confirmed_bytes);
         Ok(readers)
     }
 
@@ -1219,6 +1279,9 @@ impl RecoveryRoot {
         self.ensure_quota(cipher.len())?;
         #[cfg(test)]
         self.io_probe.enter(3);
+        #[cfg(test)]
+        crate::platform::atomic_write_observed(path, &cipher, WriteMode::Replace, &self.own_io)?;
+        #[cfg(not(test))]
         atomic_write(path, &cipher, WriteMode::Replace)?;
         Ok(cipher.len())
     }
@@ -1267,9 +1330,44 @@ impl RecoveryRoot {
         if inspection {
             options.share_mode(windows::Win32::Storage::FileSystem::FILE_SHARE_READ.0);
         }
+        #[cfg(test)]
+        let role = if inspection {
+            "immutable-manifest-alias-read"
+        } else if path.file_name().is_some_and(|name| name == "manifest.enc") {
+            "live-manifest-read"
+        } else {
+            "audio-read"
+        };
+        #[cfg(test)]
+        let opening = self.own_io.opening(
+            path,
+            role,
+            crate::io_trace::READ_ACCESS,
+            if inspection {
+                1
+            } else {
+                crate::io_trace::DEFAULT_SHARE
+            },
+            windows::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT.0,
+        );
         let file = options
             .open(path)
             .map_err(|error| NativeError::Io("open encrypted recovery file", error))?;
+        #[cfg(test)]
+        let file = self.own_io.track(
+            file,
+            path,
+            role,
+            crate::io_trace::READ_ACCESS,
+            if inspection {
+                1
+            } else {
+                crate::io_trace::DEFAULT_SHARE
+            },
+            windows::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT.0,
+        );
+        #[cfg(test)]
+        drop(opening);
         let purpose = if inspection {
             ReadPurpose::InspectedManifest
         } else if path.file_name().is_some_and(|name| name == "manifest.enc") {
@@ -1300,7 +1398,7 @@ impl RecoveryRoot {
 
     fn read_open_file(
         &self,
-        file: File,
+        file: RecoveryFile,
         limit: usize,
         purpose: ReadPurpose,
     ) -> Result<Vec<u8>, NativeError> {
@@ -1589,6 +1687,13 @@ impl NativeRecoveryJournal {
             ));
         }
         readers.publish(state, cipher_bytes as u64);
+        #[cfg(test)]
+        self.root.own_io.publication(
+            &state.id,
+            readers.generation,
+            state.captured_bytes,
+            state.confirmed_bytes,
+        );
         Ok(())
     }
 

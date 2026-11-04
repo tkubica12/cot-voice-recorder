@@ -893,6 +893,27 @@ async fn run_controller_capture(
     seconds: u64,
     diagnostics: Option<&std::path::Path>,
 ) -> serde_json::Value {
+    let own_io = harness.recovery.fixture_own_io();
+    let probe = Arc::downgrade(&harness.ports.0);
+    own_io.set_admission(move || {
+        probe.upgrade().map_or_else(
+            || serde_json::json!({"unavailable":"capture probe released"}),
+            |probe| {
+                serde_json::json!({
+                    "observed_probe_monotonic_ns":probe.clock.elapsed().as_nanos() as u64,
+                    "attempted_sequence":probe.attempted_sequence.load(Ordering::Acquire),
+                    "last_accepted_sequence":probe.last_accepted_sequence.load(Ordering::Acquire),
+                    "accepted_bytes":probe.accepted_bytes.load(Ordering::Acquire),
+                    "received_bytes":probe.writer_received_bytes.load(Ordering::Acquire),
+                    "completed_append_bytes":probe.writer_completed_bytes.load(Ordering::Acquire),
+                    "writer_active":probe.writer_active.load(Ordering::Acquire)
+                })
+            },
+        )
+    });
+    if let Some(root) = diagnostics {
+        own_io.set_sink(root.join("first-rename-failure.json"));
+    }
     harness
         .ports
         .0
@@ -955,6 +976,7 @@ async fn run_controller_capture(
                         ,"engine_lock":probe.capture_trace.get().map(|trace|trace.snapshot())
                         ,"observed_max_queue_slots":probe.observed_queue_slots.load(Ordering::Acquire)
                         ,"immutable_admission_failure":probe.admission_failure.get()
+                        ,"first_rename_failure":own_io.first_record()
                     }),
                 );
             }
@@ -1079,13 +1101,32 @@ async fn short_realtime_storage_failure_publishes_exact_producer_context_before_
     *harness.ports.0.prepare_capture.lock().unwrap() = Some(Box::new(move || {
         let rows = recovery.list().unwrap();
         assert_eq!(rows.len(), 1);
-        let path = root.join("recovery").join(&rows[0].id).join("manifest.enc");
+        let path =
+            std::fs::canonicalize(root.join("recovery").join(&rows[0].id).join("manifest.enc"))
+                .unwrap();
         let before = std::fs::read(&path).unwrap();
+        let trace = recovery.fixture_own_io();
+        let opening = trace.opening(
+            &path,
+            "controlled-live-manifest-read",
+            crate::io_trace::READ_ACCESS,
+            1,
+            0,
+        );
         let handle = std::fs::OpenOptions::new()
             .read(true)
             .share_mode(1)
             .open(&path)
             .unwrap();
+        let handle = trace.track(
+            handle,
+            &path,
+            "controlled-live-manifest-read",
+            crate::io_trace::READ_ACCESS,
+            1,
+            0,
+        );
+        drop(opening);
         assert!(locked.set((handle, path, before)).is_ok());
     }));
     let output = diagnostics.clone();
@@ -1119,6 +1160,20 @@ async fn short_realtime_storage_failure_publishes_exact_producer_context_before_
     assert_eq!(admission["writer_completed_bytes"], 49 * 1280);
     assert_eq!(admission["last_published_saved_bytes"], 0);
     assert_eq!(admission["last_published_confirmed_bytes"], 0);
+    let witness: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(diagnostics.join("first-rename-failure.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(failure["first_rename_failure"], witness);
+    assert_eq!(
+        witness["owner_classification"],
+        "OWN_LIVE_DESTINATION_HANDLE_OBSERVED"
+    );
+    assert_eq!(witness["HRESULT"], "0x80070005");
+    assert_eq!(
+        witness["admission"]["accepted_bytes"].as_u64().unwrap() % 1280,
+        0
+    );
     assert_eq!(&std::fs::read(path).unwrap(), original_cipher);
     assert!(!diagnostics.join("producer-complete.json").exists());
     assert!(!diagnostics.join("transcription-complete.json").exists());

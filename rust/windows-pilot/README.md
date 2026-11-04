@@ -329,6 +329,34 @@ accepted. Both-engine locked-file regressions preserve the actual durable prefix
 binding and ciphertext, and a short realtime failure case verifies the producer
 failure file survives normal controller cleanup.
 
+The test-only Recovery I/O trace scopes handle lifetime records to that synthetic
+root. It records writer-lease, live-manifest, immutable-alias, audio and staging
+open/close boundaries, logical/native handle IDs, relative paths, Rust thread/
+callsite, requested access/share/custom flags and last published generations.
+Already-required metadata supplies size/attributes; file identity/link count
+remain explicitly uncollected. There is no process/global-handle enumeration.
+The registry is bounded to64active handles,128recent events and32publications.
+Snapshots and updates use try-lock; busy metadata, lost updates or an in-flight
+open mean UNKNOWN, never an empty/no-owner proof. Historical ring eviction is
+reported separately. There is no packet-frequency stack capture or content log.
+
+On the first failed atomic rename, the explicitly configured fixture sink writes
+and syncs `first-rename-failure.json` before staging cleanup. It includes observed
+monotonic/UTC API-result times, source/destination relative names, unchanged
+rename flags/HRESULT, handle snapshot, last durable generations and pointwise
+atomic admission/received/completed counters. Path-guarded metadata probes are
+separately timestamped after the error, not represented as atomic first-error
+state. These are user-mode observations, not suspended kernel stacks.
+Witness persistence failure is explicit and retains the original NativeError
+plus an in-memory witness for the producer failure record. Production rename,
+flush, error-invalidated publication and stop/join policies are unchanged.
+`NO_INSTRUMENTED_OWNER_SEEN` means only that the scoped snapshot saw none; it
+does not identify an external actor. Controlled filesystem cases distinguish
+known live-reader denial, readonly denial with no observed reader, normal
+publication/alias cleanup and deliberately unavailable diagnostic metadata.
+They do not establish the cause of the historical runtime denial or authorize
+an automatic capture retry.
+
 A deterministic actual-filesystem barrier also forces final-pin deletion after
 quota enumerates the file but before its `DirEntry::metadata()` call. On Windows,
 that call succeeded using the entry's enumeration metadata: overlap was proved,

@@ -1,4 +1,5 @@
 use super::*;
+use crate::platform::atomic_write;
 use voiceprompt_core::wav::to_wav;
 
 pub(crate) struct TemporaryRoot(pub(crate) PathBuf);
