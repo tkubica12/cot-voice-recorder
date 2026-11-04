@@ -2756,8 +2756,7 @@ fn atomic_write_inner(
             0,
         )
     });
-    #[cfg(test)]
-    let staging_handle;
+    #[allow(unused_mut)]
     let mut file = {
         #[cfg(test)]
         let _phase = crate::mutation_trace::span("staging-create");
@@ -2768,18 +2767,15 @@ fn atomic_write_inner(
             .map_err(|source| NativeError::Io("create atomic staging file", source))?
     };
     #[cfg(test)]
-    {
-        staging_handle = trace.map(|trace| {
-            trace.opened(
-                &file,
-                &temporary_path,
-                "atomic-staging-write",
-                crate::io_trace::WRITE_ACCESS,
-                crate::io_trace::DEFAULT_SHARE,
-                0,
-            )
-        });
-    }
+    let mut file = crate::io_trace::TrackedFile::optional(
+        file,
+        trace,
+        &temporary_path,
+        "atomic-staging-write",
+        crate::io_trace::WRITE_ACCESS,
+        crate::io_trace::DEFAULT_SHARE,
+        0,
+    );
     #[cfg(test)]
     drop(opening);
     temporary.0 = Some(temporary_path.clone());
@@ -2803,8 +2799,6 @@ fn atomic_write_inner(
         #[cfg(test)]
         let _phase = crate::mutation_trace::span("staging-close");
         drop(file);
-        #[cfg(test)]
-        drop(staging_handle);
     }
     let from = wide(temporary_path.as_os_str())?;
     let to = wide(path.as_os_str())?;

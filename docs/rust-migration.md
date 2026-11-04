@@ -4180,3 +4180,37 @@ zbyvajici diagnosticky problem je nereprodukovany denial a nekompletni active
 trace pri contention; kontrolovane own-reader/readonly cause classes nejsou
 attribution starsiho failure. Current120s/hodina, real rotation/301postidle,
 fullGUI/physical/accessibility/install a privateAzure akceptace stale zbyvaji.
+
+### Reliable own-handle lifecycle: bounded source/unit faze po55ada77
+
+Koordinator zadal odstranit zbytecne registry losses z ordinary contention,
+ne menit atomicpublish nebo opakovat hour. Test-only updater proto pouziva
+kratky mutex pouze pro bounded in-memory Arc/reference move/clone, bez fs/DPAPI/
+backtrace/stdout/engine-root callbacku. Active64/history128/publication32 limity
+zustavaji. Monitor je stale try-lock a serializuje az po uvolneni registry;
+first-error witness muze pockat na stejny memory-only transaction, nikoli
+na filesystem pod registry lockem. Producer registry wait/hold maxima se meri.
+
+Open registrace skonci pred vracenim handle volajicimu. Close oznaci inflight,
+zavre skutecny File a pak konzistentne odebere active record a publikuje close.
+Staging ma v libtest stejny tracked wrapper i pri early error/panic. Veci
+destruovane pri event eviction nebo metadata replacement se uvolnuji mimo lock.
+Snapshots kopiruji jen reference; JSON i UTC stamps jsou mimo registry lock.
+Zadny reverse trace->engine/root lock edge ani storage/error retry nevznika.
+
+Deterministicky actualFS test drzi registry, vynuti contended open/metadata/
+close a prokaze, ze operace pred admission/commit nevrati handle/uspech.
+Paralelni8workers x32lifetimes s monitor contention a ringeviction konci
+activeempty/lost0/complete; dalsi unit overuje early I/O error/unwind,
+simultaneous actualMoveFileEx failures s jedinym immutable witness, known
+ownreader/close-before-rename/alias a stale explicitni overflow/inflight/UNKNOWN.
+Puvodnich5lost z55ada77 se nemaze: novy record je nova revision, historicky
+denial/stare60s/hour dukazy zustavaji oddelene. Source/unit a matching exact CI
+musi predchazet JEDINEMU nove pridelenemu actual120s NoPorts3840000PCM; v teto
+source fazi nebyl spusten. Production API/flags/poison/durability/fronta/budgety
+zustavaji beze zmeny.
+
+Local153native/16ignored, fmt, strictall-target/all-featureClippy a release
+prosly. First-error capture rutina je zvlast testovana pri held registry:
+monitor ihned hlasi unavailable, lossless witness copy pocka na memory-lock
+release a zachova known own reader. Source-only testy nejsou actual120s proof.

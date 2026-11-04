@@ -336,9 +336,20 @@ callsite, requested access/share/custom flags and last published generations.
 Already-required metadata supplies size/attributes; file identity/link count
 remain explicitly uncollected. There is no process/global-handle enumeration.
 The registry is bounded to64active handles,128recent events and32publications.
-Snapshots and updates use try-lock; busy metadata, lost updates or an in-flight
-open mean UNKNOWN, never an empty/no-owner proof. Historical ring eviction is
-reported separately. There is no packet-frequency stack capture or content log.
+Lifecycle/publication updates use a short in-memory mutex transaction; monitor
+snapshots still use try-lock. Only bounded Arc references are copied while
+locked; JSON construction/serialization, record destruction and all filesystem/
+DPAPI/backtrace/log work occur after unlocking. No callback into engine/root
+locks runs under the registry mutex. The first-error witness may wait for this
+same bounded memory-only transaction, never for a filesystem-held trace lock.
+An opening cannot return its handle before registration. Tracked handles mark
+close in-flight before closing the OS File and commit removal/close history
+before returning, including early I/O errors and unwinding. Wait/hold maxima
+for this test-only synchronization are exported, not hidden by timing claims.
+Busy monitor metadata, poison/capacity loss, or in-flight open/close/update mean
+UNKNOWN, never an empty/no-owner proof. Capacity losses remain sticky; they are
+not reset to claim complete. Historical ring eviction is reported separately.
+There is no packet-frequency stack capture or content log.
 
 On the first failed atomic rename, the explicitly configured fixture sink writes
 and syncs `first-rename-failure.json` before staging cleanup. It covers both the
