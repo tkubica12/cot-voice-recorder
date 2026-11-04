@@ -36,7 +36,7 @@ znovu v odpovidajicim scope.
 | Microphone readiness | Jeden actual240ms probe a samostatne schvalena30+30 paired serie prosly; first-PCM p95Rust80.75% C#baseline, bez audio souboru/uploadu |
 | Engine longevity | Actual3600s synthetic PCM/real50min rotation,115200000 exact bytes; worst idle growth1.645MiB<10MiB, engine-only PASS |
 | Current controller longevity | Neutral76b25da30s/960000PCM PASS; NOVYsameneutral120s FAILED Overflow44.405102s,exact1416960accepted po shutdownu vse sealed. Actualowner send-audio-checkpoint drzel engine/root v manifest read-encrypted2176ms. Starehour/b7failures zachovany; zadny120s/hour/fullGUI PASS |
-| CI nativniho inkrementu | Exact76b25da error/admission source ma CI41737781150 Windows/Linux/MSRV1.85/container ALL5PASS a local326tests/strictClippy/fmt/release+7Recovery/7platform/6lifecycle PASS; quotaNotFound nepotvrzen, nejde o runtimehour ani real-world cutover |
+| CI nativniho inkrementu | Ownpublication manifestrepair60de441 + exacttestrevision680fd33 ma CI41759427076 Windows/Linux/MSRV1.85/container ALL5PASS,143native/local339aggregate/strictchecks+7Recovery7platform6lifecycle; prvni60deCI failedtesttimeouts preserved. Neni newruntimehour/realworld cutover |
 | OAuth/token-store/PubSub klient | Native flow implementovany; samostatny live Google auth-only/local-signout a assisted manual clipboard probe PASS, full signed-in backend/controller dictation stale chybi; samostatny automatic DesktopGuard port viz dalsi radek |
 | Automatic DesktopGuard paste port | NOVYexactonephysicalpostfix5b test PASS:one4eventnativeCtrlV/exactownfieldmarker/normalclosed,no retry. Nejdenifullcontroller/hold-toggle/hour/realbackend acceptance;older50040BLOCKED/45788assisted zustavaji |
 | Diktovani/recovery UI | Native microphone/hotkeys/overlay/paste controller, oba enginy, journal, polishing a outbox implementovany; real-world a rozsahlejsi fault/E2E akceptace zbyva |
@@ -3977,3 +3977,16 @@ novyUNITdriver overuje20durablyconfirmed64kprefixu prubezne. Produkcni capture/
 ASR/batching/checkpointtiming se nemeni, startup/preview/join5s i2s30s50queue
 zustaly. Nejde o throughputbenchmark ani relaxcilu. NewmatchingCI bude overeno
 nad novymtest/docscommit, starefailedCI/logs zachovane.
+
+Exactrevised680fd336e386c584e2520ad98893167eec48e1fc/Rusttree
+8f644f881d8c881d2d2da083283ab76b5c4c20ce ma
+[CI41759427076](https://github.com/tkubica12/cot-voice-recorder/actions/runs/41759427076)
+ALL5 completed/success; Windows completed2026-11-04T02:28:54Z. Head/jobs a
+Windows143PASS/16ignored byly nezavisle overeny, rawlog
+12a6af56390699233132e1962dcb0b32c916ec0058925275fe2438f072791235 zachovan.
+ProductionRootcode je stejny jako60de441;680fd33 menil jen2unitdrivers/docs,
+productionreleasebuildfdf8b64c096f3520785fbeb22d2b70eb67c1b4e021a17180a807eb4b60f80863
+zustal bitwise stejny. Sourcearchive680fd33
+6ceb47ff5b42eb67cc5ba74c92d013f5280778e469fca4e2d5e0935fb53ada02 zachovan.
+Localportable/primaryworkspace339 +143native revised a strictchecks/parity jsou
+sourcefunctional dukazy, nikoli novy30/120/hodinovy/performance nebo physicaltest.
