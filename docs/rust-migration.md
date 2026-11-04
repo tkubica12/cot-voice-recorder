@@ -35,7 +35,7 @@ znovu v odpovidajicim scope.
 | Mereni Windows klienta | NOVA vyslovne schvalena quiet-window current071/checkout86f3b0f full-runtime signed-out30+30/3paired301-point PASS: p95Rust257.948ms,meanprivate3.427MiB,observedpeak3.992MiB. Vsechnyrawvalues/pairedthresholds/cleanup nezavisleovereny;starsi7bPASS ia2d/3f4FAILEDINCOMPLETE zachovany,neprepisuji se na signed-in/physical scope |
 | Microphone readiness | Jeden actual240ms probe a samostatne schvalena30+30 paired serie prosly; first-PCM p95Rust80.75% C#baseline, bez audio souboru/uploadu |
 | Engine longevity | Actual3600s synthetic PCM/real50min rotation,115200000 exact bytes; worst idle growth1.645MiB<10MiB, engine-only PASS |
-| Current controller longevity | Novy neutral-observer76b25da ONE30s/960000exactPCM/normaljoin PASS. Ctyri actualhour, b00 a b7actual120s FAILED zachovany; b7finalaccepted NOT_OBSERVED/orphan14 neni committed. Novych30s neni120s/3600s/rotation/postidle10MiB/fullGUI proof |
+| Current controller longevity | Neutral76b25da30s/960000PCM PASS; NOVYsameneutral120s FAILED Overflow44.405102s,exact1416960accepted po shutdownu vse sealed. Actualowner send-audio-checkpoint drzel engine/root v manifest read-encrypted2176ms. Starehour/b7failures zachovany; zadny120s/hour/fullGUI PASS |
 | CI nativniho inkrementu | Exact76b25da error/admission source ma CI41737781150 Windows/Linux/MSRV1.85/container ALL5PASS a local326tests/strictClippy/fmt/release+7Recovery/7platform/6lifecycle PASS; quotaNotFound nepotvrzen, nejde o runtimehour ani real-world cutover |
 | OAuth/token-store/PubSub klient | Native flow implementovany; samostatny live Google auth-only/local-signout a assisted manual clipboard probe PASS, full signed-in backend/controller dictation stale chybi; samostatny automatic DesktopGuard port viz dalsi radek |
 | Automatic DesktopGuard paste port | NOVYexactonephysicalpostfix5b test PASS:one4eventnativeCtrlV/exactownfieldmarker/normalclosed,no retry. Nejdenifullcontroller/hold-toggle/hour/realbackend acceptance;older50040BLOCKED/45788assisted zustavaji |
@@ -3821,3 +3821,67 @@ Vsechny starefailedcases vcetneb7unknownfinalaccepted/orphan14 zustavaji.
 Pred delsim currentcontroller testem je nutne nove konkretni synteticke zadani;
 30sPASS sam nenahrazuje120s/hodinu/realrotation/postidle/fullGUI/physical/IAM
 acceptance a nic dalsiho se automaticky nespousti.
+
+### NOVY ONE120s76b25da sameneutral diagnostic: FAILED Overflow44.405102s
+
+Po30sPASS koordinator zadal JEDEN NOVY120s/3840000PCM NoPorts case nad STEJNYM
+76b25da/Rusttreed3ff9eb/matchedCI41737781150/releaseLIBTEST9804576b/PDB059b2112
+a neutralcollector7e45735e/sampler88c5/reportdef129a6. Vsechny hashes sedely;
+zadny rebuild/nativecode/collectorfeature change, jen novycase120s/3+121+3.
+Nejde o automatickyretry30s nebo b7, extra120plusfullhour ani physicalgrant.
+Readiness/native62736/collector72572/image a rawwarmheader byly actualovereny.
+Behemcollection zadny localbuild/testload/sourceedit nebo observercontentread
+zivychRecoverymanifest/audio. Puvodni1280B40ms50slots/2s30s/5sjoin/security/
+durability/prefix/incomplete/no delivery contracts zustaly bezezmeny.
+
+Vysledek je FAILED/INCOMPLETE, NE120sPASS. Producer ve44.405102s naframe1107
+vratil typedOverflow. Immutablefirstfailure predcleanupem zachovala attempt1108/
+lastaccepted1107 a EXACT1416960acceptedbytes; received1352960/completed1351680,
+lastpublishedsaved1344000/confirmed1280000. Queue50slots znamena presne64000
+accepted-but-not-yet-receivedbytes a1280bytes je praveaktivniappend.
+Rejectedpacket1280 se nezapocital jakoaccepted/success; generatedbytes vcetne
+tohoto packetu1418240 je pouze odvozeno z attemptsequence. Nativeproducedbytes
+pole1416960 oznacuje uspesneadmittedprefix, ne tento posledni rejectedpacket.
+Punctuallateness125.1028ms/max397.6265ms se nesmesuji s writerwait/lockhold.
+
+Actual owner v okamzikuOverflow je Rustthreadkey2 / send-audio-checkpoint,
+nikoli starybulkpinreader. Enginecurrentholdage2176.5383ms a root2176.4442ms,
+I/Ophase read-encrypted currentage2176.3945ms,0activepins. Capturewriter je
+active2163.7987ms a ceka na tuto enginecriticalsection. Completedmaxholds
+engine761.787ms/root761.7296ms nejsou completion delsiho praveaktivniho span.
+Source send_audio voli inner.async_lock("send-audio-checkpoint"), pak synchronous
+checkpoint; journal podrootlockem vola load_current/freshmanifestread predmutation.
+Read-encrypted je skupina freshpath/reparse/open/metadata/cipher-read pred zmenou
+phase na unprotect. Z tohoto snapshotu nelze vybrat konkretni suboperation ani
+OS/kernel pricinu, a stackcontext je stale acquisitioncontext, ne kernel sampling.
+To je novy measuredlock/manifest-path blocker, NE prokazana storage exception.
+
+Zadny NativeError/sourcechain/HRESULT v tomto behu nevznikl ani nebyl maskovany:
+firsterror je Overflow,507bytes native stderr obsahuje incomplete/nopaste a
+umyslny producerfailurepanic. producer-failure.json i flushednative firstlogs
+jsou zachovane nezavisle na collectorovem sekundarnim sampler-exitederror.
+Nativepanic je AZ PO navratu Harness.close s puvodnim5s join; zadny join-timeout
+ani stopdeadline nebyl hlasen. Neni to normal120s/outboxack/normalfixtureexit PASS.
+Ownednative/helper gone a controltempremoved, encryptedfailure zachovana.
+
+Post-exit independentDPAPI/binary/WAV/digest/order/binding verifier prokazal
+saved=accepted1416960/capture_complete=true, confirmed1280000 a136960sample-exact
+pendingPCM ve4referencedfiles. Manifest33entries, zadny unreferencedAudioorphan,
+historyempty/no delivery a ciphertextpred/poverification bezezmeny. Tato novavelicina
+all_this_run_accepted_saved=true se NEPRENAsi na stareb7unknownfinalaccepted/
+orphan14. Prvni postrun native --recovery-load-fixture command timeoutnul20s,
+presne misto timeoutu neni znamo; neni pocitan jako PASS. Alternativni bounded
+existing --unprotect-stdin nad owncipher a nezavislybinaryparser verification
+uspely, viz postread-notes.json; neprejmenovano na nativepathloaderproof.
+Diagprobe mylne cekajiciJSON nad binaryVPRJ je rovnez oddeleny postreaderror,
+nikoli actualcapture/storagecorruption.
+
+Nezavisle znovu overeny source/binary/PDB/tool hashes,3warm+45partialcapture
+flushedrawsamples/4ten-second snapshots, exactadmission/cipher/cleanup.
+Postphase nevznikla; zadny10MiBgrowth/product80MiB/hodina claim. External
+precleanupentries/chargesNOT_OBSERVED;33entries/fourpending je az postexit
+durablemanifest, ne racycapture counts. Vse je v controller-diagnostic-120s-76b25da,
+independent-failure-verification.json. NOretry/nohour; nejmensi dalsi rootobjective
+je konkretni dlouhy freshmanifestread uvnitr send-audio-checkpoint state/root
+criticalsection a jeho subphase/ownership proof, ne spekulativniOS/metadata
+optimalizace. Vsechny starefailedcases/071/5bproofy zustavaji revision-scoped.
