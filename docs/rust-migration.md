@@ -44,8 +44,8 @@ uz uzivatel nechce.
 | Mereni Windows klienta | NOVA vyslovne schvalena quiet-window current071/checkout86f3b0f full-runtime signed-out30+30/3paired301-point PASS: p95Rust257.948ms,meanprivate3.427MiB,observedpeak3.992MiB. Vsechnyrawvalues/pairedthresholds/cleanup nezavisleovereny;starsi7bPASS ia2d/3f4FAILEDINCOMPLETE zachovany,neprepisuji se na signed-in/physical scope |
 | Microphone readiness | Jeden actual240ms probe a samostatne schvalena30+30 paired serie prosly; first-PCM p95Rust80.75% C#baseline, bez audio souboru/uploadu |
 | Engine longevity | Actual3600s synthetic PCM/real50min rotation,115200000 exact bytes; worst idle growth1.645MiB<10MiB, engine-only PASS |
-| Current controller functionality/reliability | Historicky05 Temp120sPASS_ONLY a nasledny actualhourFAIL308.052378s/9857280admitted zustavaji. Nova oprava oddeluje kratky PCM stav od durable seal/confirm IO; controlled send/confirm RED->GREEN, single-worker owner-specific128k/160k proof pod konzervativnim192k bound a fail-closed error. MatchingCI a nova600s/hour akceptace dosud NEPROBEHLY; CDB600 zrusen. Puvodni0x5actor stale UNRESOLVED |
-| CI nativniho inkrementu | Lossless own-lifecycle revision05eef8e ma exactCI41781008116 Windows/Linux/MSRV1.85/container ALL5PASS,153native/16ignored a stavajici parity/guards. Predchozi55/680 a failedCI zustavaji revision-scoped; neni hour/realworld cutover |
+| Current controller functionality/reliability | Nova D->P oprava2f8ef3a: controlled send/confirm RED->GREEN, single-worker owner-specific128k/160k proof pod192k upperbound; ONEplain FUNCTIONAL600_ONLYPASS actual600.0084191s/exact19200000PCM/normaljoinsACK. Historicky05hourFAIL308s a0x5failure zachovany; nova finalhour dosud NOT_STARTED, CDB600 cancelled0. Neni wholeGUI/physical/install/privateAzure acceptance |
+| CI nativniho inkrementu | Exact2f8ef3a/CI41889751493 Windows/Linux/MSRV1.85/container ALL5SUCCESS, Windows157nativePASS16ignored, parity/guards a3s NoPorts functional smoke PASS. Older05/55/680/failedCI zustavaji revision-scoped; neni production cutover |
 | OAuth/token-store/PubSub klient | Native flow implementovany; samostatny live Google auth-only/local-signout a assisted manual clipboard probe PASS, full signed-in backend/controller dictation stale chybi; samostatny automatic DesktopGuard port viz dalsi radek |
 | Automatic DesktopGuard paste port | NOVYexactonephysicalpostfix5b test PASS:one4eventnativeCtrlV/exactownfieldmarker/normalclosed,no retry. Nejdenifullcontroller/hold-toggle/hour/realbackend acceptance;older50040BLOCKED/45788assisted zustavaji |
 | Diktovani/recovery UI | Native microphone/hotkeys/overlay/paste controller, oba enginy, journal, polishing a outbox implementovany; real-world a rozsahlejsi fault/E2E akceptace zbyva |
@@ -4598,6 +4598,40 @@ nenasel high-confidence concurrencybug; reviewer neprovadel testy a pozdejsi
 test/doc zmeny se nevydavaji za reviewedsource.
 Localworkspace157native/16ignored, fmt/Clippy/release,7C#recovery+4dictation
 parity a source-hashed3s Temp functional96000PCM smoke PASS.
-Matching source CI se teprve dokoncji. Pak je nove conditionalzadany
-ONE600s FUNCTIONAL NoPorts/Temp case BEZCDB/Procmon/resource sampleru;
+Matching source CI41889751493 pro commit
+`2f8ef3aecc83ccd8e1b7541fecba85ae64c263ae` je ALL5 completedSUCCESS,
+vcetne Windows157native/16ignored, parity a3s functional smoke. ExactJSON
+i skutecny Windowsjoblog jsou ulozeny. Nove zadany plain600 case probehl niz;
 neni to zruseny CDB600 ani nova actualhour/50minrotation acceptance.
+
+### ONE repaired plain FUNCTIONAL600: PASS, exact19200000PCM and normal ACK/join
+
+Source2f8ef3a/Rusttree0bc54cd67718b65b9f085bcb17bd209a0a269ef6/
+releasefixturedd5de78613251ac27d10c6af5a4fad4678a89aeea503f902ac20ba8dacbf11fc
+a PDB/product/sourcearchive/existing983helpers byly zmrazeny; vsech8inputhashes
+shodnych pred i po behu. Runtime/observations bez CDB/Procmon/CPU-RSS/
+idle/startupsampleru; original1280B40ms50slots/2s30s5s aDPAPI/history/
+polisher/periodicoutbox zustaly. Zadny localbuild/testload/sourceedit pri capture.
+
+Actual **600.0084191s**, exact **19200000 produced/admitted/received/
+completed-append/saved/sent/confirmed bytes**,300strictlyorderedconfirmedcursors,
+streamstarts[0]. Normal original-budget capture/writer/reader/outbox joins,
+History-before-handoff, polisher a outboxACK; pins/inspection/aliascapacity0.
+Native1PASS/helper0/stderr0, zadny firsterror nebo renamewitness.
+10flushedminuteprogress records zachovano, ne resourcesamples.
+
+Postexit nezavisle overeny runtime/exactcursors/joins markers a72snapshotfilehashes,
+frozeninputs a nezmeneny source. Native fresh-manifest/byte/sample/order
+assertions jsou PRED outboxACK delete; **externi precleanup ciphertext/counts
+NOT_OBSERVED**. PostACKempty/cleaned state neni zpetne dekodovany plny recording.
+Knownhelper75220/collector79324/native67600 absent, pouze exactownedTempGUID
+192a83c4255e4b4aabba0e523e751d6a odstranen AZ po verifiedsnapshot.
+Persistentproof `functional-controller-600s-2f8ef3a/independent-verification.json`.
+
+Jde o **FUNCTIONAL600_ONLY**, nikoli hodinovou/real50minrotation/pametovou
+nebo physical/fullGUI/install/privateAzure akceptaci. Stare failedhour308s
+a artifact0x5/23040RAM-not-durable se neprepisuji ani nepripisuji AV/watcheru.
+Nasledne byl zadan prave ONEfinal3600s funkcni NoPorts/Temp run nad STEJNYM
+frozen2f8image/PDB/Rusttree a matchingCI, bez noveho buildu/perfprofilu.
+V tomto dokumentacnim checkpointu je finalhour stale NOT_STARTED; jeho
+vysledek nelze odvodit z tohoto600s PASS.
