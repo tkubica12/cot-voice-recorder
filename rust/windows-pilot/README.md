@@ -341,7 +341,9 @@ open mean UNKNOWN, never an empty/no-owner proof. Historical ring eviction is
 reported separately. There is no packet-frequency stack capture or content log.
 
 On the first failed atomic rename, the explicitly configured fixture sink writes
-and syncs `first-rename-failure.json` before staging cleanup. It includes observed
+and syncs `first-rename-failure.json` before staging cleanup. It covers both the
+existing unmeasured warmup and the measured controller; warmup failure must not
+lose the witness before readiness. The witness includes observed
 monotonic/UTC API-result times, source/destination relative names, unchanged
 rename flags/HRESULT, handle snapshot, last durable generations and pointwise
 atomic admission/received/completed counters. Path-guarded metadata probes are

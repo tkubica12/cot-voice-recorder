@@ -4110,3 +4110,9 @@ Production MoveFileExW/flags/flush/poison policy, fronta1280B40ms50slots a budge
 pred novym I/O; proto jeho hlaska sama neprokazuje druhy OS denial nebo trvale
 nezapisovatelny disk. Puvodni20,480 admitted nedurable a vsechny raw/cipher failed
 dukazy zustavaji. NO_INSTRUMENTED_OWNER_SEEN neni external-actor proof.
+
+Preflight audit navic zapojil stejny durable sink jiz pred existujicim nemerenym
+warmupem, aby chyba pred ready neztratila witness. Kontrolovany short fault unit
+overuje measured export i warmup-like beh bez producer diagnostic JSON; v obou
+vetvich musi first-rename witness zustat durable. Predchozi aab7da6 archiv/binary/
+CI zustavaji zachovane jako source faze; zadny actual60s nad nimi nebyl spusten.

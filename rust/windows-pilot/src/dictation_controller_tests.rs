@@ -1090,10 +1090,22 @@ async fn short_realtime_controller_smoke_joins_exact_pcm_and_outbox_without_phys
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn short_realtime_storage_failure_publishes_exact_producer_context_before_join_and_panic() {
+    for export_producer_context in [true, false] {
+        controlled_realtime_storage_failure(export_producer_context).await;
+    }
+}
+
+async fn controlled_realtime_storage_failure(export_producer_context: bool) {
     let directory = TemporaryRoot::new();
     let diagnostics = directory.0.join("diagnostics");
     std::fs::create_dir(&diagnostics).unwrap();
     let mut harness = Harness::new_at(directory.0.join("state"), true, true, None);
+    if !export_producer_context {
+        harness
+            .recovery
+            .fixture_own_io()
+            .set_sink(diagnostics.join("first-rename-failure.json"));
+    }
     let recovery = harness.recovery.clone();
     let root = harness.root.clone();
     let held = Arc::new(std::sync::OnceLock::new());
@@ -1130,8 +1142,14 @@ async fn short_realtime_storage_failure_publishes_exact_producer_context_before_
         assert!(locked.set((handle, path, before)).is_ok());
     }));
     let output = diagnostics.clone();
-    let producer =
-        tokio::spawn(async move { run_controller_capture(&mut harness, 3, Some(&output)).await });
+    let producer = tokio::spawn(async move {
+        run_controller_capture(
+            &mut harness,
+            3,
+            export_producer_context.then_some(output.as_path()),
+        )
+        .await
+    });
     let result = tokio::time::timeout(Duration::from_secs(10), producer)
         .await
         .unwrap();
@@ -1142,6 +1160,20 @@ async fn short_realtime_storage_failure_publishes_exact_producer_context_before_
     let (_, path, original_cipher) = held
         .get()
         .expect("The synthetic file fault was not prepared before capture.");
+    if !export_producer_context {
+        let witness: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(diagnostics.join("first-rename-failure.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            witness["owner_classification"],
+            "OWN_LIVE_DESTINATION_HANDLE_OBSERVED"
+        );
+        assert_eq!(witness["HRESULT"], "0x80070005");
+        assert!(!diagnostics.join("producer-failure.json").exists());
+        assert_eq!(&std::fs::read(path).unwrap(), original_cipher);
+        return;
+    }
     let failure: serde_json::Value =
         serde_json::from_slice(&std::fs::read(diagnostics.join("producer-failure.json")).unwrap())
             .unwrap();
@@ -1279,6 +1311,9 @@ async fn realtime_synthetic_controller_hour() {
     }
     let state_root = root.join("controller-state");
     let mut warm = Harness::new_at(state_root.clone(), true, true, None);
+    warm.recovery
+        .fixture_own_io()
+        .set_sink(root.join("first-rename-failure.json"));
     let warm_outbox = HourOutbox::start(&warm);
     run_controller_capture(&mut warm, 2, None).await;
     hour_cleanup(&mut warm, &warm_outbox).await;
