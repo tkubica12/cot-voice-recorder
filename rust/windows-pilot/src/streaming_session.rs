@@ -4,7 +4,7 @@ use std::fmt;
 use std::future::Future;
 #[cfg(not(test))]
 use std::sync::MutexGuard;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -121,26 +121,42 @@ struct Hypothesis {
     partial: String,
 }
 
-struct State {
-    manifest: RecoveryManifest,
+const PCM_BUFFER_BYTES: usize = 64_000;
+
+struct PcmState {
     captured: u64,
+    buffer_start: u64,
     buffer: Vec<u8>,
-    cache: Option<(u64, AudioBuffer)>,
-    hypotheses: Vec<Hypothesis>,
-    service_error: Option<ApiErrorKind>,
-    storage_failed: bool,
+    closed: bool,
 }
 
-impl Drop for State {
+impl Drop for PcmState {
     fn drop(&mut self) {
         self.buffer.fill(0);
     }
 }
 
+struct SealingAudio {
+    end: u64,
+    pcm: AudioBuffer,
+}
+
+struct State {
+    manifest: RecoveryManifest,
+    sealing: Option<SealingAudio>,
+    cache: Option<(u64, AudioBuffer)>,
+    hypotheses: Vec<Hypothesis>,
+    service_error: Option<ApiErrorKind>,
+}
+
 struct Inner<S: StreamingBackend> {
     journal: NativeRecoveryJournal,
     service: Arc<S>,
+    // Durable operations may acquire PCM briefly; PCM owners never wait for durable state.
     state: Mutex<State>,
+    pcm: Mutex<PcmState>,
+    captured: AtomicU64,
+    storage_failed: AtomicBool,
     synchronous_waiters: AtomicUsize,
     #[cfg(test)]
     trace: Arc<crate::lock_trace::Lock>,
@@ -187,21 +203,29 @@ impl<S: StreamingBackend> StreamingSession<S> {
         if !manifest.streaming {
             return Err(SessionError::Closed);
         }
-        let state = State {
+        let pcm = PcmState {
             captured: manifest.captured_bytes,
+            buffer_start: manifest.captured_bytes,
+            buffer: Vec::with_capacity(PCM_BUFFER_BYTES),
+            closed: manifest.capture_complete,
+        };
+        let state = State {
             manifest,
-            buffer: Vec::with_capacity(64_000),
+            sealing: None,
             cache: None,
             hypotheses: Vec::new(),
             service_error: None,
-            storage_failed: false,
         };
-        let (progress, _) = watch::channel(make_progress(&state));
+        let (progress, _) = watch::channel(make_progress(&state, pcm.captured, false));
         let (cancel, _) = watch::channel(false);
+        let captured = AtomicU64::new(pcm.captured);
         let inner = Arc::new(Inner {
             journal,
             service,
             state: Mutex::new(state),
+            pcm: Mutex::new(pcm),
+            captured,
+            storage_failed: AtomicBool::new(false),
             synchronous_waiters: AtomicUsize::new(0),
             #[cfg(test)]
             trace: crate::lock_trace::Lock::new("streaming-state"),
@@ -247,38 +271,60 @@ impl<S: StreamingBackend> StreamingSession<S> {
                 voiceprompt_core::chunker::ChunkerError::IncompleteSample,
             ));
         }
-        let mut state = self.inner.lock().map_err(session_failure)?;
-        if state.manifest.capture_complete || *self.inner.cancel.borrow() {
-            return Err(SessionError::Closed);
-        }
-        if state.storage_failed {
-            return Err(SessionError::Storage(NativeError::Verification(
-                "Recovery storage failed.",
-            )));
-        }
-        if state
-            .captured
-            .checked_add(pcm.len() as u64)
-            .is_none_or(|end| end > MAX_CAPTURED_BYTES)
-        {
-            return Err(SessionError::Storage(NativeError::Verification(
-                "Recovery captured-byte limit exceeded.",
-            )));
-        }
-        while !pcm.is_empty() {
-            let count = (64_000 - state.buffer.len()).min(pcm.len());
-            state.buffer.extend_from_slice(&pcm[..count]);
-            state.captured += count as u64;
-            pcm = &pcm[count..];
-            if state.buffer.len() == 64_000 {
-                self.inner
-                    .checkpoint(&mut state, false)
+        loop {
+            let (captured, full) = {
+                let mut state = self.inner.lock_pcm().map_err(session_failure)?;
+                if state.closed || *self.inner.cancel.borrow() {
+                    return Err(SessionError::Closed);
+                }
+                if self.inner.storage_failed.load(Ordering::Acquire) {
+                    return Err(SessionError::Storage(NativeError::Verification(
+                        "Recovery storage failed.",
+                    )));
+                }
+                if state
+                    .captured
+                    .checked_add(pcm.len() as u64)
+                    .is_none_or(|end| end > MAX_CAPTURED_BYTES)
+                {
+                    return Err(SessionError::Storage(NativeError::Verification(
+                        "Recovery captured-byte limit exceeded.",
+                    )));
+                }
+                let count = (PCM_BUFFER_BYTES - state.buffer.len()).min(pcm.len());
+                state.buffer.extend_from_slice(&pcm[..count]);
+                state.captured += count as u64;
+                pcm = &pcm[count..];
+                self.inner.captured.store(state.captured, Ordering::Release);
+                (state.captured, state.buffer.len() == PCM_BUFFER_BYTES)
+            };
+            self.inner.progress.send_modify(|progress| {
+                progress.captured_bytes = progress.captured_bytes.max(captured);
+                #[cfg(test)]
+                self.inner.trace.progress(
+                    progress.captured_bytes,
+                    progress.saved_bytes,
+                    progress.transcribed_bytes,
+                );
+            });
+            self.inner.wake.notify_one();
+            if full {
+                let mut state = self
+                    .inner
+                    .lock_named("capture-seal")
                     .map_err(session_failure)?;
+                let full = self.inner.lock_pcm().map_err(session_failure)?.buffer.len()
+                    == PCM_BUFFER_BYTES;
+                if full {
+                    self.inner
+                        .checkpoint(&mut state, false)
+                        .map_err(session_failure)?;
+                }
+            }
+            if pcm.is_empty() {
+                return Ok(());
             }
         }
-        self.inner.publish(&state);
-        self.inner.wake.notify_one();
-        Ok(())
     }
 
     pub fn finish_capture(&self) -> Result<(), SessionError> {
@@ -370,7 +416,7 @@ fn session_failure(failure: Failure) -> SessionError {
     }
 }
 
-fn make_progress(state: &State) -> DictationProgress {
+fn make_progress(state: &State, captured: u64, storage_failed: bool) -> DictationProgress {
     let suffix = state
         .hypotheses
         .iter()
@@ -379,7 +425,7 @@ fn make_progress(state: &State) -> DictationProgress {
         .join(" ");
     let preview = append_preserving_prefix(&state.manifest.confirmed_text, &suffix, false, None);
     DictationProgress {
-        captured_bytes: state.captured,
+        captured_bytes: captured,
         saved_bytes: state.manifest.captured_bytes,
         transcribed_bytes: state.manifest.confirmed_bytes,
         pending_chunks: state
@@ -391,12 +437,19 @@ fn make_progress(state: &State) -> DictationProgress {
         transcript: state.manifest.confirmed_text.clone(),
         preview: preview_tail(&preview),
         service_error: state.service_error,
-        storage_failed: state.storage_failed,
+        storage_failed,
         capture_complete: state.manifest.capture_complete,
     }
 }
 
 impl<S: StreamingBackend> Inner<S> {
+    fn lock_pcm(&self) -> Result<std::sync::MutexGuard<'_, PcmState>, Failure> {
+        self.pcm.lock().map_err(|_| {
+            self.storage_failed.store(true, Ordering::Release);
+            Failure::Storage(NativeError::Verification("Streaming PCM lock is poisoned."))
+        })
+    }
+
     async fn async_lock(&self, operation: &'static str) -> Result<MutexGuard<'_, State>, Failure> {
         #[cfg(not(test))]
         let _ = operation;
@@ -415,6 +468,7 @@ impl<S: StreamingBackend> Inner<S> {
                     return Ok(state);
                 }
                 Err(std::sync::TryLockError::Poisoned(_)) => {
+                    self.storage_failed.store(true, Ordering::Release);
                     return Err(Failure::Storage(NativeError::Verification(
                         "Streaming state lock is poisoned.",
                     )));
@@ -449,6 +503,7 @@ impl<S: StreamingBackend> Inner<S> {
         let result = self.state.lock();
         self.synchronous_waiters.fetch_sub(1, Ordering::AcqRel);
         let guard = result.map_err(|_| {
+            self.storage_failed.store(true, Ordering::Release);
             Failure::Storage(NativeError::Verification(
                 "Streaming state lock is poisoned.",
             ))
@@ -480,63 +535,94 @@ impl<S: StreamingBackend> Inner<S> {
         let _mutation = crate::mutation_trace::span("cursor-progress-publication");
         #[cfg(test)]
         let _probe = self.journal.fixture_publish_progress();
-        let value = make_progress(state);
-        #[cfg(test)]
-        self.trace.progress(
-            value.captured_bytes,
-            value.saved_bytes,
-            value.transcribed_bytes,
+        let mut value = make_progress(
+            state,
+            self.captured.load(Ordering::Acquire),
+            self.storage_failed.load(Ordering::Acquire),
         );
-        self.progress.send_replace(value);
+        self.progress.send_modify(|progress| {
+            value.captured_bytes = value.captured_bytes.max(progress.captured_bytes);
+            #[cfg(test)]
+            self.trace.progress(
+                value.captured_bytes,
+                value.saved_bytes,
+                value.transcribed_bytes,
+            );
+            *progress = value;
+        });
     }
 
     fn checkpoint(&self, state: &mut State, complete: bool) -> Result<(), Failure> {
-        if state.storage_failed {
+        if self.storage_failed.load(Ordering::Acquire) {
             return Err(Failure::Storage(NativeError::Verification(
                 "Recovery storage failed.",
             )));
         }
-        let audio = {
-            #[cfg(test)]
-            let _mutation = crate::mutation_trace::span("wav-encode");
-            if state.buffer.is_empty() {
-                None
-            } else {
-                Some(AudioBuffer(
-                    to_wav(&state.buffer).map_err(|_| Failure::Worker)?,
-                ))
+        let end = {
+            let mut pcm = self.lock_pcm()?;
+            if state.sealing.is_some() || pcm.buffer_start != state.manifest.captured_bytes {
+                return Err(Failure::Storage(NativeError::Verification(
+                    "Streaming PCM publication boundary is invalid.",
+                )));
             }
+            pcm.closed |= complete;
+            let end = pcm.captured;
+            if !pcm.buffer.is_empty() {
+                let bytes =
+                    std::mem::replace(&mut pcm.buffer, Vec::with_capacity(PCM_BUFFER_BYTES));
+                state.sealing = Some(SealingAudio {
+                    end,
+                    pcm: AudioBuffer(bytes),
+                });
+                pcm.buffer_start = end;
+            }
+            end
         };
-        let chunks: Vec<_> = audio
-            .iter()
-            .map(|audio| AudioCheckpoint {
-                wav: &audio.0,
-                end_byte: state.captured,
-                overlaps_previous: false,
-            })
-            .collect();
-        // Streaming mutations share this engine lock; use the snapshot we just published.
-        let result = self.journal.checkpoint_snapshot(
-            &state.manifest.tail,
-            state.captured,
-            &chunks,
-            complete,
-            time::OffsetDateTime::now_utc(),
-        );
+        let result = (|| {
+            let audio = {
+                #[cfg(test)]
+                let _mutation = crate::mutation_trace::span("wav-encode");
+                state
+                    .sealing
+                    .as_ref()
+                    .map(|sealing| {
+                        to_wav(&sealing.pcm.0)
+                            .map(AudioBuffer)
+                            .map_err(|_| Failure::Worker)
+                    })
+                    .transpose()?
+            };
+            let chunks: Vec<_> = audio
+                .iter()
+                .map(|audio| AudioCheckpoint {
+                    wav: &audio.0,
+                    end_byte: state.sealing.as_ref().map_or(end, |sealing| sealing.end),
+                    overlaps_previous: false,
+                })
+                .collect();
+            self.journal
+                .checkpoint_snapshot(
+                    &state.manifest.tail,
+                    end,
+                    &chunks,
+                    complete,
+                    time::OffsetDateTime::now_utc(),
+                )
+                .map_err(Failure::Storage)
+        })();
         match result {
             Ok(manifest) => {
                 #[cfg(test)]
                 let _mutation = crate::mutation_trace::span("manifest-cursor-update");
                 state.manifest = manifest;
-                state.buffer.fill(0);
-                state.buffer.clear();
+                state.sealing = None;
                 self.publish(state);
                 Ok(())
             }
             Err(error) => {
-                state.storage_failed = true;
+                self.storage_failed.store(true, Ordering::Release);
                 self.publish(state);
-                Err(Failure::Storage(error))
+                Err(error)
             }
         }
     }
@@ -547,20 +633,23 @@ impl<S: StreamingBackend> Inner<S> {
         position: u64,
         maximum: usize,
     ) -> Result<AudioRead, Failure> {
-        let sealed = state
-            .manifest
-            .chunks
-            .last()
-            .map_or(0, |chunk| chunk.end_byte);
-        if position >= sealed {
-            let offset = usize::try_from(position - sealed).map_err(|_| Failure::Worker)?;
-            if offset >= state.buffer.len() {
+        if self.storage_failed.load(Ordering::Acquire) {
+            return Err(Failure::Storage(NativeError::Verification(
+                "Recovery storage failed.",
+            )));
+        }
+        let pcm = self.lock_pcm()?;
+        if position >= pcm.buffer_start {
+            let offset =
+                usize::try_from(position - pcm.buffer_start).map_err(|_| Failure::Worker)?;
+            if offset >= pcm.buffer.len() {
                 return Ok(AudioRead::Memory(AudioBuffer(Vec::new())));
             }
             return Ok(AudioRead::Memory(AudioBuffer(
-                state.buffer[offset..offset + maximum.min(state.buffer.len() - offset)].to_vec(),
+                pcm.buffer[offset..offset + maximum.min(pcm.buffer.len() - offset)].to_vec(),
             )));
         }
+        drop(pcm);
         let cached = state.cache.as_ref().is_some_and(|(start, audio)| {
             position >= *start && position < *start + (audio.0.len() - 44) as u64
         });
@@ -604,17 +693,22 @@ impl<S: StreamingBackend> Inner<S> {
         if through <= state.manifest.confirmed_bytes || through > state.manifest.captured_bytes {
             return Err(Failure::Api(ApiErrorKind::Unexpected));
         }
-        state.manifest = self
-            .journal
-            .confirm_streaming_snapshot(
-                through,
-                text,
-                context,
-                fallback,
-                Some(words),
-                time::OffsetDateTime::now_utc(),
-            )
-            .map_err(Failure::Storage)?;
+        let manifest = self.journal.confirm_streaming_snapshot(
+            through,
+            text,
+            context,
+            fallback,
+            Some(words),
+            time::OffsetDateTime::now_utc(),
+        );
+        state.manifest = match manifest {
+            Ok(manifest) => manifest,
+            Err(error) => {
+                self.storage_failed.store(true, Ordering::Release);
+                self.publish(state);
+                return Err(Failure::Storage(error));
+            }
+        };
         state.cache = None;
         self.publish(state);
         Ok(())
@@ -749,7 +843,8 @@ async fn send_audio<S: StreamingBackend>(
         } else {
             let complete = {
                 let state = inner.async_lock("send-audio-complete").await?;
-                state.manifest.capture_complete && position == state.captured
+                state.manifest.capture_complete
+                    && position == inner.captured.load(Ordering::Acquire)
             };
             if complete {
                 break;
@@ -985,7 +1080,7 @@ async fn fallback<S: StreamingBackend>(
         (
             state.manifest.confirmed_bytes,
             AudioBuffer(state.manifest.tail.clone()),
-            state.captured,
+            inner.captured.load(Ordering::Acquire),
             state.manifest.language.clone(),
             state.manifest.context.clone(),
         )
@@ -1095,7 +1190,7 @@ async fn pump<S: StreamingBackend>(inner: Arc<Inner<S>>) {
             let done = match inner.async_lock("pump-verify").await {
                 Ok(state) => {
                     state.manifest.capture_complete
-                        && state.manifest.confirmed_bytes == state.captured
+                        && state.manifest.confirmed_bytes == inner.captured.load(Ordering::Acquire)
                 }
                 Err(_) => false,
             };
@@ -1119,7 +1214,9 @@ async fn pump<S: StreamingBackend>(inner: Arc<Inner<S>>) {
                 if let Ok(mut state) = inner.async_lock("pump-error").await {
                     state.hypotheses.clear();
                     state.service_error = kind;
-                    state.storage_failed |= kind.is_none();
+                    if kind.is_none() {
+                        inner.storage_failed.store(true, Ordering::Release);
+                    }
                     inner.publish(&state);
                 }
                 if kind.is_none() {

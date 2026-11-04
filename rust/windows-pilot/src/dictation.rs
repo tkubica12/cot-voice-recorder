@@ -416,7 +416,7 @@ async fn stop_microphone<P: DictationPorts>(microphone: Option<P::Capture>) -> b
     }
 }
 
-fn persist_capture(
+pub(crate) fn persist_capture(
     mut receiver: mpsc::Receiver<CaptureBuffer>,
     discard: &AtomicBool,
     stopped: &watch::Sender<bool>,

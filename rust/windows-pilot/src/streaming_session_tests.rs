@@ -17,6 +17,7 @@ enum Mode {
 struct Service {
     mode: Mode,
     connections: AtomicUsize,
+    committed: AtomicU64,
     starts: Mutex<Vec<u64>>,
     sent: Mutex<Vec<Vec<u8>>>,
     batches: Mutex<Vec<Vec<u8>>>,
@@ -29,6 +30,7 @@ impl Service {
         Arc::new(Self {
             mode,
             connections: AtomicUsize::new(0),
+            committed: AtomicU64::new(0),
             starts: Mutex::new(Vec::new()),
             sent: Mutex::new(Vec::new()),
             batches: Mutex::new(Vec::new()),
@@ -97,6 +99,10 @@ impl AudioSender for Sender {
         Ok(())
     }
     async fn commit(&self, finish: bool) -> Result<(), ApiError> {
+        self.service
+            .committed
+            .store(self.connection.lock().unwrap().position, Ordering::Release);
+        self.service.changed.notify_one();
         if matches!(self.service.mode, Mode::PartialDisconnect) && self.index == 0 {
             if !finish {
                 let end = self.connection.lock().unwrap().position;
@@ -204,6 +210,388 @@ fn journal(directory: &TemporaryRoot) -> (NativeRecoveryStore, NativeRecoveryJou
         )
         .unwrap();
     (store, journal)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn capture_progresses_while_send_checkpoint_or_confirmation_io_is_paused() {
+    let mut outcomes = Vec::new();
+    for confirming in [false, true] {
+        let directory = TemporaryRoot::new();
+        let (store, journal) = journal(&directory);
+        let service = Service::new(Mode::Healthy);
+        let session = Arc::new(StreamingSession::start(journal, Arc::new(service), true).unwrap());
+        let bytes: Vec<_> = (0..35_200)
+            .flat_map(|index| ((index % 97) as i16 - 48).to_le_bytes())
+            .collect();
+        session.append(&bytes[..32_000]).unwrap();
+        let (_stop, stopped) = watch::channel(false);
+        if confirming {
+            checkpoint_for_send(session.inner.clone(), stopped.clone(), "regression-prepare")
+                .await
+                .unwrap();
+        }
+        let (release, entered) = store.pause_next_fixture_write();
+        let owner = session.inner.clone();
+        let context = bytes[32_000usize.saturating_sub(OVERLAP_BYTES)..32_000].to_vec();
+        let io = tokio::spawn(async move {
+            if confirming {
+                tokio::task::spawn_blocking(move || {
+                    let mut state = owner.lock_named("regression-confirm")?;
+                    owner.confirm(&mut state, 32_000, "first".into(), false, 1, context)
+                })
+                .await
+                .unwrap()
+            } else {
+                checkpoint_for_send(owner, stopped, "regression-send-checkpoint")
+                    .await
+                    .map(|_| ())
+            }
+        });
+        tokio::time::timeout(Duration::from_secs(5), entered)
+            .await
+            .unwrap()
+            .unwrap();
+        let capture = session.clone();
+        let packets = bytes[32_000..].to_vec();
+        let mut append = tokio::task::spawn_blocking(move || {
+            for packet in packets.chunks_exact(1_280) {
+                capture.append(packet)?;
+            }
+            Ok::<_, SessionError>(())
+        });
+        let progressed = tokio::time::timeout(Duration::from_secs(1), &mut append).await;
+        let completed_while_paused = progressed.is_ok();
+        let published_capture = session.progress().borrow().captured_bytes;
+        let buffered = {
+            let pcm = session.inner.lock_pcm().unwrap();
+            (pcm.buffer_start, pcm.buffer.clone())
+        };
+        // Release the real filesystem writer even when the RED assertion will fail.
+        drop(release);
+        io.await.unwrap().unwrap();
+        match progressed {
+            Ok(result) => result.unwrap().unwrap(),
+            Err(_) => append.await.unwrap().unwrap(),
+        }
+        session.inner.cancel.send_replace(true);
+        session.finish_capture().unwrap();
+        let saved = session.snapshot().unwrap();
+        assert_eq!(saved.captured_bytes, bytes.len() as u64);
+        assert!(saved.capture_complete);
+        for chunk in saved.chunks.iter().filter(|chunk| chunk.text.is_none()) {
+            let audio = session.inner.journal.read_audio(chunk.index).unwrap();
+            let end = chunk.end_byte as usize;
+            assert_eq!(&audio[44..], &bytes[end - (audio.len() - 44)..end]);
+        }
+        Arc::try_unwrap(session)
+            .ok()
+            .unwrap()
+            .shutdown()
+            .await
+            .unwrap();
+        outcomes.push((confirming, completed_while_paused, published_capture));
+        assert_eq!(buffered, (32_000, bytes[32_000..].to_vec()));
+    }
+    assert!(
+        outcomes
+            .iter()
+            .all(|(_, done, captured)| *done && *captured == 70_400),
+        "Capture waited for unrelated durable I/O: (confirming, completed, captured)={outcomes:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sender_and_capture_seals_use_one_real_persistence_worker_and_the_original_queue_bound() {
+    use crate::microphone::{BUFFER_BYTES, CaptureBuffer, OUTPUT_BUFFER_COUNT};
+    for sender_owned in [false, true] {
+        let directory = TemporaryRoot::new();
+        let (store, journal) = journal(&directory);
+        let service = Service::new(Mode::Healthy);
+        let session = Arc::new(StreamingSession::start(journal, Arc::new(service), true).unwrap());
+        let expected = if sender_owned { 160_000 } else { 128_000 };
+        let bytes: Vec<_> = (0..expected / 2)
+            .flat_map(|index| ((index % 97) as i16 - 48).to_le_bytes())
+            .collect();
+        let completed = Arc::new(AtomicU64::new(0));
+        let returned = completed.clone();
+        let writer = session.clone();
+        let (queue, receiver) = mpsc::channel(OUTPUT_BUFFER_COUNT);
+        let (stopped, stopped_state) = watch::channel(false);
+        let capture = tokio::task::spawn_blocking(move || {
+            crate::dictation::persist_capture(receiver, &AtomicBool::new(false), &stopped, |pcm| {
+                writer.append(pcm)?;
+                returned.fetch_add(pcm.len() as u64, Ordering::Release);
+                Ok(())
+            })
+        });
+        if sender_owned {
+            for packet in bytes[..32_000].chunks_exact(BUFFER_BYTES) {
+                assert!(queue.send(CaptureBuffer(packet.to_vec())).await.is_ok());
+            }
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while completed.load(Ordering::Acquire) != 32_000 {
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            })
+            .await
+            .unwrap();
+        }
+        let (release, entered) = store.pause_next_fixture_write();
+        let owner = session.inner.clone();
+        let (_stop, stopped_sender) = watch::channel(false);
+        let sending = sender_owned.then(|| {
+            tokio::spawn(async move {
+                checkpoint_for_send(owner, stopped_sender, "real-worker-sender-seal").await
+            })
+        });
+        if !sender_owned {
+            for packet in bytes[..64_000].chunks_exact(BUFFER_BYTES) {
+                assert!(queue.send(CaptureBuffer(packet.to_vec())).await.is_ok());
+            }
+        }
+        tokio::time::timeout(Duration::from_secs(5), entered)
+            .await
+            .unwrap()
+            .unwrap();
+        let inflight = if sender_owned { 32_000 } else { 64_000 };
+        let pcm_end = if sender_owned { 96_000 } else { 64_000 };
+        if sender_owned {
+            for packet in bytes[32_000..96_000].chunks_exact(BUFFER_BYTES) {
+                assert!(queue.send(CaptureBuffer(packet.to_vec())).await.is_ok());
+            }
+        }
+        let full = tokio::time::timeout(Duration::from_secs(5), async {
+            while session.inner.captured.load(Ordering::Acquire) != pcm_end as u64 {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await;
+        let buffered = {
+            let pcm = session.inner.lock_pcm().unwrap();
+            (pcm.buffer_start, pcm.buffer.clone(), pcm.buffer.capacity())
+        };
+        for packet in bytes[pcm_end..].chunks_exact(BUFFER_BYTES) {
+            assert!(queue.try_send(CaptureBuffer(packet.to_vec())).is_ok());
+        }
+        let bounded = matches!(
+            queue.try_send(CaptureBuffer(vec![0; BUFFER_BYTES])),
+            Err(mpsc::error::TrySendError::Full(_))
+        );
+        let completed_while_paused = completed.load(Ordering::Acquire);
+        let owned_while_paused = !capture.is_finished() && !*stopped_state.borrow();
+        let durable = session.progress().borrow().saved_bytes;
+        drop(release);
+        if let Some(sending) = sending {
+            assert!(sending.await.unwrap().unwrap());
+        }
+        drop(queue);
+        capture.await.unwrap().unwrap();
+        session.inner.cancel.send_replace(true);
+        session.finish_capture().unwrap();
+        let saved = session.snapshot().unwrap();
+        let mut previous = 0;
+        for chunk in &saved.chunks {
+            let audio = session.inner.journal.read_audio(chunk.index).unwrap();
+            assert_eq!(chunk.end_byte, previous + (audio.len() - 44) as u64);
+            assert_eq!(
+                &audio[44..],
+                &bytes[previous as usize..chunk.end_byte as usize]
+            );
+            previous = chunk.end_byte;
+        }
+        Arc::try_unwrap(session)
+            .ok()
+            .unwrap()
+            .shutdown()
+            .await
+            .unwrap();
+        assert!(full.is_ok() && bounded && owned_while_paused && *stopped_state.borrow());
+        assert_eq!(completed_while_paused, pcm_end as u64 - BUFFER_BYTES as u64);
+        assert_eq!(completed.load(Ordering::Acquire), expected as u64);
+        assert_eq!(
+            buffered,
+            (inflight as u64, bytes[inflight..pcm_end].to_vec(), 64_000)
+        );
+        assert_eq!(durable, 0);
+        let unique_ram = inflight + buffered.1.len() + OUTPUT_BUFFER_COUNT * BUFFER_BYTES;
+        assert_eq!(unique_ram, expected);
+        assert!(unique_ram <= 192_000);
+        assert_eq!(previous, expected as u64);
+        assert_eq!(saved.captured_bytes, expected as u64);
+        assert!(saved.capture_complete);
+        assert_eq!(saved.context, "synthetic context");
+        println!(
+            "single-persist_capture:sender_owned={sender_owned};unique_ram={unique_ram};upper_bound=192000;source_queue_slots={OUTPUT_BUFFER_COUNT};joined=true"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn failed_inflight_seal_keeps_both_pcm_owners_and_never_promotes_the_durable_prefix() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let directory = TemporaryRoot::new();
+    let (store, journal) = journal(&directory);
+    let id = journal.id().to_owned();
+    let path = directory.0.join(&id).join("manifest.enc");
+    let before = std::fs::read(&path).unwrap();
+    let held = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(1)
+        .open(&path)
+        .unwrap();
+    let service = Service::new(Mode::Healthy);
+    let session = Arc::new(StreamingSession::start(journal, Arc::new(service), true).unwrap());
+    let bytes: Vec<_> = (0..35_200)
+        .flat_map(|index| ((index % 97) as i16 - 48).to_le_bytes())
+        .collect();
+    session.append(&bytes[..32_000]).unwrap();
+    let (release, entered) = store.pause_next_fixture_write();
+    let owner = session.inner.clone();
+    let (_stop, stopped) = watch::channel(false);
+    let sealing =
+        tokio::spawn(
+            async move { checkpoint_for_send(owner, stopped, "failed-sender-seal").await },
+        );
+    tokio::time::timeout(Duration::from_secs(5), entered)
+        .await
+        .unwrap()
+        .unwrap();
+    for packet in bytes[32_000..].chunks_exact(1_280) {
+        session.append(packet).unwrap();
+    }
+    drop(release);
+    let error = sealing.await.unwrap().unwrap_err();
+    let progress = session.progress().borrow().clone();
+    {
+        let state = session.inner.lock().unwrap();
+        let owned = state.sealing.as_ref().unwrap();
+        assert_eq!(owned.end, 32_000);
+        assert_eq!(owned.pcm.0, bytes[..32_000]);
+        assert_eq!(state.manifest.captured_bytes, 0);
+        assert!(!state.manifest.capture_complete);
+    }
+    {
+        let pcm = session.inner.lock_pcm().unwrap();
+        assert_eq!(pcm.buffer_start, 32_000);
+        assert_eq!(pcm.buffer, bytes[32_000..]);
+    }
+    assert!(matches!(
+        session.append(&[0, 0]),
+        Err(SessionError::Storage(_))
+    ));
+    assert!(matches!(
+        session.finish_capture(),
+        Err(SessionError::Storage(_))
+    ));
+    assert!(progress.storage_failed && !progress.capture_complete);
+    assert_eq!((progress.captured_bytes, progress.saved_bytes), (70_400, 0));
+    assert!(error.to_string().contains("MoveFileExW"));
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    drop(held);
+    assert_eq!(store.fixture_snapshot(&id).unwrap().captured_bytes, 0);
+    Arc::try_unwrap(session)
+        .ok()
+        .unwrap()
+        .shutdown()
+        .await
+        .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn finish_and_cancel_join_the_actual_pumps_paused_confirmation_without_losing_new_pcm() {
+    for cancel in [false, true] {
+        let directory = TemporaryRoot::new();
+        let (store, journal) = journal(&directory);
+        let id = journal.id().to_owned();
+        let service = Service::new(Mode::Healthy);
+        let session =
+            Arc::new(StreamingSession::start(journal, Arc::new(service.clone()), false).unwrap());
+        session.append(&vec![0; 64_000]).unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while service.committed.load(Ordering::Acquire) != 64_000 {
+                service.changed.notified().await;
+            }
+        })
+        .await
+        .unwrap();
+        let (release, entered) = store.pause_next_fixture_write();
+        let events = service.connection_events.lock().unwrap()[0].clone();
+        events
+            .send(Event::Message(DictationMessage::Confirmed {
+                item_id: "i".into(),
+                text: "prefix".into(),
+                byte_end: 64_000,
+            }))
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), entered)
+            .await
+            .unwrap()
+            .unwrap();
+        let writer = session.clone();
+        let mut append = tokio::task::spawn_blocking(move || {
+            for _ in 0..30 {
+                writer.append(&[0; 1_280])?;
+            }
+            Ok::<_, SessionError>(())
+        });
+        let progressed = tokio::time::timeout(Duration::from_secs(1), &mut append).await;
+        if progressed.is_err() {
+            drop(release);
+            append.await.unwrap().unwrap();
+            Arc::try_unwrap(session)
+                .ok()
+                .unwrap()
+                .shutdown()
+                .await
+                .unwrap();
+            panic!("Actual receive_text confirmation blocked PCM progress.");
+        }
+        progressed.unwrap().unwrap().unwrap();
+        let session = Arc::try_unwrap(session).ok().unwrap();
+        if cancel {
+            session.inner.cancel.send_replace(true);
+            assert!(matches!(session.append(&[0, 0]), Err(SessionError::Closed)));
+        }
+        let mut finishing = tokio::spawn(async move {
+            let session = tokio::task::spawn_blocking(move || {
+                session.finish_capture()?;
+                Ok::<_, SessionError>(session)
+            })
+            .await
+            .unwrap()?;
+            if !cancel {
+                assert!(
+                    session
+                        .wait_for_completion(Duration::from_secs(5), false)
+                        .await?
+                        .is_some()
+                );
+            }
+            session.shutdown().await
+        });
+        let premature = tokio::time::timeout(Duration::from_millis(100), &mut finishing).await;
+        let joined_while_paused = premature.is_ok();
+        drop(release);
+        match premature {
+            Ok(result) => result.unwrap().unwrap(),
+            Err(_) => finishing.await.unwrap().unwrap(),
+        }
+        let saved = store.fixture_snapshot(&id).unwrap();
+        assert!(!joined_while_paused);
+        assert!(saved.capture_complete);
+        assert_eq!(saved.captured_bytes, 102_400);
+        assert_eq!(saved.context, "synthetic context");
+        assert_eq!(saved.confirmed_bytes, if cancel { 64_000 } else { 102_400 });
+        for chunk in saved.chunks.iter().filter(|chunk| chunk.text.is_none()) {
+            let reader = store.open(&id).unwrap();
+            assert!(
+                reader.read_audio(chunk.index).unwrap()[44..]
+                    .iter()
+                    .all(|byte| *byte == 0)
+            );
+        }
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

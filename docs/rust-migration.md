@@ -44,7 +44,7 @@ uz uzivatel nechce.
 | Mereni Windows klienta | NOVA vyslovne schvalena quiet-window current071/checkout86f3b0f full-runtime signed-out30+30/3paired301-point PASS: p95Rust257.948ms,meanprivate3.427MiB,observedpeak3.992MiB. Vsechnyrawvalues/pairedthresholds/cleanup nezavisleovereny;starsi7bPASS ia2d/3f4FAILEDINCOMPLETE zachovany,neprepisuji se na signed-in/physical scope |
 | Microphone readiness | Jeden actual240ms probe a samostatne schvalena30+30 paired serie prosly; first-PCM p95Rust80.75% C#baseline, bez audio souboru/uploadu |
 | Engine longevity | Actual3600s synthetic PCM/real50min rotation,115200000 exact bytes; worst idle growth1.645MiB<10MiB, engine-only PASS |
-| Current controller functionality/reliability | Temp FUNCTIONAL120sPASS_ONLY zustava platny, ale nasledny ONEactual3600s funkcni pokus bez debuggeru/profileru FAIL: immutableOverflow308.052378s/exact9857280admitted; poexit vse ulozeno/confirmed9728000/pending129280. Harness983befa+CI41820466762ALL5PASS, Rustsource05 bezezmeny. Neni hour/50minrotation/normaldelivery acceptance; puvodni artifact0x5/23040nedurable stale UNRESOLVED |
+| Current controller functionality/reliability | Historicky05 Temp120sPASS_ONLY a nasledny actualhourFAIL308.052378s/9857280admitted zustavaji. Nova oprava oddeluje kratky PCM stav od durable seal/confirm IO; controlled send/confirm RED->GREEN, single-worker owner-specific128k/160k proof pod konzervativnim192k bound a fail-closed error. MatchingCI a nova600s/hour akceptace dosud NEPROBEHLY; CDB600 zrusen. Puvodni0x5actor stale UNRESOLVED |
 | CI nativniho inkrementu | Lossless own-lifecycle revision05eef8e ma exactCI41781008116 Windows/Linux/MSRV1.85/container ALL5PASS,153native/16ignored a stavajici parity/guards. Predchozi55/680 a failedCI zustavaji revision-scoped; neni hour/realworld cutover |
 | OAuth/token-store/PubSub klient | Native flow implementovany; samostatny live Google auth-only/local-signout a assisted manual clipboard probe PASS, full signed-in backend/controller dictation stale chybi; samostatny automatic DesktopGuard port viz dalsi radek |
 | Automatic DesktopGuard paste port | NOVYexactonephysicalpostfix5b test PASS:one4eventnativeCtrlV/exactownfieldmarker/normalclosed,no retry. Nejdenifullcontroller/hold-toggle/hour/realbackend acceptance;older50040BLOCKED/45788assisted zustavaji |
@@ -4509,11 +4509,95 @@ watcheru ani zvetsenimfronty/skrytym dropem. Puvodni artifact-root0x5/
 23040nedurable zustava samostatny **environment-sensitive UNRESOLVED**
 vysledek, nikoli opravena nebo externimuactorovi pripsana chyba.
 
-Nasledujici zadany debuggerobjective je stale NOT_STARTED: nejdrive bounded
-controlledqueueFull calibration pres actualOverflow-onlyfailurebranch v
-existing05PDB/disassembly, potom conditionalONEmax600s CDB-hd/Temp case s
-FIRST0x5/Overflow-only BP a boundedreadonlyownthreadstacks(max16x12frames).
-Zadny per-successIOtrap/perf/hourretry, cizi process/globalhandles/heapdump/
-envdump nebo sourceIOpolicychange; po prvnimfailure boundedcontext+bc*/g.
-Je to dalsi samostatna funkcni diagnostika, nikoli reinterpretace tohoto
-neuspesneho hodinoveho pokusu.
+Nasledna bounded debuggercalibration prokazala samebodyPorts::try_feed,
+commonAnyErr-only+0x1db/51successbypass a5ownthreadstacks. Nejde o
+Overflow-specific ABI nebo actual blockedwriterstack. Conditional600s
+actual/warmup zustaly0: uzivatel nasledne zadal Opus5.5ExtraHigh C#/Rust
+architecture review a prednostni root opravu niz. CDB600 je pozastaven,
+nikoli PASS nebo spotrebovany capture; vsechny starsi logs zustavaji.
+
+### PCM/durable lock split: bounded capture progress, not an unbounded archive
+
+Read-only review bylo overeno proti source: C# `StreamingDictationSession`
+take drzi `_gate` pri Append, send-checkpoint a Confirm I/O; bounded
+controller channel50/TryWrite hardfailure existuje i v referenci.
+To neni dukaz, ze C# je imunni nebo Rust jako jazyk nestaci.
+C# controllerprobe `ControllerProbe.cs:175-190` pouziva300paced40ms frames
+(asi12s), konstantniLOUDsample1200 ve `VoiceFrame:481-486`; drivejsi
+acceleratedvolume obchazi tento controller channel.
+Rust `(sample_index%97)-48` je naproti tomu vzdy pod quietthreshold120;
+synthetic service potvrzuje commits ihned. Zachovavame tento seal/confirm
+stress, ale nejde o feature-matched C# hour regression comparison.
+
+Puvodni Rust append bral stejny engine mutex jako send-checkpoint/confirm.
+I packet vyzadujici jen kratkou PCM copy proto cekal na cizi durable I/O.
+Samotne zrychleni freshread nebo metadata toto vlastnictvi neodstranilo.
+Controlled RED nad puvodni implementaci pozastavil skutecny send-checkpoint
+po32000B a samostatne skutecny confirm manifest-write: v OBOU pripadech se
+30x1280 append nedokoncilo pred uvolnenim I/O a captured zustalo32000.
+Nejde o inferred kernel latency nebo novy wall-clock capture.
+
+Nova implementace `streaming_session.rs` ma oddeleny kratky PCM mutex
+(`buffer_start`,captured,buffer,closed) a durable mutex pro seal/confirm/
+finish/audit. Shared failure/captured atomics umoznuji levny progress bez
+per-packet full transcript/hypothesis clone. Lockorder je pouze durable->PCM;
+append opusti PCM PRED pripadnym cekanim na durable mutex pri kapacite.
+Seal presune nejvyse64000B do explicitne vlastneneho in-flight audio,
+posune buffer_start a uvolni PCM PRED WAV/DPAPI/kvotou/filesystem I/O.
+Manifest/saved cursor se publikuje az po skutecnem durable uspechu.
+Read planning pod durable lockem pouziva skutecny buffer_start, nikoli
+stary manifest-end behem seal. Originalbinding a confirmation-before-delete
+se nemeni. MoveFileExW flags, flush/retry/poison/path/schema/DPAPIv1-v4/kvoty
+ani source1280B40ms50slots a2s/30s/5s budgets se NEMENI.
+
+**Explicitni tradeoff:** konzervativni geometricky upperbound UNIKATNIHO
+RAM-only PCM roste z128000B na192000B: jeden in-flight seal<=64000,
+novy PCMbuffer<=64000 a puvodni channel50x1280<=64000
+(asi4s->6s PCM objemu pri32000B/s, NIKOLI zarucena tolerance stalllatency).
+Neni to bound cele pameti procesu: WAV/header/encrypted staging, codec/
+temporary copies, read cache, device buffers a metadata jsou oddelene.
+Nevznika unbounded queue ani odlozeny checkpoint interval. Zalezi na OWNEROVI:
+jediny skutecny captureworker blokovany VLASTNIM seal nemuze plnit novy PCM
+buffer, takze stale zustava pouze50queuedslots/asi2s prostor. Cast copy
+progressu se uvolni pri SEND/CONFIRM-owned I/O; samotne I/O pod durable
+mutexem se nezkrati a dlouhy writer-owned nebo stacked checkpoint+confirm
+muze stale zpusobit typedOverflow. Netvrdime completefix nebo6s pro libovolny
+stall. Pozdejsi actual functionalcase je stale nutny.
+
+Puvodni local192000B test se DVEMA primymi appendcallery nebyl proof realneho
+singleworker workloadu. Je nahrazen testem skutecne `dictation::persist_capture`
+(pouze crate-internal visibility kvuli testu, telo funkce bezezmeny) a puvodniho
+50slot CaptureBuffer channelu. Capture-owned64000seal+64000queue=128000B;
+sender-owned32000seal+64000newPCM+64000queue=160000B. Obe varianty narazi na
+skutecny Full, neprovedou falsejoin, po release ulozi PRESNE vsechny admitted
+samples v kontinualnim poradi s puvodnim bindingem. Oba vysledky jsou pod
+192000B conservative upperbound; test NEPREDSTIRA actual192000B reachability
+nebo measured walltime tolerance. Neni novy RSS/throughput benchmark.
+
+Checkpointovy crash model se nesmi zamenit s bezeztratovym archivem:
+admitted/received/completed-append nejsou durable-saved ani ASR-confirmed.
+Pady procesu nebo trvale unwritable disk mohou ztratit dosud RAM-only PCM;
+garantovany obnovitelny prefix je pouze platny publikovany manifest+audio.
+Na chybe in-flight seal NEZMIZI: zustava vlastnen spolu s novym PCM,
+failed state zastavi dalsi append/reads a stary saved cursor se nepovysi.
+Controlled skutecny own-held-destination MoveFileEx error pri SENDER-owned
+checkpointu prokazuje32000B in-flight+38400B novehoPCM/saved0 a nezmeneny
+puvodni ciphertext, bez druheho appendcalleru.
+Puvodni05 artifact0x5/23040admitted-not-durable tak zustava pozorovany
+partial failure s UNKNOWN actorem, ne opraveny PASS ani sam o sobe dukaz
+corruptdurabledata proti drive deklarovanemu checkpointovemu kontraktu.
+
+Local regression GREEN zahrnuje oba paused I/O owners, presny novy PCM
+obsah a singleworker owner-specific bound, real receive_text pump Confirm s dalsimi38400B
+pred release a normal finish nebo cancel/finish/shutdown bez fake joinu.
+Existing controller Stop/auth/Discard/shutdown/late-generation,
+pin/reconnect/failure matrix zustava samostatny lifecycle proof.
+Retained/narrow Opus5.5ExtraHigh review produkcniho `streaming_session.rs`
+SHA256873748192d03e738dd4fcc4f8227b0bf7e598bc66fbfd1e773ae61bcd9aaaacc
+nenasel high-confidence concurrencybug; reviewer neprovadel testy a pozdejsi
+test/doc zmeny se nevydavaji za reviewedsource.
+Localworkspace157native/16ignored, fmt/Clippy/release,7C#recovery+4dictation
+parity a source-hashed3s Temp functional96000PCM smoke PASS.
+Matching source CI se teprve dokoncji. Pak je nove conditionalzadany
+ONE600s FUNCTIONAL NoPorts/Temp case BEZCDB/Procmon/resource sampleru;
+neni to zruseny CDB600 ani nova actualhour/50minrotation acceptance.
