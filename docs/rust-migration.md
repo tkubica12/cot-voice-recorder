@@ -35,7 +35,7 @@ znovu v odpovidajicim scope.
 | Mereni Windows klienta | NOVA vyslovne schvalena quiet-window current071/checkout86f3b0f full-runtime signed-out30+30/3paired301-point PASS: p95Rust257.948ms,meanprivate3.427MiB,observedpeak3.992MiB. Vsechnyrawvalues/pairedthresholds/cleanup nezavisleovereny;starsi7bPASS ia2d/3f4FAILEDINCOMPLETE zachovany,neprepisuji se na signed-in/physical scope |
 | Microphone readiness | Jeden actual240ms probe a samostatne schvalena30+30 paired serie prosly; first-PCM p95Rust80.75% C#baseline, bez audio souboru/uploadu |
 | Engine longevity | Actual3600s synthetic PCM/real50min rotation,115200000 exact bytes; worst idle growth1.645MiB<10MiB, engine-only PASS |
-| Current controller longevity | Neutral76b25da30s/960000PCM PASS; NOVYsameneutral120s FAILED Overflow44.405102s,exact1416960accepted po shutdownu vse sealed. Actualowner send-audio-checkpoint drzel engine/root v manifest read-encrypted2176ms. Starehour/b7failures zachovany; zadny120s/hour/fullGUI PASS |
+| Current controller longevity | Aktualni HOT680fd33/release b657: jediny zadany 120s beh FAILED pri zapisu manifestu, MoveFileExW HRESULT 0x80070005; nasledny NotRunning v 31.9508s. Presne 1,011,200 B accepted, 990,720 B durable, 20,480 B nedurable. Starsi 76b30s PASS, 76b120s Overflow a vsechny drivejsi hour/b7 failures zustavaji oddelene; zadny aktualni 120s/hour/fullGUI PASS |
 | CI nativniho inkrementu | Ownpublication manifestrepair60de441 + exacttestrevision680fd33 ma CI41759427076 Windows/Linux/MSRV1.85/container ALL5PASS,143native/local339aggregate/strictchecks+7Recovery7platform6lifecycle; prvni60deCI failedtesttimeouts preserved. Neni newruntimehour/realworld cutover |
 | OAuth/token-store/PubSub klient | Native flow implementovany; samostatny live Google auth-only/local-signout a assisted manual clipboard probe PASS, full signed-in backend/controller dictation stale chybi; samostatny automatic DesktopGuard port viz dalsi radek |
 | Automatic DesktopGuard paste port | NOVYexactonephysicalpostfix5b test PASS:one4eventnativeCtrlV/exactownfieldmarker/normalclosed,no retry. Nejdenifullcontroller/hold-toggle/hour/realbackend acceptance;older50040BLOCKED/45788assisted zustavaji |
@@ -3990,3 +3990,78 @@ zustal bitwise stejny. Sourcearchive680fd33
 6ceb47ff5b42eb67cc5ba74c92d013f5280778e469fca4e2d5e0935fb53ada02 zachovan.
 Localportable/primaryworkspace339 +143native revised a strictchecks/parity jsou
 sourcefunctional dukazy, nikoli novy30/120/hodinovy/performance nebo physicaltest.
+
+### Aktualni HOT680fd33: jediny zadany 120s beh FAILED pri publikaci manifestu
+
+Po exact CI41759427076 ALL5PASS koordinator zadal jeden novy actual120s
+NoPorts beh s kontinualnim producerem, nikoli paced20prefix unit nebo
+accelerated proxy. Implementace60de441, testrevision680fd33, Rusttree8f644f88
+a checkout8e569022 byly frozen. Archiv zdroju ma SHA256
+91c475c3decb17217ce8b56ba2316ac744dfe8b381dc89757d931fcfced9e69e.
+Release-optimized LIBTEST ma SHA256
+b657281e1572ac4b8dcab8b5279d35c54c26eb2321901f120251ebb1db685133,
+PDB 2df6bd63dfa7297375b7242119b34cafd19190c5d1cb8e27cd4598cafefd56c7.
+Nejde o produktove EXE. Neutralni collector7e45735e/sampler88c5/reportdef129
+zustaly byte-exact; known-symbol test prosel pred startem. Identita native
+PID58732, collector PID45856 a readiness byly overeny. Puvodni 2s nemereny
+warmup fixture zustal oddeleny od hlavni capture, ne dalsi pokus.
+
+Vysledek je **FAILED/INCOMPLETE**, nikoli 120s/3,840,000 B PASS. Prvni raw
+NativeError zachovava retezec Streaming recovery storage failed ->
+Recovery path `0065776977394a86a06b633ff29b33a4\manifest.enc` ->
+`MoveFileExW (replace encrypted cache)` -> **HRESULT 0x80070005**.
+Presny cas teto prvni chyby fixture neexportuje; stderr ji zaznamenal pred
+naslednym producer NotRunning v 31.9508049s a generic final-checkpoint chybou.
+Kod neidentifikuje blokujici proces/handle ani nerozlisuje sharing/ACL ci jinou
+konkretni pricinu. Neni to dukaz priciny historickeho b7 ani viny observeru.
+Nejde o Overflow: pozorovane maximum fronty bylo 19/50.
+
+Immutable admission: attempt791, last accepted790. Presne accepted = received =
+completed append **1,011,200 B**; odmitnutych 1,280 B neni accepted. Celkem
+1,012,480 B vcetne odmitnuteho frame je pouze odvozeno ze sekvence.
+Posledni publikovane cursory byly saved990720/confirmed896000.
+Maximalni producer lateness401.8704ms a aktualni lateness350.8051ms jsou
+pozorovani, ne nove akceptacni prahy. Puvodni1280B/40ms/nonblocking50slots,
+stop2s/30s a fixture join5s zustaly beze zmeny; zadne drop/batching/extraqueue.
+
+Post-exit read-only DPAPI/binary/WAV/digest/sample kontrola potvrdila
+**saved990720, confirmed896000, capture_complete=false, allAcceptedSaved=false**.
+**20,480 accepted B neni durable** a nelze je oznacit jako recoverable.
+Unikatni pending prefix ma 94,720 B v souvislych intervalech
+[896000,897280), [897280,961280), [961280,990720).
+Tri referenced WAV soubory obsahuji 152,320 overenych PCM B; rozdil57,600 B
+tvori jiz confirmed prefix ponechany v castecne confirmed chunku
+[838400,897280), nikoli dalsi pending audio nebo orphan.
+Manifest ma22entries/3pendingfiles/0orphans/0confirmedleftoverfiles.
+Original binding a ciphertext zustaly beze zmeny, History prazdna/no delivery.
+Pouzit byl existujici stdin DPAPI codec fdf8b64c; predchozi20s path-loader
+timeout jineho case zustava UNKNOWN a zde nebyl opakovan.
+
+Zachovany jsou3warm +30partialcapture raw1s vzorku, CPU/memory,3desetisekundove
+phase/queue/admission snapshoty a flushed stdout/stderr; postphase nenastala.
+Observer necetl obsah zive Recovery. Pri collection nebyly source edits ani
+local build/test load. Externi pre-cleanup counts zustavaji
+NOT_OBSERVED_EXTERNALLY. HOT encrypted-read counter fixture **neexportuje**;
+unit counter0 neni runtime dukaz a chyba skutecneho write I/O neni metrikou
+getter reads. Pri producer failure byly hlaseny0audio/0manifestpins; tim nejsou
+prokazany vsechny alias lifecycle vetve. Dokoncene maximalni engine/root holds
+816.5837/816.5042ms a waits817.115/318.9616ms jsou maxima od vzniku instance,
+nikoli identifikace ownera v okamziku prvni chyby nebo kernel sampling.
+
+Puvodni controller.close5s check se vratil pred zamerne vyvolanym fixture panic
+pri producer failure; zadny join timeout/stop deadline nebyl hlasen.
+Samostatny presny close wallclock se neexportuje. **Normal120s/outbox-ack/
+normal-exit PASS nenastal.** Oba vlastni procesy skoncily, controltemp je
+odstranen, raw first error/immutable admission/encrypted prefix jsou zachovany.
+Nezavisle prepocteny hashes, cursory, ordered PCM a cleanup jsou v session
+`controller-runtime-120s-680fd33\independent-failure-verification.json`
+a `state-preservation-verification.json`.
+
+Aktualni konkretni blocker je selhani atomicke publikace manifestu a neuspesny
+final checkpoint s20,480 B nedurable accepted dat. Identita/pricina denialu
+zustava nezjistena; dalsi root investigation vyzaduje konkretni bounded zadani,
+ne opakovani hodiny. Zadny retry/dalsi120s/hour/quiet/CUI/device/install/Azure
+beh nebyl zahajen. Stare76Overflow/all-sealed, b7unknownfinalaccepted/orphan14,
+hour failures,071,5b,CUI BLOCKED a failed CI dukazy zustavaji oddelene.
+Aktualni120s/hour/realrotation/postidle10MiB, produkt80MiB, fullGUI/physical,
+instalace a privateAzure akceptace tim nejsou splneny.
