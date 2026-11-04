@@ -6,16 +6,15 @@ import argparse
 import hashlib
 import json
 import os
-import shutil
 import statistics
 import subprocess
 import tempfile
 import threading
 import time
-import uuid
 from collections import deque
 from pathlib import Path
 from typing import BinaryIO
+from synthetic_fixture_root import FixtureRoot
 
 ROOT = Path(__file__).resolve().parents[1]
 SCOPE = "native-streaming-engine-realtime-synthetic-pcm"
@@ -52,6 +51,24 @@ def wait(path: Path, process: subprocess.Popen, seconds: int) -> dict:
             raise TimeoutError(f"Synthetic engine did not publish {path.name}.")
         time.sleep(0.01)
     return json.loads(path.read_bytes())
+
+
+def start_readers(process: subprocess.Popen, readers: list[threading.Thread]) -> None:
+    started = []
+    try:
+        for reader in readers:
+            reader.start()
+            started.append(reader)
+    except BaseException as error:
+        if process.poll() is None:
+            process.kill()
+        process.wait(timeout=10)
+        for reader in started:
+            reader.join(timeout=5)
+        process.stdout.close()
+        process.stderr.close()
+        error.add_note(f"Native log setup failed; owned PID {process.pid} exited, data root retained.")
+        raise
 
 
 def sample(
@@ -156,20 +173,9 @@ def run(
     if any(directory.iterdir()):
         raise ValueError("A new empty evidence directory is required.")
     digest = hashlib.sha256(binary.read_bytes()).hexdigest()
-    with tempfile.TemporaryDirectory(
-        prefix="VoicePrompt-hour-control-", dir=directory
-    ) as temporary:
-        control = Path(temporary)
-        nonce = uuid.uuid4().hex
-        create(
-            control.joinpath("migration-fixture.json"),
-            json.dumps(
-                {
-                    "scope": "full-client-signed-out-fixture",
-                    "instance_key": nonce,
-                }
-            ).encode(),
-        )
+    with FixtureRoot(directory) as owned:
+        control = owned.path
+        nonce = owned.nonce
         create(
             control.joinpath("capture-options.json"),
             json.dumps(
@@ -207,8 +213,7 @@ def run(
             threading.Thread(target=drain, args=(process.stdout, stdout), daemon=True),
             threading.Thread(target=drain, args=(process.stderr, stderr), daemon=True),
         ]
-        for reader in readers:
-            reader.start()
+        start_readers(process, readers)
 
         def logs() -> tuple[bytes, bytes]:
             for reader in readers:
@@ -402,6 +407,7 @@ def run(
                     "signed-in client acceptance",
                 ],
             }
+            owned.preserve(process, failed=False)
         except BaseException as error:
             if process.poll() is None:
                 process.kill()
@@ -422,7 +428,7 @@ def run(
                 }
                 or path.name.startswith("progress-")
             }
-            shutil.copytree(control, directory.joinpath("failure-state"), symlinks=True)
+            owned.preserve(process, failed=True)
             create(
                 directory.joinpath("failure.json"),
                 json.dumps(
@@ -482,6 +488,182 @@ def run(
     )
 
 
+def run_functional(
+    binary: Path, directory: Path, revision: str, audio_seconds: int,
+    native_revision: str | None = None,
+) -> None:
+    """Current controller only: no debugger or process/resource/idle sampler."""
+    if os.name != "nt" or binary.name != "VoicePromptNativeControllerFixture.exe":
+        raise ValueError("An explicitly named frozen Windows controller libtest is required.")
+    if not 2 <= audio_seconds <= 3600:
+        raise ValueError("Functional capture must use bounded explicit seconds.")
+    directory = directory.resolve(strict=True)
+    if any(directory.iterdir()):
+        raise ValueError("A new empty evidence directory is required.")
+    digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+    result = {}
+    with FixtureRoot(directory) as owned:
+        control, nonce = owned.path, owned.nonce
+        create(control / "capture-options.json", json.dumps({
+            "scope": CONTROLLER_SCOPE, "nonce": nonce, "audio_seconds": audio_seconds,
+        }).encode())
+        environment = dict(os.environ)
+        environment["VOICEPROMPT_SYNTHETIC_HOUR_DIRECTORY"] = str(control)
+        process = subprocess.Popen(
+            [str(binary), CONTROLLER_TEST, "--exact", "--ignored", "--nocapture", "--test-threads=1"],
+            env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        log_errors: list[str] = []
+
+        def drain(stream: BinaryIO, path: Path) -> None:
+            total = 0
+            output = None
+            try:
+                output = path.open("xb")
+                for line in stream:
+                    total += len(line)
+                    if total > 16 * 1024 * 1024:
+                        raise OSError("Bounded native functional log exceeds 16MiB.")
+                    output.write(line)
+                    output.flush()
+                    os.fsync(output.fileno())
+            except OSError as error:
+                log_errors.append(f"{path.name}: {error}")
+                # Keep the pipe draining so a diagnostic-write failure cannot deadlock the child.
+                for _ in stream:
+                    pass
+            finally:
+                if output is not None:
+                    output.close()
+
+        readers = [
+            threading.Thread(target=drain, args=(process.stdout, directory / "stdout.txt"), daemon=True),
+            threading.Thread(target=drain, args=(process.stderr, directory / "stderr.txt"), daemon=True),
+        ]
+        start_readers(process, readers)
+
+        def joined_logs() -> tuple[str, str]:
+            for reader in readers:
+                reader.join(timeout=5)
+                if reader.is_alive():
+                    raise RuntimeError("Owned native functional log reader did not join.")
+            if log_errors:
+                raise RuntimeError("Native log preservation failed: " + "; ".join(log_errors))
+            return tuple((directory / name).read_text(errors="replace") for name in ["stdout.txt", "stderr.txt"])
+
+        try:
+            create(directory / "native-owner.json", json.dumps({
+                "collector_pid": os.getpid(), "native_pid": process.pid,
+                "binary_path": str(binary), "binary_sha256": digest,
+                "source_revision": revision, "native_source_revision": native_revision or revision,
+                "control_directory": str(control), "scope": CONTROLLER_SCOPE,
+                "functional_only": True, "resource_sampling": False,
+            }).encode())
+            ready = wait(control / "ready.json", process, 15)
+            if ready != {
+                "scope": CONTROLLER_SCOPE, "pid": process.pid, "physical_ports": False,
+                "network_or_auth": False, "full_client_profile": False,
+                "current_controller": True, "renderer": False, "main_ui_or_tray": False,
+                "real_auth_or_pubsub": False, "polisher_and_outbox": True,
+            }:
+                raise RuntimeError("Functional controller readiness/scope identity mismatch.")
+            create(directory / "readiness.json", json.dumps(ready).encode())
+            create(control / "begin", nonce.encode())
+            deadline = time.monotonic() + audio_seconds + 60
+            minute = 60
+            with (directory / "functional-progress.jsonl").open("xb") as progress:
+                while not (control / "idle-ready.json").exists():
+                    if process.poll() is not None:
+                        raise RuntimeError(f"Native functional controller exited: {process.returncode}")
+                    if time.monotonic() > deadline:
+                        raise TimeoutError("Functional capture/completion wall budget expired.")
+                    point = control / f"progress-{minute:04}.json"
+                    if point.exists():
+                        item = json.loads(point.read_bytes())
+                        row = {"minute": minute // 60, **{
+                            key: item[key] for key in ["elapsed_seconds", "accepted_bytes",
+                            "writer_received_bytes", "writer_completed_bytes", "saved_bytes", "confirmed_bytes"]
+                        }}
+                        progress.write(json.dumps(row).encode() + b"\n")
+                        progress.flush()
+                        os.fsync(progress.fileno())
+                        print(json.dumps(row), flush=True)
+                        minute += 60
+                    time.sleep(0.1)
+            completed = json.loads((control / "idle-ready.json").read_bytes())
+            expected = audio_seconds * 32000
+            for key in ["captured_bytes", "confirmed_bytes", "verified_provider_bytes",
+                        "accepted_bytes", "writer_received_bytes", "writer_completed_bytes"]:
+                if completed.get(key) != expected:
+                    raise RuntimeError(f"Exact functional PCM proof failed: {key}")
+            if (
+                completed["engine_lock"]["saved_bytes"] != expected
+                or completed["engine_lock"]["confirmed_bytes"] != expected
+                or completed.get("capture_frame_bytes") != 1280
+                or completed.get("capture_frame_interval_ms") != 40
+            ):
+                raise RuntimeError("Durable cursor or original native frame contract mismatch.")
+            cursors = completed.get("confirmed_cursors", [])
+            if (
+                completed["actual_capture_seconds"] < audio_seconds
+                or not completed.get("capture_joined") or not completed.get("outbox_acknowledged")
+                or not completed.get("history_saved_before_handoff") or not completed.get("polisher_exercised")
+                or not cursors or cursors[-1] != expected
+                or any(left >= right for left, right in zip(cursors, cursors[1:]))
+                or completed["stream_starts"][0] != 0
+                or (audio_seconds > 3000 and len(completed["stream_starts"]) < 2)
+            ):
+                raise RuntimeError("Duration/order/rotation/stop-join/outbox proof failed.")
+            if any(completed["recovery_io"][key] != 0 for key in [
+                "active_pinned_reads", "active_manifest_inspections", "retained_manifest_capacity_bytes",
+            ]):
+                raise RuntimeError("Joined functional capture still has pinned/alias ownership.")
+            create(control / "finish", nonce.encode())
+            process.wait(timeout=15)
+            out, error = joined_logs()
+            if process.returncode or error or "test result: ok. 1 passed;" not in out:
+                raise RuntimeError(f"Native functional fixture failed: {process.returncode}; {error}")
+            exit_proof = json.loads((control / "normal-exit.json").read_bytes())
+            if not exit_proof.get("current_controller") or exit_proof.get("physical_ports") is not False:
+                raise RuntimeError("Normal functional controller shutdown was not proved.")
+            if hashlib.sha256(binary.read_bytes()).hexdigest() != digest:
+                raise RuntimeError("Frozen native fixture changed during the functional run.")
+            result = {
+                "status": "pass", "scope": CONTROLLER_SCOPE, "source_revision": revision,
+                "native_source_revision": native_revision or revision, "binary_sha256": digest,
+                "pid": process.pid, "audio_seconds": audio_seconds, "actual_capture": completed,
+                "functional_only": True, "resource_sampling": False, "whole_migration_acceptance": False,
+                "precleanup_external_counts_cipher": "NOT_OBSERVED_EXTERNALLY; native final assertions precede ACK cleanup",
+            }
+            owned.preserve(process, failed=False)
+        except BaseException as error:
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=10)
+            out, failure = joined_logs()
+            create(directory / "failure.json", json.dumps({
+                "status": "failed", "scope": CONTROLLER_SCOPE, "functional_only": True,
+                "source_revision": revision, "native_source_revision": native_revision or revision,
+                "binary_sha256": digest, "pid": process.pid, "error": str(error),
+                "stdout": out, "stderr": failure, "whole_migration_acceptance": False,
+            }, indent=2).encode())
+            owned.preserve(process, failed=True)
+            error.add_note(f"Native first-error evidence: {failure[:4096]}")
+            raise
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=10)
+            for reader in readers:
+                reader.join(timeout=5)
+            process.stdout.close()
+            process.stderr.close()
+    result["owned_control_directory_removed"] = not control.exists()
+    create(directory / "functional-controller.json", json.dumps(result, indent=2).encode())
+    print(json.dumps({key: value for key, value in result.items() if key != "actual_capture"}), flush=True)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--oracle", type=Path, required=True)
@@ -490,12 +672,20 @@ if __name__ == "__main__":
     parser.add_argument("--audio-seconds", type=int, default=3600)
     parser.add_argument("--idle-samples", type=int, default=301)
     parser.add_argument("--controller", action="store_true")
+    parser.add_argument("--functional-only", action="store_true")
+    parser.add_argument("--native-source-revision")
     args = parser.parse_args()
-    run(
-        args.oracle.resolve(strict=True),
-        args.output_directory,
-        args.source_revision,
-        args.audio_seconds,
-        args.idle_samples,
-        args.controller,
-    )
+    if args.functional_only:
+        if not args.controller:
+            parser.error("--functional-only requires --controller.")
+        run_functional(args.oracle.resolve(strict=True), args.output_directory, args.source_revision,
+                       args.audio_seconds, args.native_source_revision)
+    else:
+        run(
+            args.oracle.resolve(strict=True),
+            args.output_directory,
+            args.source_revision,
+            args.audio_seconds,
+            args.idle_samples,
+            args.controller,
+        )

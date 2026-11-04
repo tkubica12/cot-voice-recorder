@@ -26,6 +26,15 @@ znovu v odpovidajicim scope.
 
 ## Aktualni progress
 
+Aktualni uzivatelske rozhodnuti: dosavadni performance evidence mu staci;
+dalsi performance benchmarky,30+30/idle/RSS/latency/score-chasing serie a rucni
+orchestrace mereni se neprovadeji. Prioritou je dokonceni funkcnosti a
+spolehlivosti. Namerena evidence nize zustava revision-scoped; toto rozhodnuti
+neni novy empiricky current-binary/hour/threshold PASS ani smazani failures.
+Funkcni stabilita, retence, recovery/durability a real-world/production hranice
+zustavaji samostatne a nesmi se oznacit hotove jen proto, ze dalsi benchmarky
+uz uzivatel nechce.
+
 | Cast | Stav |
 | --- | --- |
 | Plan, vetev a prvni commity | Ulozeno a pushnuto |
@@ -35,7 +44,7 @@ znovu v odpovidajicim scope.
 | Mereni Windows klienta | NOVA vyslovne schvalena quiet-window current071/checkout86f3b0f full-runtime signed-out30+30/3paired301-point PASS: p95Rust257.948ms,meanprivate3.427MiB,observedpeak3.992MiB. Vsechnyrawvalues/pairedthresholds/cleanup nezavisleovereny;starsi7bPASS ia2d/3f4FAILEDINCOMPLETE zachovany,neprepisuji se na signed-in/physical scope |
 | Microphone readiness | Jeden actual240ms probe a samostatne schvalena30+30 paired serie prosly; first-PCM p95Rust80.75% C#baseline, bez audio souboru/uploadu |
 | Engine longevity | Actual3600s synthetic PCM/real50min rotation,115200000 exact bytes; worst idle growth1.645MiB<10MiB, engine-only PASS |
-| Current controller longevity | Nova lossless-trace revize05eef8e: ONE120s attempt FAILED, producerNotRunning30.7214329s po manifestMoveFileExW0x80070005. Exact983040admitted/960000durable/23040nedurable; first witness complete/lost0/NO_INSTRUMENTED_OWNER_SEEN neni external proof. Starsi55ada77 actual60s_ONLYPASS/5lostUNKNOWN i vsechny starsi failures zachovany; zadny120s/hour/fullGUI PASS |
+| Current controller functionality/reliability | Frozen05eef8e ma novy FUNCTIONAL120sPASS_ONLY vneutralnim ownedLocalAppDataTemp rootu:actual120.0110244s/exact3840000PCM/orderedcursors/normaljoin+ACK/pins0. Data-rootlocationobservation NENIwatcher/APIrepairproof. Predchozi artifact-root0x5/23040nedurable a CDBOverflowcases zachovany; originaldenialactorUNKNOWN, fullGUI/productionacceptance stale chybi |
 | CI nativniho inkrementu | Lossless own-lifecycle revision05eef8e ma exactCI41781008116 Windows/Linux/MSRV1.85/container ALL5PASS,153native/16ignored a stavajici parity/guards. Predchozi55/680 a failedCI zustavaji revision-scoped; neni hour/realworld cutover |
 | OAuth/token-store/PubSub klient | Native flow implementovany; samostatny live Google auth-only/local-signout a assisted manual clipboard probe PASS, full signed-in backend/controller dictation stale chybi; samostatny automatic DesktopGuard port viz dalsi radek |
 | Automatic DesktopGuard paste port | NOVYexactonephysicalpostfix5b test PASS:one4eventnativeCtrlV/exactownfieldmarker/normalclosed,no retry. Nejdenifullcontroller/hold-toggle/hour/realbackend acceptance;older50040BLOCKED/45788assisted zustavaji |
@@ -4299,3 +4308,153 @@ instrumentovaneho File readera; konkretni ACL/OS-internal/externi actor stale
 UNKNOWN. Bez dalsiho bounded dukazu se nesmi menit rename API/flags/retrypolicy.
 Starsich55actual60s_ONLYPASS/5lostUNKNOWN, failedhours/b7unknown-orphan14/071/5b/
 CUIBLOCKED a vsechna ostatni revision-scoped evidence se neprepisuji.
+
+### CDB: user-approved own-process functional diagnostics, not benchmarks
+
+Uzivatel povolil pouze oficialni Microsoft Debugging Tools for Windows a
+automatizovane ladeni vlastniho syntetickeho testu, nikoli dalsi performance
+profiling, jine procesy, globalni/systemovy tracing, heap/env dumpy, kernel
+debugging nebo produkcni zmeny. Manualni Procmon workflow byl zastaven; posledni
+overeny stav byl CaptureOFF/0events, zadny Procmon capture/native pokus neprobehl.
+High-vs-medium UIPI se neobchazel. Pozdejsi no-executable CDB literal-only probe
+neocekavane zkusil implicitniCOM1kernel init a ihned selhalWin32error2 pred
+session/commands; zadny kernel/driver/settings change nenastal, tato cesta se
+dale nepouziva. Tato chyba nebyla preznacena na cilovou storage chybu.
+
+Oficialni SDK10.0.28000.2957 bootstrapper
+`https://go.microsoft.com/fwlink/?linkid=2382519` skoncil na download.microsoft.com,
+ValidMicrosoftsignature/SHA256
+e8e264aca8bc34abdf592352bf09f986a85cdb96db0efba405ca9e149181fe61.
+Podepsany manifest i actualhelp overily
+OptionId.WindowsDesktopDebuggers = Debugging Tools for Windows.
+Interactive install vybral jen tuto komponentu + nutne KitsConfiguration/EULA
+support MSI, ne cele SDK/WPT/headers/libs; apply0x0/restartNone.
+Agent nepotvrdil UAC/licenci: pri userinputinterruption se installer posunul
+osobnim UI jednanim uzivatele. Existing globalCEIPYES nebylo agentem zmeneno.
+CDBx64 ma version10.0.28000.2957,ValidMicrosoftsignature/SHA256
+fe5377bb6e6be8777e81cd42e2cf31c79debe219a954154887dccfa77930ffd6.
+
+Own medium child/localPDB breakpoint a bounded source stack byly skutecne
+overeny. Docasne CDB syntax/handler/framing failures zustaly INCOMPLETE,
+nikoli NativeError; nektere verifier false-negatives byly opraveny pouze
+nezavislym ctenim existujiciho CDB-logo, bez dalsiho rerunu.
+Controlled readonly/success jednotka prokazala actual MoveFileExW BOOL1/0/1
+a NtSetInformationFile(class10) NTSTATUS0/C0000022/0 s TID,RSP+8,returnIP,
+per-call sequence a low32/signbit classification. Vlastni threadLastError5 byl
+overen read-only4B na TEB+0x68 podle actual liveuser-modeNTDLL accessor code.
+`!gle` bez systemovych _TEBtypes daval placeholder0 a nebyl bran jako dukaz;
+zadne .call, heap/env dump nebo symbol-security override.
+Pouzity working-noshell-nosqm-sins a explicitlocalPDB/image/sourcepaths,
+bez externalURL/UNC provideru. Inzerovane-netsym bylo actualparserem odmitnuto.
+
+### CDB functional cases at artifact data root: INCOMPLETE
+
+Vsechny nasledujici behy pouzily stejny frozen05/PDB, puvodni1280B40ms50slots,
+stop2s/30s a fixtureclose5s; zadny source/API/poison/retry/queue guard patch.
+Jde o funkcni diagnostiku; debugger meni scheduling/heap/context a zadne
+throughput/product80MiB/hour10MiB acceptance z toho neplyne.
+
+| One separately assigned case | First functional failure | Exact admitted / final durable / confirmed / unique pending |
+| --- | --- | --- |
+| storage-numeric, per-success entry/return traps | Overflow44.8247923s,queue50;62exact-rootBOOL1/Ntstatus0, zadny0x5 | 1427200 /1427200 /1408000 /19200 |
+| error-only-actual, zero success traps | Overflow36.1610312s,zeroerrorBP/0x5 | 1153280 /1153280 /1152000 /1280 |
+| error-only-ordinary, only documented CDB-hd delta | Overflow50.6859053s,zeroerrorBP/0x5 | 1617920 /1617920 /1600000 /17920 |
+
+Post-exit DPAPI/binary/WAV/digest/sample checks overily vsechny admitted bytes
+sealed, originalbinding/order/cipher a prazdnou History/no delivery.
+capture_complete=true zde znamena localpartialEOF, nikoli120s cil nebo ASR ACK.
+Prvni case ma30entries/1pendingfile/0orphans, retained64000 zahrnuje44800 jiz
+confirmed prefixu. Druhy27entries/1file/0orphans. Treti37entries/2files/0orphans,
+retained66560 zahrnuje48640 confirmed prefixu. Raw a encrypted failure zustavaji.
+
+Original close5s check se vratil pred intentional producer-failure panic,
+nikoli normal120s/outboxACK/alljoined PASS. Vsechny konkretni owned debugger/
+child PIDs skoncily. U ordinary case bylo actualargv-hd overeno, actualheapflags
+UNOBSERVED, zadne unsupported PEB offsets/global flags. Snapshotwriteractive
+1883.1834ms a aktualni atomic-write phase8.1761ms nejsou stejna operace/latence.
+Owner/waittrace byl disabled =>UNOBSERVED, nikoli zero-wait. Debugheap, OS,
+quota nebo watcher cause z techto tri cases nebyla prokazana.
+Error-only callee Trace::failed_rename byl assembly/source a controlled
+readonly unit overen jako error-only(1hit priFAIL,0priSUCCESS); flags/error
+entrylocals byly optimized-unavailable, nebyly hadany z ABIregistru.
+
+### Neutral isolated data location: FUNCTIONAL120s PASS_ONLY
+
+Nasledoval JEDEN samostatne zadany location-axis case se stejnym CDB-hd,
+error-only BP, source05, originalnimi guardy a bez CPU/RSS/benchmark sampleru.
+Logs/PDB/scripts zustaly v sessionartifacts. CONTROL/Recovery/History/outbox
+data byla ve fresh verified GUIDleaf:
+`C:\Users\tokubica\AppData\Local\Temp\VoicePrompt-Cdb-4e30d1b91db44e8fa09ee8bfd57994e1`.
+Tempbase/root a predci byly resolved/no-reparse, mimo.copilot/repo/OneDrive
+a existujici VoicePrompt state; zadne ACL/AV/global nebo osobni data zmeny.
+
+**FUNCTIONAL120s_PASS_ONLY:** actual120.0110244s,
+produced=accepted=received=completed=saved=sent=confirmed **3840000 PCM B**.
+60orderedconfirmedcursors64000..3840000, sample-exact provider, polisher,
+durable History-before-handoff, original stop/controller/read/writer/outbox
+join checks a ACK,0audio/0manifestpins/0retainedaliascapacity.
+Native1PASS/CDBexit0,stderr0,error-onlyBP0hits,normal-exit proof.
+Samostatny presny joinwallclock se neexportuje; nejde o perf/realGUI/physical
+nebo privateAzure/cutover acceptance.
+
+Nativefixture predACKdelete provedla fresh finalmanifest/binding/cursor proof.
+Po legitimnim outbox/History cleanup je pending0/journals0/historyempty.
+Externi pre-cleanup counts a ciphertext NOT_OBSERVED_EXTERNALLY: poexit uz
+zadny acknowledged encryptedprefix neexistoval pro nezavisle decryptovani.
+Post-exit snapshot obsahuje protocol/raw metadata a0B writer.lock, nikoli
+falesne claimed cipher-before/after proof. Hashes vsech copiedfiles a skriptu
+byly overeny az po obaownedprocessexit.
+
+Location neni izolovana watcher cause: normalizedRecoveryroot158->111 UTF16
+codeunits, maxOBSERVEDactual source/staging path z existing boundednative
+open/close metadata222->174(bezNTprefixu; ringeviction=>observedmax,neexhaustive).
+Obe drivelettersC:, ale volumeID nebylo nezavisle queried; ACL/context/pathlength
+se zmenily take. Zadny liveRecoverycontentobserver nebyl pridan.
+**Umisteni workloadu vysvetluje rozdil pozorovanych vysledku, nikoli konkretni
+externi actor nebo opravene produkcni I/O API.** Original05artifact-root
+0x80070005/23040nedurable a vsechny drivejsi failures zustavaji pravdive.
+
+OwnCDB85500/child5032 byly verifiedabsent. Po ulozeni/hashi postexit snapshotu
+a revalidaci ownershipmarker/file-set/no-reparse se odstranil JEN tento exact
+GUIDleaf. Zadny broadTemp cleanup. Evidence
+`cdb-official-05eef8e\error-only-isolated\independent-verification.json`,
+`cleanup-verification.json` a `isolated-control-snapshot` zustavaji v session.
+Nejmensi z toho odvozitelny zlepsovaci krok je izolace aktivnich acceptance dat
+od adresare pro log/artifact collection; bez dalsiho causalproof se nemeni
+Windows rename/retry/poison policy. Zadny dalsi runtime/hour automaticky.
+
+### Harness correction: mutable data isolated from artifact collection
+
+Po tomto controlledlocation vysledku byla upravena pouze testovaci host vrstva:
+`scripts\synthetic_fixture_root.py` vytvari novy ownership-marked GUIDleaf v
+overenem LocalAppData\Temp(Windows), ne pod output/artifacts/repo/OneDrive.
+Canonical ancestry a skutecne reparse/junction checks, directory identity a
+nonce-marker musi souhlasit. Zadny default personal appdata/datastore/schema,
+MoveFileExW,poison,retry,queue nebo stopbudget v Rustu se nezmenil.
+
+Artifact adresar obsahuje logs a POEXIT snapshoty s hashes.
+Preservation odmita stale bezici child, ne-regular/reparse data, zmenenou
+ownership/copy/content a overuje source/copy hashset pred jakymkoli cleanupem.
+Cleanup pouze konkretniho knownGUIDleaf je povolen az po verifiedsnapshot;
+pri preservation/ownership chybe se zdroj ponecha a jeho presna cesta se
+explicitne hlasi. Neni broadTemp cleanup. Log-reader startup error ukonci
+owned child a nenecha mutating nativeworker bez dozoru.
+
+Novy `--functional-only --controller` pouziva puvodni actual ignoredcontroller
+entrypoint, original1280B40ms50slots a2s/30s/5s. Nevola CDB/Procmon ani
+CPU/RSS/idle/startup sampler; uklada flushedstdout/stderr, functionalminute
+admission/cursor progress a poexitstate. Exactbytes/order/real50minrotation/
+normalstopjoin/ACK/pinsaliases0 se vyzaduji i bez benchmarku.
+Native pre-cleanup final assertions zustavaji oddelene od post-ACKempty state:
+externi neexistujici ciphertext/finalentries se nevydavaji za overene.
+Harnessrevision a native-compiled source revision jsou ulozeny zvlast.
+
+Boundedguards:12pure storage/path/ownership/junction/preservation/cleanup/
+reader-start cases a6native harness/smoke/zero-test/pipe cases localPASS.
+CI smoke je nynifunctional3scontroller bez resourcesampleru; nevraci se
+uzivatelem zastavene performanceprofily. Rust compiledinputs/frozenimage
+a52faa24/PDB909ce204 zustavaji bezezmeny; matching currentharnessCI se overi
+pro novou source revision. JEDEN samostatne prideleny actual3600s funkcni
+NoPorts longevity vTemp dataceste je v teto sourcefazi stale NOT_STARTED:
+cil115200000orderedPCM, real50minrotation, stop/join/ACK, zadnyhour10MiB/
+product80MiB threshold nebo dalsiautomatickyhour.

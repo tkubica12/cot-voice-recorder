@@ -11,6 +11,8 @@ on:
       - "scripts/measure_microphone.py"
       - "scripts/tests/test_microphone_measurement.py"
       - "scripts/measure_synthetic_capture.py"
+      - "scripts/synthetic_fixture_root.py"
+      - "scripts/tests/test_fixture_storage.py"
       - "scripts/tests/test_synthetic_capture.py"
       - "scripts/tests/test_full_client_fixture.py"
       - "scripts/compare_overlay_visuals.py"
@@ -31,6 +33,8 @@ on:
       - "scripts/measure_microphone.py"
       - "scripts/tests/test_microphone_measurement.py"
       - "scripts/measure_synthetic_capture.py"
+      - "scripts/synthetic_fixture_root.py"
+      - "scripts/tests/test_fixture_storage.py"
       - "scripts/tests/test_synthetic_capture.py"
       - "scripts/tests/test_full_client_fixture.py"
       - "scripts/compare_overlay_visuals.py"
@@ -98,6 +102,10 @@ jobs:
 
       - name: Format
         run: cargo fmt --all --check
+
+      - name: Neutral synthetic data ownership and post-exit preservation guards
+        working-directory: .
+        run: python -m unittest discover -s scripts/tests -p test_fixture_storage.py -v
 
       - name: Test without registry access
         run: cargo test --workspace --offline --locked
@@ -253,7 +261,7 @@ jobs:
         shell: pwsh
         run: python scripts\tests\test_microphone_measurement.py
 
-      - name: Bounded synthetic engine collector smoke, never hour or full-client acceptance
+      - name: Bounded NoPorts controller functional smoke, without resource sampling
         if: runner.os == 'Windows'
         working-directory: .
         shell: pwsh
@@ -266,10 +274,11 @@ jobs:
           $output = Join-Path $env:RUNNER_TEMP 'native-capture-smoke'
           New-Item -ItemType Directory -Path $frozen,$output -ErrorAction Stop | Out-Null
           Copy-Item -LiteralPath $binary -Destination (Join-Path $frozen 'VoicePromptNativeCaptureFixture.exe')
-          python scripts\measure_synthetic_capture.py --oracle (Join-Path $frozen 'VoicePromptNativeCaptureFixture.exe') --output-directory $output --source-revision $env:GITHUB_SHA --audio-seconds 3 --idle-samples 3
+          Copy-Item -LiteralPath $binary -Destination (Join-Path $frozen 'VoicePromptNativeControllerFixture.exe')
+          python scripts\measure_synthetic_capture.py --functional-only --controller --oracle (Join-Path $frozen 'VoicePromptNativeControllerFixture.exe') --output-directory $output --source-revision $env:GITHUB_SHA --audio-seconds 3
           if ($LASTEXITCODE -ne 0) { throw 'Synthetic collector smoke failed.' }
-          $report = Get-Content -Raw (Join-Path $output 'synthetic-engine-hour.json') | ConvertFrom-Json
-          if ($report.sufficient_for_synthetic_engine_hour -or $report.full_client_profile -or $report.whole_migration_acceptance) { throw 'Smoke must not claim hour/full-client acceptance.' }
+          $report = Get-Content -Raw (Join-Path $output 'functional-controller.json') | ConvertFrom-Json
+          if (-not $report.functional_only -or $report.resource_sampling -or $report.whole_migration_acceptance) { throw 'Functional smoke must not claim resource/whole-client acceptance.' }
           python scripts\tests\test_synthetic_capture.py --oracle (Join-Path $frozen 'VoicePromptNativeCaptureFixture.exe')
           if ($LASTEXITCODE -ne 0) { throw 'Synthetic failure/pipe evidence guards failed.' }
           & (Join-Path $frozen 'VoicePromptNativeCaptureFixture.exe') streaming_session::longevity_tests::accelerated_hour_sample_volume --exact --ignored --nocapture --test-threads=1

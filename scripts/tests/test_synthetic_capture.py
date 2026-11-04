@@ -19,6 +19,46 @@ ORACLE: Path
 
 
 class SyntheticCaptureTests(unittest.TestCase):
+    def test_functional_controller_has_no_sampler_and_exact_owned_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="VoicePrompt-functional-smoke-") as directory:
+            root = Path(directory)
+            oracle = root / "VoicePromptNativeControllerFixture.exe"
+            shutil.copyfile(ORACLE, oracle)
+            evidence = root / "evidence"
+            evidence.mkdir()
+            with patch.object(capture, "sample", side_effect=AssertionError("No resource sampler")):
+                capture.run_functional(oracle, evidence, "functional-smoke", 3, "native-fixture")
+            report = json.loads((evidence / "functional-controller.json").read_bytes())
+            self.assertEqual(report["status"], "pass")
+            self.assertFalse(report["resource_sampling"])
+            self.assertEqual(report["actual_capture"]["accepted_bytes"], 96000)
+            self.assertEqual(report["actual_capture"]["confirmed_bytes"], 96000)
+            self.assertEqual(report["native_source_revision"], "native-fixture")
+            self.assertTrue(report["owned_control_directory_removed"])
+            data = json.loads((evidence / "data-root.json").read_bytes())
+            self.assertFalse(Path(data["root"]).is_relative_to(evidence))
+            self.assertFalse(Path(data["root"]).exists())
+            self.assertTrue((evidence / "control-state" / "normal-exit.json").exists())
+            self.assertFalse((evidence / "before.json").exists())
+            self.assertFalse((evidence / "capture.json").exists())
+            self.assertFalse((evidence / "after.json").exists())
+
+    def test_functional_zero_test_preserves_first_logs_state_before_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="VoicePrompt-functional-zero-") as directory:
+            root = Path(directory)
+            oracle = root / "VoicePromptNativeControllerFixture.exe"
+            shutil.copyfile(ORACLE, oracle)
+            evidence = root / "evidence"
+            evidence.mkdir()
+            with patch.object(capture, "CONTROLLER_TEST", "missing_owned_controller"), self.assertRaises(RuntimeError):
+                capture.run_functional(oracle, evidence, "functional-zero", 3)
+            report = json.loads((evidence / "failure.json").read_bytes())
+            self.assertIn("0 passed", report["stdout"])
+            self.assertTrue((evidence / "failure-state" / "migration-fixture.json").exists())
+            self.assertTrue((evidence / "state-hashes.json").exists())
+            self.assertTrue(json.loads((evidence / "data-cleanup.json").read_bytes())["removed"])
+            self.assertFalse((evidence / "functional-controller.json").exists())
+
     def test_controller_mode_rejects_an_engine_named_oracle_before_any_launch(
         self,
     ) -> None:
