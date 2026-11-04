@@ -35,8 +35,8 @@ znovu v odpovidajicim scope.
 | Mereni Windows klienta | NOVA vyslovne schvalena quiet-window current071/checkout86f3b0f full-runtime signed-out30+30/3paired301-point PASS: p95Rust257.948ms,meanprivate3.427MiB,observedpeak3.992MiB. Vsechnyrawvalues/pairedthresholds/cleanup nezavisleovereny;starsi7bPASS ia2d/3f4FAILEDINCOMPLETE zachovany,neprepisuji se na signed-in/physical scope |
 | Microphone readiness | Jeden actual240ms probe a samostatne schvalena30+30 paired serie prosly; first-PCM p95Rust80.75% C#baseline, bez audio souboru/uploadu |
 | Engine longevity | Actual3600s synthetic PCM/real50min rotation,115200000 exact bytes; worst idle growth1.645MiB<10MiB, engine-only PASS |
-| Current controller longevity | Nova test-only own-handle revize55ada77: ONE60s_ONLY PASS, actual60.2109927s/exact1,920,000 B/normal join a outbox; denial se nereprodukoval, trace ma5lost updates -> coverage UNKNOWN. Starsi HOT680fd33 actual120s FAILED MoveFileExW0x80070005/20,480 admitted nedurable a vsechny drivejsi failures zachovany; zadny120s/hour/fullGUI PASS |
-| CI nativniho inkrementu | Own-handle implementationaab7da6 + warmup/testrevision55ada77 ma exactCI41776313150 Windows/Linux/MSRV1.85/container ALL5PASS,149native/16ignored a parity/guards. Predchozi680fd33/CI41759427076 a starsi failed CI zustavaji revision-scoped; neni hour/realworld cutover |
+| Current controller longevity | Nova lossless-trace revize05eef8e: ONE120s attempt FAILED, producerNotRunning30.7214329s po manifestMoveFileExW0x80070005. Exact983040admitted/960000durable/23040nedurable; first witness complete/lost0/NO_INSTRUMENTED_OWNER_SEEN neni external proof. Starsi55ada77 actual60s_ONLYPASS/5lostUNKNOWN i vsechny starsi failures zachovany; zadny120s/hour/fullGUI PASS |
+| CI nativniho inkrementu | Lossless own-lifecycle revision05eef8e ma exactCI41781008116 Windows/Linux/MSRV1.85/container ALL5PASS,153native/16ignored a stavajici parity/guards. Predchozi55/680 a failedCI zustavaji revision-scoped; neni hour/realworld cutover |
 | OAuth/token-store/PubSub klient | Native flow implementovany; samostatny live Google auth-only/local-signout a assisted manual clipboard probe PASS, full signed-in backend/controller dictation stale chybi; samostatny automatic DesktopGuard port viz dalsi radek |
 | Automatic DesktopGuard paste port | NOVYexactonephysicalpostfix5b test PASS:one4eventnativeCtrlV/exactownfieldmarker/normalclosed,no retry. Nejdenifullcontroller/hold-toggle/hour/realbackend acceptance;older50040BLOCKED/45788assisted zustavaji |
 | Diktovani/recovery UI | Native microphone/hotkeys/overlay/paste controller, oba enginy, journal, polishing a outbox implementovany; real-world a rozsahlejsi fault/E2E akceptace zbyva |
@@ -4214,3 +4214,88 @@ Local153native/16ignored, fmt, strictall-target/all-featureClippy a release
 prosly. First-error capture rutina je zvlast testovana pri held registry:
 monitor ihned hlasi unavailable, lossless witness copy pocka na memory-lock
 release a zachova known own reader. Source-only testy nejsou actual120s proof.
+
+### Exact05eef8e CI a JEDEN novy120s attempt: FAILED s complete own witness
+
+Exact05eef8ebd8efec6e0e2d282ecae5bcd9a4e0a8b9,
+Rusttree42bf5d834aba3a5473e5b5329ebb190c0e820552,
+CI41781008116 ALL5completed/success byl nezavisle overen pred startem,
+Windows153PASS/16ignored, completed2026-11-04T05:57:43Z. Raw Windows log
+SHA256418e084b628a4a6a2cbd5d00bfea9c818cb3892bb4654bfa2a26b3de64261bab.
+Source archive SHA256
+bbedaf927e37e0aebc26f6958b52cee2c4c0744a5e9f0c0e4861eea3261168cb,
+release-optimized LIBTEST
+a52faa24e4a4c1bac5cc4cf6cf528d8b4a59e94c15e81b9ca13359dec676e450,
+PDB909ce20467fe612f51480402c9803355d0adb6772bd883afad120a2c7a22e38e.
+Known symbol1PASS/10optimized controlled groups/1warm-measured fault unit PASS
+jsou preflight dukazy. Osm inputhashes vcetne neutral7e45735e/88c5/def129 a
+one-shot helperb2d6aad2 bylo zmrazeno a overeno pred jedinym startmarkerem.
+
+**Vysledek je FAILED/INCOMPLETE, nikoli120s/3840000PCM PASS.**
+Prvni native error je opet `MoveFileExW (replace encrypted cache)`,
+HRESULT0x80070005, flags9 (REPLACE_EXISTING|WRITE_THROUGH), target
+`dc2ae71b953d40a39e9527763e239261\manifest.enc`, staging
+`dc2ae71b953d40a39e9527763e239261\manifest.enc.55844.73.tmp`.
+Tentokrat durable first-error witness pred staging cleanupem obsahuje
+user-mode API-result observation UTC **2026-11-04T05:59:18.413561900Z**
+a root-trace monotonic37889205800ns. To neni kernel rejection timestamp;
+root-trace/Probe/capture maji ruzne epochy a jejich cisla se nesmi odcitat.
+Staging handle byl prokazatelne closed pred rename error. Close-to-observed-error
+interval593.1745ms zahrnuje scheduling/user-mode/API/hook a neni syscall latency.
+
+**Own snapshot je complete/lost0, open/close/update inflight0.**
+Active je jen vlastni `writer.lock` lease; zadny instrumentovany manifest/
+staging/alias/audio File handle. Klasifikace je
+**NO_INSTRUMENTED_OWNER_SEEN**, nikoli external-actor/sharing/ACL/Defender proof.
+Coverage vylucuje OS-internal metadata/link/rename handles, control/witness files
+a vsechny ostatni procesy; native fileidentity/linkcount stale NOT_COLLECTED.
+Last own publication generation37 ma saved960000/confirmed896000.
+Prvni witness i immutable producer copy jsou shodne; pozdejsi probe potvrzuje
+witness sync/persist success. Separatne casovane post-error guarded metadata
+ukazuji staging20966B/target20950B, attributes32, readonly=false/reparse=false;
+nejsou atomickym prvnim error-state ani ACL/deleterights dukazem.
+
+Pointwise admission pri first witness je981760accepted/last767,
+received962560/completed961280; **neni to finalaccepted**.
+Nasledny immutable NotRunning v capture30.7214329s ma attempt769/lastaccepted768,
+**accepted=received=completed append983040 B**, rejected1280 neni accepted.
+Observedqueuepeak25/50, nikoli Full/Overflow. Post-exit read-only bounded stdin
+DPAPI/binary/WAV/digest/sample verification prokazala
+**saved960000/confirmed896000/capture_complete=false/allAcceptedSaved=false**:
+**23040 admitted B neni durable**.64,000 unique pending B tvori
+[896000,897280), [897280,960000);22manifestentries/2referencedfiles,
+0orphans/0confirmedleftovers, sampleorder/originalbinding/cipher beze zmeny.
+History je prazdna a zadne delivery nenastalo. Stary20s path-loader UNKNOWN se
+neopakoval; pouzit existujici stdin codec8b743c2f.
+
+Repaired tracer ma ve vsech10/20/30s/firsterror/final snapshots lost0;
+complete firsterror i final snapshot.132historyevictions nejsou active loss
+ani PCM drop. Runtime registry update maxima wait600ns/hold12300ns jsou vlastni
+observations, ne nove thresholdy nebo garance scheduleru. Since-instance engine
+hold/wait1040.1957/997.8562ms a root1040.1374/58.9914ms nejsou kernel sampling
+ani presny owner pri odmitnutem API. Maxproducerlateness557.5143ms.
+HOT encrypted-read counter stale NOT_EXPORTED; metadata/path IO neztotoznovat
+s hot getter counter0 z unit testu.
+
+Zachovano3warm+30partialcapture1s raw samples,3desetisekundove phase/admission/
+own-handle snapshoty, stdout a PRVNI stderr; zadna postphase.
+Puvodni5s controller.close check se vratil pred intentional producer-failure
+panic; zadny join-timeout/stop-deadline hlasen, samostatny close wallclock
+NOT_EXPORTED. **Normal120s/outboxACK/alljoined PASS nenastal.**
+Secondary final-checkpoint hlaska je fail-closed pred dalsim I/O kvuli
+storage_failed, nikoli druha API chyba nebo dukaz trvale nezapisovatelneho disku.
+Native55844/collector76524 gone/controltemp removed/encrypted failure retained;
+nevznikla nova detach politika ani normal-return acceptance tvrzeni.
+
+Currentcontroller/singlewriter/polisher/RecoveryHistory/periodicoutbox byly
+pritomne, original1280B40ms50slots/2s30s5s a storagepolicy beze zmeny.
+AllGUI/physical/OAuth/PubSub/backend/registry/clipboard/SendInput/Azure/paidAI
+ports absent, neutralobserver zadne liveRecovery content reads, collection bez
+localbuild/test/source edits. No retry/dalsi120/hour/quiet/device/install.
+Evidence `controller-lifecycle-120s-05eef8e\failure-attribution-verification.json`,
+`state-preservation-verification.json`, raw/witness/cipher a cleanup jsou retained.
+Nejmensi zbyvajici blocker: skutecny denial nastal bez viditelneho vlastniho
+instrumentovaneho File readera; konkretni ACL/OS-internal/externi actor stale
+UNKNOWN. Bez dalsiho bounded dukazu se nesmi menit rename API/flags/retrypolicy.
+Starsich55actual60s_ONLYPASS/5lostUNKNOWN, failedhours/b7unknown-orphan14/071/5b/
+CUIBLOCKED a vsechna ostatni revision-scoped evidence se neprepisuji.
