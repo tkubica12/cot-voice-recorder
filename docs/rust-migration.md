@@ -44,7 +44,7 @@ uz uzivatel nechce.
 | Mereni Windows klienta | NOVA vyslovne schvalena quiet-window current071/checkout86f3b0f full-runtime signed-out30+30/3paired301-point PASS: p95Rust257.948ms,meanprivate3.427MiB,observedpeak3.992MiB. Vsechnyrawvalues/pairedthresholds/cleanup nezavisleovereny;starsi7bPASS ia2d/3f4FAILEDINCOMPLETE zachovany,neprepisuji se na signed-in/physical scope |
 | Microphone readiness | Jeden actual240ms probe a samostatne schvalena30+30 paired serie prosly; first-PCM p95Rust80.75% C#baseline, bez audio souboru/uploadu |
 | Engine longevity | Actual3600s synthetic PCM/real50min rotation,115200000 exact bytes; worst idle growth1.645MiB<10MiB, engine-only PASS |
-| Current controller functionality/reliability | Frozen05eef8e ma novy FUNCTIONAL120sPASS_ONLY vneutralnim ownedLocalAppDataTemp rootu:actual120.0110244s/exact3840000PCM/orderedcursors/normaljoin+ACK/pins0. Data-rootlocationobservation NENIwatcher/APIrepairproof. Predchozi artifact-root0x5/23040nedurable a CDBOverflowcases zachovany; originaldenialactorUNKNOWN, fullGUI/productionacceptance stale chybi |
+| Current controller functionality/reliability | Temp FUNCTIONAL120sPASS_ONLY zustava platny, ale nasledny ONEactual3600s funkcni pokus bez debuggeru/profileru FAIL: immutableOverflow308.052378s/exact9857280admitted; poexit vse ulozeno/confirmed9728000/pending129280. Harness983befa+CI41820466762ALL5PASS, Rustsource05 bezezmeny. Neni hour/50minrotation/normaldelivery acceptance; puvodni artifact0x5/23040nedurable stale UNRESOLVED |
 | CI nativniho inkrementu | Lossless own-lifecycle revision05eef8e ma exactCI41781008116 Windows/Linux/MSRV1.85/container ALL5PASS,153native/16ignored a stavajici parity/guards. Predchozi55/680 a failedCI zustavaji revision-scoped; neni hour/realworld cutover |
 | OAuth/token-store/PubSub klient | Native flow implementovany; samostatny live Google auth-only/local-signout a assisted manual clipboard probe PASS, full signed-in backend/controller dictation stale chybi; samostatny automatic DesktopGuard port viz dalsi radek |
 | Automatic DesktopGuard paste port | NOVYexactonephysicalpostfix5b test PASS:one4eventnativeCtrlV/exactownfieldmarker/normalclosed,no retry. Nejdenifullcontroller/hold-toggle/hour/realbackend acceptance;older50040BLOCKED/45788assisted zustavaji |
@@ -4410,8 +4410,9 @@ codeunits, maxOBSERVEDactual source/staging path z existing boundednative
 open/close metadata222->174(bezNTprefixu; ringeviction=>observedmax,neexhaustive).
 Obe drivelettersC:, ale volumeID nebylo nezavisle queried; ACL/context/pathlength
 se zmenily take. Zadny liveRecoverycontentobserver nebyl pridan.
-**Umisteni workloadu vysvetluje rozdil pozorovanych vysledku, nikoli konkretni
-externi actor nebo opravene produkcni I/O API.** Original05artifact-root
+**Pri oddelenem umisteni byl pozorovan120sPASS; jednotliva zmena umisteni
+neprokazuje pricinu rozdilu, externi actor ani opravene produkcni I/O API.**
+Original05artifact-root
 0x80070005/23040nedurable a vsechny drivejsi failures zustavaji pravdive.
 
 OwnCDB85500/child5032 byly verifiedabsent. Po ulozeni/hashi postexit snapshotu
@@ -4453,8 +4454,66 @@ Boundedguards:12pure storage/path/ownership/junction/preservation/cleanup/
 reader-start cases a6native harness/smoke/zero-test/pipe cases localPASS.
 CI smoke je nynifunctional3scontroller bez resourcesampleru; nevraci se
 uzivatelem zastavene performanceprofily. Rust compiledinputs/frozenimage
-a52faa24/PDB909ce204 zustavaji bezezmeny; matching currentharnessCI se overi
-pro novou source revision. JEDEN samostatne prideleny actual3600s funkcni
-NoPorts longevity vTemp dataceste je v teto sourcefazi stale NOT_STARTED:
-cil115200000orderedPCM, real50minrotation, stop/join/ACK, zadnyhour10MiB/
-product80MiB threshold nebo dalsiautomatickyhour.
+a52faa24/PDB909ce204 zustavaji bezezmeny. Harnesscommit
+`983befaed4e3c9b6f557179fd7385fa8bc8a5779` ma matching
+CI41820466762 ALL5 completedSUCCESS, vcetne Win/Linuxneutralrootguards a
+Windowsfunctional3ssmokebezsampleru. ExactCIJSON+stepconclusions jsou ulozeny;
+downloadrawWindowslog selhal network, z chybejiciho logu se nefabrikuji pocty.
+Nasledny JEDEN actual3600s funkcni NoPorts pokus uz probehl a FAIL niz.
+
+### ONE functional3600s Temp controller attempt: FAIL, all admitted data sealed
+
+Freezeharness983befa/nativecompiled05/Rusttree42bf5d83/fixturea52faa24/
+PDB909ce204/productcodec8b743c2f i helper/sourcearchivehashes byly overeny pred
+a po behu. Actualdata v novem ownedTempGUIDd21ffdac5ea84a35b35080f526915abe;
+logs v sessionartifacts. NoCDB/Procmon/CPU-RSS/idle/startupsampler, zadne
+localbuild/test/sourceedits/load behem capture. Native readiness explicitne
+NoPorts/noauth/network/GUI/physical, polisher+RecoveryHistory+outbox zustaly.
+1280B/40ms/50slots/2sstream/30slegacy/5sfixturejoin se nemenily.
+
+Prvni immutableadmissionFAIL je **Overflow308.052378s**, attempt7702/last7701,
+rejected1280B; exact **9857280 produced/admitted**, received9793280,
+completed9792000. Lastpublishedsaved9731840/confirmed9728000 jsou immutable
+failurecursors, ne pozdejsi diskstav. Fronta dosahla50slots a aktivni joined
+writer trval asi2036ms; currentRecoveryIO **atomic-write2071.1096ms**.
+`last_phase=remove-confirmed-audio` neni currentphase. Scopeownhandle snapshot
+je complete/lost0/inflight0, stagingaudiohandle jeste otevreny.
+Engine/rootownerwaittrace enabledFALSE => **UNOBSERVED**, nikoli zerowait.
+Concretewrite/flush/OSwait/subcall nebo actor z teto phaseage **NEZJISTENY**;
+nejde o presne syscall latency. Firstdenialwitnessnull, zadny novy0x5/HRESULT/
+NTSTATUSfailure. Neprovadela se retry/poison/rename/buffer/budgetpolicy oprava.
+
+Native101, helper1; libtest315.79stotal. Puvodni harness.close5scheck se
+vratil pred intentional producerfailurepanic, ale neni normal3600s/
+alljoined/outboxACK/Historyhandoff PASS. Nebyl dosazen50minrotation ani
+115200000Bcil; ani pres300s vysledek nezarucuje dlouhodobou spolehlivost.
+
+**POEXIT nezavisly prefix/cipherproof:** accepted=saved9857280,
+confirmed9728000, unique pending129280, retainedPCM129280/confirmedoverlap0,
+230manifestentries/4referencedpendingfiles/0orphans/0confirmedleftovers.
+Exactsyntheticbinding, DPAPIv4manifest/WAV/hash/ordered samplecoverage
+9728000..9857280 a nezmenenyciphertext overeny existingfrozenstdin codec,
+bez pathloader/recoverywriteru. Vseadmitted je po lokalnimsealu durable;
+`capture_complete=true` znamena pouze partialEOF, ne hour/ASRsuccess.
+Historyempty a zadny deliveryhandoff. Rawfailure/43snapshotfiles byly
+nezavisle rehashovany POEXIT, az potom exactownedGUIDleafcleanup.
+Knownhelper81256/collector91892/native22980 vsechny absent, leafodstranen;
+retainedraw/encryptedproof `functional-controller-hour-983befa\evidence`.
+Zadny broadTempcleanup nebo dalsi hourretry.
+
+Prakticky blocker: originalnonblockingcapture nedokaze pri teto trvajici
+durableappend/atomicwriteaktivite pokracovat bez vycerpani puvodni fronty.
+Izolace Temp testovaciho prostredi sama **neni hourreliabilityfix**.
+Nevyjasneny konkretni blokujici subcall/lock nelze nahradit hypotezou oAV/
+watcheru ani zvetsenimfronty/skrytym dropem. Puvodni artifact-root0x5/
+23040nedurable zustava samostatny **environment-sensitive UNRESOLVED**
+vysledek, nikoli opravena nebo externimuactorovi pripsana chyba.
+
+Nasledujici zadany debuggerobjective je stale NOT_STARTED: nejdrive bounded
+controlledqueueFull calibration pres actualOverflow-onlyfailurebranch v
+existing05PDB/disassembly, potom conditionalONEmax600s CDB-hd/Temp case s
+FIRST0x5/Overflow-only BP a boundedreadonlyownthreadstacks(max16x12frames).
+Zadny per-successIOtrap/perf/hourretry, cizi process/globalhandles/heapdump/
+envdump nebo sourceIOpolicychange; po prvnimfailure boundedcontext+bc*/g.
+Je to dalsi samostatna funkcni diagnostika, nikoli reinterpretace tohoto
+neuspesneho hodinoveho pokusu.
