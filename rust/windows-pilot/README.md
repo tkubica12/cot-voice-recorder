@@ -359,6 +359,14 @@ publication/alias cleanup and deliberately unavailable diagnostic metadata.
 They do not establish the cause of the historical runtime denial or authorize
 an automatic capture retry.
 
+The separately assigned55ada77 diagnostic completed60.2109927s with exactly
+1,920,000ordered PCM bytes and normal original-budget join/outbox cleanup.
+It did not reproduce a rename failure. Five missed nonblocking trace updates
+made later active-handle coverage UNKNOWN; they are diagnostic metadata loss,
+not PCM loss or evidence of an external actor. This is60s-only evidence, not
+120s/hour, product-memory or physical/GUI acceptance; the earlier denial remains
+unattributed. See the migration ledger for frozen hashes, raw data and limits.
+
 A deterministic actual-filesystem barrier also forces final-pin deletion after
 quota enumerates the file but before its `DirEntry::metadata()` call. On Windows,
 that call succeeded using the entry's enumeration metadata: overlap was proved,

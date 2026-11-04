@@ -35,8 +35,8 @@ znovu v odpovidajicim scope.
 | Mereni Windows klienta | NOVA vyslovne schvalena quiet-window current071/checkout86f3b0f full-runtime signed-out30+30/3paired301-point PASS: p95Rust257.948ms,meanprivate3.427MiB,observedpeak3.992MiB. Vsechnyrawvalues/pairedthresholds/cleanup nezavisleovereny;starsi7bPASS ia2d/3f4FAILEDINCOMPLETE zachovany,neprepisuji se na signed-in/physical scope |
 | Microphone readiness | Jeden actual240ms probe a samostatne schvalena30+30 paired serie prosly; first-PCM p95Rust80.75% C#baseline, bez audio souboru/uploadu |
 | Engine longevity | Actual3600s synthetic PCM/real50min rotation,115200000 exact bytes; worst idle growth1.645MiB<10MiB, engine-only PASS |
-| Current controller longevity | Aktualni HOT680fd33/release b657: jediny zadany 120s beh FAILED pri zapisu manifestu, MoveFileExW HRESULT 0x80070005; nasledny NotRunning v 31.9508s. Presne 1,011,200 B accepted, 990,720 B durable, 20,480 B nedurable. Starsi 76b30s PASS, 76b120s Overflow a vsechny drivejsi hour/b7 failures zustavaji oddelene; zadny aktualni 120s/hour/fullGUI PASS |
-| CI nativniho inkrementu | Ownpublication manifestrepair60de441 + exacttestrevision680fd33 ma CI41759427076 Windows/Linux/MSRV1.85/container ALL5PASS,143native/local339aggregate/strictchecks+7Recovery7platform6lifecycle; prvni60deCI failedtesttimeouts preserved. Neni newruntimehour/realworld cutover |
+| Current controller longevity | Nova test-only own-handle revize55ada77: ONE60s_ONLY PASS, actual60.2109927s/exact1,920,000 B/normal join a outbox; denial se nereprodukoval, trace ma5lost updates -> coverage UNKNOWN. Starsi HOT680fd33 actual120s FAILED MoveFileExW0x80070005/20,480 admitted nedurable a vsechny drivejsi failures zachovany; zadny120s/hour/fullGUI PASS |
+| CI nativniho inkrementu | Own-handle implementationaab7da6 + warmup/testrevision55ada77 ma exactCI41776313150 Windows/Linux/MSRV1.85/container ALL5PASS,149native/16ignored a parity/guards. Predchozi680fd33/CI41759427076 a starsi failed CI zustavaji revision-scoped; neni hour/realworld cutover |
 | OAuth/token-store/PubSub klient | Native flow implementovany; samostatny live Google auth-only/local-signout a assisted manual clipboard probe PASS, full signed-in backend/controller dictation stale chybi; samostatny automatic DesktopGuard port viz dalsi radek |
 | Automatic DesktopGuard paste port | NOVYexactonephysicalpostfix5b test PASS:one4eventnativeCtrlV/exactownfieldmarker/normalclosed,no retry. Nejdenifullcontroller/hold-toggle/hour/realbackend acceptance;older50040BLOCKED/45788assisted zustavaji |
 | Diktovani/recovery UI | Native microphone/hotkeys/overlay/paste controller, oba enginy, journal, polishing a outbox implementovany; real-world a rozsahlejsi fault/E2E akceptace zbyva |
@@ -4116,3 +4116,67 @@ warmupem, aby chyba pred ready neztratila witness. Kontrolovany short fault unit
 overuje measured export i warmup-like beh bez producer diagnostic JSON; v obou
 vetvich musi first-rename witness zustat durable. Predchozi aab7da6 archiv/binary/
 CI zustavaji zachovane jako source faze; zadny actual60s nad nimi nebyl spusten.
+
+### Exact55ada77 CI a JEDEN actual60s own-handle diagnostic
+
+Exact55ada77187da1cb81a88d7787251945abad1ee84,
+Rusttreec8b2b3995d8ba725afe23c0e6a1519055db6fd3a,
+CI41776313150 ma vsech5jobs completed/success; Windows149passed/16ignored,
+completed2026-11-04T05:09:35Z. Raw Windows log SHA256
+00cb0750adf8487b7c41121bc626da7a8656a6329a27aa475e1ccce3201f1afc.
+Predchozi aab7da6/CI41775506865 rovnez ALL5PASS, ale jeho pripraveny runtime
+byl superseded pred startem. Nejde o dalsi pokus.
+
+Pred JEDINYM novym max60s case byly overeny source archive SHA256
+7710b7ebab41e3a6d6a4b4f161dcc763e7a81bfe2ea1fa90b778f5a13cae4b47,
+release-optimized LIBTEST
+305b5d70809f19cf85988b37486130aaddfca4225ddbfc64df93f717559cd0ce a PDB
+e23ae85fa242945e7e8663178406ceb844127b9105f9d447786bcbfce82fbff0.
+Neutralcollector7e45735e/sampler88c5/reportdef129 zustaly byte-exact,
+one-shot helper10b9e6f5 overil exactCI/source/8inputhashes pred startem.
+Known symbol1PASS a optimized6controlled + warm/measured fault unit1PASS jsou
+oddeleny bounded source/unit dukazy, nikoli dalsi actual diagnostic capture.
+Native PID77108/collector75804, image/header/source/readiness byly nezavisle
+overeny. Scope stale actual NoPorts controller, polisher, Recovery/History/
+periodic outbox a fake capture/model/ack, nikoli GUI/physical/auth/backend.
+
+Vysledek je **PASS_60s_ONLY**, configured60s/actual60.2109927s.
+Produced/accepted/received/completed append/saved/sent/confirmed je presne
+**1,920,000 PCM B**; puvodni1280B40msnonblocking50slots a2s/30s/5s budgety
+zustaly.30confirmed cursors jsou ordered64000..1920000 bez gap/duplikace,
+synthetic provider overil kazdy sample. Native fixture pred outbox deletion
+fresh overila final manifest/capture_complete/audit/cursory a original binding;
+nejde o externi atomicky snapshot final entries/charges, ty zustavaji
+NOT_OBSERVED_EXTERNALLY. Normalni stop, puvodni5s controller-close check,
+joined capture/read/writer/outbox a ACK prosly.0audio/0manifestpins a0retained
+alias capacity, normal exit, oba vlastni procesy gone a controltemp removed.
+Samostatny presny close wallclock se neexportuje.
+
+Raw3warm+61capture+3post1s vzorku, CPU/memory, desetisekundove phase/admission/
+own-handle snapshoty a stdout/stderr jsou zachovany. Stderr je prazdny.
+**Zadny failed rename/NativeError se nereprodukoval; zadny first-error witness
+proto nevznikl. Historicky0x80070005 tim neni opraven ani pricinne vysvetlen.**
+Dulezita diagnostic limitace: v10s byl own tracking complete/lost0, od20s
+lost3, od40s do konce lost5. Nonblocking recorder tyto ztraty explicitne hlasil;
+final active-handle coverage je **UNKNOWN**, ne empty/no-owner dukaz.
+381history evictions jsou jiny, bounded-ring ukazatel, ne PCM drop.
+PCM loss0 plyne z exact byte/order/confirmation proof, ne z trace completeness.
+Bez denialu nelze pouzit NO_INSTRUMENTED_OWNER_SEEN jako runtime pricinu.
+
+Observed queue peak27/50, max producer lateness375.6231ms.
+Completed engine/root maxhold995.2277/995.1606ms a waits998.4319/237.8596ms
+jsou maxima od vzniku instance, ne konkretni syscall/kernel latency nebo
+historicky1589ms reproduction. HOT encrypted-read counter stale NOT_EXPORTED;
+novy handle log nerovna se unitcounter0 ani uplnemu runtime read counteru.
+Diagnostic LIBTEST/PDB peakprivate161447936 B a pouze3postsample conservative
+growth2764800 B jsou observations, nikoli produkt80MiB/hodinovy10MiB PASS.
+Pri collection nebyly local builds/tests/source edits ani live Recovery
+content reads observerem. No retry/dalsi60/120/hour/quiet/physical/install/Azure.
+
+Nezavisle prepocteny input hashes/raw67samples/duration/exact cursors a cleanup
+jsou v session `controller-denial-60s-55ada77\independent-outcome-verification.json`;
+`runtime-metrics.json` vyslovne zachovava i5lost trace updates. Nejmensi
+zbyvajici diagnosticky problem je nereprodukovany denial a nekompletni active
+trace pri contention; kontrolovane own-reader/readonly cause classes nejsou
+attribution starsiho failure. Current120s/hodina, real rotation/301postidle,
+fullGUI/physical/accessibility/install a privateAzure akceptace stale zbyvaji.
