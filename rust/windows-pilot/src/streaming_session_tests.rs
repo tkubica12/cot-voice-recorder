@@ -207,6 +207,119 @@ fn journal(directory: &TemporaryRoot) -> (NativeRecoveryStore, NativeRecoveryJou
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reconnect_and_confirmation_use_only_owned_publications_while_fresh_manifest_io_is_blocked()
+{
+    use crate::recovery_store::ManifestReadPhase;
+    for phase in [
+        ManifestReadPhase::Open,
+        ManifestReadPhase::Read,
+        ManifestReadPhase::Unprotect,
+    ] {
+        let directory = TemporaryRoot::new();
+        let (store, journal) = journal(&directory);
+        let id = journal.id().to_owned();
+        let service = Service::new(Mode::Healthy);
+        let session =
+            Arc::new(StreamingSession::start(journal, Arc::new(service.clone()), false).unwrap());
+        let bytes: Vec<_> = (0..64000)
+            .flat_map(|index| ((index % 3000) as i16 + 1000).to_le_bytes())
+            .collect();
+        let writer = session.clone();
+        let first = bytes[..64000].to_vec();
+        tokio::task::spawn_blocking(move || writer.append(&first))
+            .await
+            .unwrap()
+            .unwrap();
+        let pin = store.fixture_pin_manifest(&id).unwrap();
+        let (release, entered) = store.pause_next_manifest_read(phase);
+        let reader = tokio::task::spawn_blocking(move || pin.read());
+        tokio::time::timeout(Duration::from_secs(5), entered)
+            .await
+            .unwrap()
+            .unwrap();
+        let reads = store.fixture_manifest_read_count();
+        let writer = session.clone();
+        let rest = bytes[64000..].to_vec();
+        tokio::task::spawn_blocking(move || writer.append(&rest))
+            .await
+            .unwrap()
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if service
+                    .sent
+                    .lock()
+                    .unwrap()
+                    .first()
+                    .is_some_and(|sent| !sent.is_empty())
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let events = service.connection_events.lock().unwrap()[0].clone();
+        events.send(Event::Failure).await.unwrap();
+        let replayed = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if service
+                    .sent
+                    .lock()
+                    .unwrap()
+                    .get(1)
+                    .is_some_and(|sent| sent.len() == bytes.len())
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await;
+        if replayed.is_err() {
+            drop(release);
+            let _ = reader.await;
+            Arc::try_unwrap(session)
+                .ok()
+                .unwrap()
+                .shutdown()
+                .await
+                .unwrap();
+            panic!("Blocked manifest inspection stalled reconnect replay.");
+        }
+        assert_eq!(*service.starts.lock().unwrap(), vec![0, 0]);
+        assert_eq!(service.sent.lock().unwrap()[1], bytes);
+        let writer = session.clone();
+        tokio::task::spawn_blocking(move || writer.finish_capture())
+            .await
+            .unwrap()
+            .unwrap();
+        let complete = session
+            .wait_for_completion(Duration::from_secs(2), false)
+            .await
+            .unwrap();
+        let state = session.snapshot().unwrap();
+        let no_fresh_reads = store.fixture_manifest_read_count() == reads;
+        let still_blocked = !reader.is_finished();
+        drop(release);
+        assert!(reader.await.unwrap().is_err());
+        assert!(complete.is_some() && no_fresh_reads && still_blocked);
+        assert_eq!(
+            (state.captured_bytes, state.confirmed_bytes),
+            (128000, 128000)
+        );
+        assert_eq!(state.context, "synthetic context");
+        Arc::try_unwrap(session)
+            .ok()
+            .unwrap()
+            .shutdown()
+            .await
+            .unwrap();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn complete_writer_checkpoint_mutation_timeline_records_actual_io_without_target_lock_monitoring()
  {
     let directory = TemporaryRoot::new();
@@ -245,6 +358,7 @@ async fn complete_writer_checkpoint_mutation_timeline_records_actual_io_without_
         "staging-close",
         "staging-rename",
         "manifest-reader-publication",
+        "own-durable-publication-view",
         "manifest-cursor-update",
         "cursor-progress-publication",
     ] {
@@ -262,7 +376,7 @@ async fn complete_writer_checkpoint_mutation_timeline_records_actual_io_without_
                 .iter()
                 .filter(|event| event["phase"] == "encrypted-read")
                 .count(),
-            1
+            0
         );
     }
     for event in completed {

@@ -160,6 +160,521 @@ fn controlled_pause() -> (
     (pause.clone(), FixtureWriteRelease(pause), observed)
 }
 
+#[test]
+fn actual_atomic_replace_manifest_reader_flags_and_alias_characterization() {
+    let directory = TemporaryRoot::new();
+    for (name, flags, alias, share) in [
+        ("shared-read", 0, false, 7),
+        (
+            "reparse-open",
+            windows::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT.0,
+            false,
+            7,
+        ),
+        ("alias-read", 0, true, 7),
+        ("alias-no-write", 0, true, 5),
+        ("alias-read-only", 0, true, 1),
+        (
+            "alias-reparse-read-only",
+            windows::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT.0,
+            true,
+            1,
+        ),
+        (
+            "alias-reparse",
+            windows::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT.0,
+            true,
+            7,
+        ),
+    ] {
+        let target = directory.0.join(format!("{name}.enc"));
+        atomic_write(&target, b"old immutable publication", WriteMode::Replace).unwrap();
+        let opened = if alias {
+            let link = directory.0.join(format!("{name}.reader.enc"));
+            std::fs::hard_link(&target, &link).unwrap();
+            link
+        } else {
+            target.clone()
+        };
+        let mut handle = OpenOptions::new()
+            .read(true)
+            .share_mode(share)
+            .custom_flags(flags)
+            .open(opened)
+            .unwrap();
+        if alias && share == 1 {
+            assert!(std::fs::write(&target, b"denied mutable payload").is_err());
+        }
+        let replaced = atomic_write(&target, b"new durable publication", WriteMode::Replace);
+        println!(
+            "actual-atomic-reader-matrix: name={name}; share={share}; customflags={flags}; result={replaced:?}"
+        );
+        if alias {
+            assert!(
+                replaced.is_ok(),
+                "The immutable read name must not block live destination publication."
+            );
+        }
+        let expected = if replaced.is_ok() {
+            b"new durable publication".as_slice()
+        } else {
+            b"old immutable publication".as_slice()
+        };
+        assert_eq!(std::fs::read(&target).unwrap(), expected);
+        let mut immutable = Vec::new();
+        handle.read_to_end(&mut immutable).unwrap();
+        assert_eq!(immutable, b"old immutable publication");
+        drop(handle);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn fresh_manifest_alias_cleanup_failure_is_visible_not_a_cached_success_or_detached_drop() {
+    let directory = TemporaryRoot::new();
+    let store = NativeRecoveryStore::new(directory.0.clone(), DEFAULT_RECOVERY_QUOTA).unwrap();
+    let mut journal = store
+        .create("cs".into(), "alias cleanup".into(), true, now())
+        .unwrap();
+    let pin = store.fixture_pin_manifest(journal.id()).unwrap();
+    let (release, entered) = store.pause_next_manifest_read(ManifestReadPhase::Unprotect);
+    let reader = tokio::task::spawn_blocking(move || pin.read());
+    tokio::time::timeout(std::time::Duration::from_secs(5), entered)
+        .await
+        .unwrap()
+        .unwrap();
+    let alias = std::fs::read_dir(store.0.session_path(journal.id()).unwrap())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("manifest.reader.")
+        })
+        .unwrap();
+    let held = OpenOptions::new()
+        .read(true)
+        .share_mode(1)
+        .open(&alias)
+        .unwrap();
+    drop(release);
+    let error = reader.await.unwrap().unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("release immutable manifest read name")
+    );
+    assert!(journal.published_snapshot().is_err());
+    assert!(
+        store.fixture_pin_manifest(journal.id()).is_err(),
+        "Failed cleanup cannot accumulate more read-name orphans."
+    );
+    assert!(
+        alias.exists(),
+        "Failed explicit cleanup stays quota-visible, not detached."
+    );
+    drop(held);
+    journal.delete().unwrap();
+}
+
+#[test]
+fn crashed_manifest_read_name_is_ignored_by_codec_but_charged_and_deleted_on_recovery() {
+    let directory = TemporaryRoot::new();
+    let store = NativeRecoveryStore::new(directory.0.clone(), DEFAULT_RECOVERY_QUOTA).unwrap();
+    let journal = store
+        .create("cs".into(), "reader crash binding".into(), true, now())
+        .unwrap();
+    let id = journal.id().to_owned();
+    let wav = to_wav(&[1, 0, 2, 0]).unwrap();
+    journal
+        .checkpoint_snapshot(&[], 4, &[audio(&wav, 4)], false, now())
+        .unwrap();
+    let folder = store.0.session_path(&id).unwrap();
+    let alias = folder.join("manifest.reader.7.11.enc");
+    std::fs::hard_link(folder.join("manifest.enc"), &alias).unwrap();
+    journal
+        .checkpoint_snapshot(&[], 8, &[audio(&wav, 8)], false, now())
+        .unwrap();
+    drop(journal);
+    let mut reopened = store.open(&id).unwrap();
+    assert_eq!(reopened.published_snapshot().unwrap().captured_bytes, 8);
+    assert_eq!(reopened.read_audio(0).unwrap(), wav);
+    assert_eq!(reopened.read_audio(1).unwrap(), wav);
+    let current_bytes: u64 = std::fs::read_dir(&folder)
+        .unwrap()
+        .map(|entry| entry.unwrap().metadata().unwrap().len())
+        .sum();
+    let alias_bytes = std::fs::metadata(&alias).unwrap().len();
+    let if_alias_were_ignored = (DEFAULT_RECOVERY_QUOTA - current_bytes + alias_bytes) as usize;
+    assert!(store.0.ensure_quota(if_alias_were_ignored).is_err());
+    reopened.delete().unwrap();
+    assert!(!folder.exists());
+}
+
+#[test]
+fn owned_publication_view_fails_when_root_ownership_is_poisoned() {
+    let directory = TemporaryRoot::new();
+    let store = NativeRecoveryStore::new(directory.0.clone(), DEFAULT_RECOVERY_QUOTA).unwrap();
+    let journal = store
+        .create("cs".into(), "root failure".into(), true, now())
+        .unwrap();
+    let root = store.0.clone();
+    assert!(
+        std::thread::spawn(move || {
+            let _owned = root.active.lock().unwrap();
+            panic!("Controlled synthetic ownership failure.");
+        })
+        .join()
+        .is_err()
+    );
+    assert!(journal.published_snapshot().is_err());
+    assert!(journal.snapshot().is_err());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn journal_drop_revokes_only_metadata_while_another_owned_mutation_is_blocked() {
+    let directory = TemporaryRoot::new();
+    let store = NativeRecoveryStore::new(directory.0.clone(), DEFAULT_RECOVERY_QUOTA).unwrap();
+    let released = store
+        .create("cs".into(), "released lease".into(), true, now())
+        .unwrap();
+    let id = released.id().to_owned();
+    let writer = store
+        .create("cs".into(), "blocked writer".into(), true, now())
+        .unwrap();
+    let (release, entered) = store.pause_next_fixture_write();
+    let writing = tokio::task::spawn_blocking(move || {
+        let wav = to_wav(&[1, 0, 2, 0]).unwrap();
+        writer.checkpoint_snapshot(&[], 4, &[audio(&wav, 4)], false, now())
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(5), entered)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut dropping = tokio::spawn(async move { drop(released) });
+    let responsive =
+        tokio::time::timeout(std::time::Duration::from_millis(200), &mut dropping).await;
+    let dropped_ok = matches!(&responsive, Ok(Ok(())));
+    let writer_still_blocked = !writing.is_finished();
+    drop(release);
+    if responsive.is_err() {
+        dropping.await.unwrap();
+    }
+    writing.await.unwrap().unwrap();
+    assert!(
+        dropped_ok && writer_still_blocked,
+        "Drop waited on filesystem-owning root mutation."
+    );
+    assert_eq!(
+        store
+            .open(&id)
+            .unwrap()
+            .published_snapshot()
+            .unwrap()
+            .context,
+        "released lease"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn blocked_fresh_manifest_phases_leave_owned_checkpoint_confirmation_and_timers_free() {
+    for phase in [
+        ManifestReadPhase::Open,
+        ManifestReadPhase::Read,
+        ManifestReadPhase::Unprotect,
+    ] {
+        let directory = TemporaryRoot::new();
+        let store = NativeRecoveryStore::new(directory.0.clone(), DEFAULT_RECOVERY_QUOTA).unwrap();
+        let journal = Arc::new(
+            store
+                .create("cs".into(), "manifest phase binding".into(), true, now())
+                .unwrap(),
+        );
+        let wav = to_wav(&[1, 0, 2, 0]).unwrap();
+        journal
+            .checkpoint_snapshot(&[], 4, &[audio(&wav, 4)], false, now())
+            .unwrap();
+        let pin = store.fixture_pin_manifest(journal.id()).unwrap();
+        assert!(store.fixture_pin_manifest(journal.id()).is_err());
+        let (release, entered) = store.pause_next_manifest_read(phase);
+        let reader = tokio::task::spawn_blocking(move || pin.read());
+        tokio::time::timeout(std::time::Duration::from_secs(5), entered)
+            .await
+            .unwrap()
+            .unwrap();
+        if phase == ManifestReadPhase::Read {
+            let live = store
+                .0
+                .session_path(journal.id())
+                .unwrap()
+                .join("manifest.enc");
+            assert!(std::fs::write(live, b"blocked foreign mutation").is_err());
+        }
+        assert!(store.delete_idle(journal.id()).is_err());
+        let writer = journal.clone();
+        let wave = wav.clone();
+        let began = std::time::Instant::now();
+        let mut writing = tokio::task::spawn_blocking(move || {
+            writer.checkpoint_snapshot(&[], 8, &[audio(&wave, 8)], false, now())?;
+            writer.confirm_streaming_snapshot(4, "confirmed".into(), vec![], false, None, now())?;
+            writer.published_snapshot()
+        });
+        let progress = tokio::time::timeout(std::time::Duration::from_secs(2), &mut writing).await;
+        let writer_elapsed_ms = began.elapsed().as_secs_f64() * 1000.0;
+        let still_blocked = !reader.is_finished();
+        let timer = tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            tokio::time::sleep(std::time::Duration::from_millis(5)),
+        )
+        .await;
+        drop(release);
+        let written = match progress {
+            Ok(result) => result.unwrap().unwrap(),
+            Err(error) => {
+                let _ = writing.await;
+                let _ = reader.await;
+                panic!("Owned writer blocked on an unrelated fresh manifest read: {error}");
+            }
+        };
+        let inspected = reader.await.unwrap();
+        assert!(still_blocked && timer.is_ok());
+        assert_eq!((written.captured_bytes, written.confirmed_bytes), (8, 4));
+        assert!(
+            inspected
+                .unwrap_err()
+                .to_string()
+                .contains("changed during fresh inspection")
+        );
+        let inspected = journal.snapshot().unwrap();
+        assert_eq!(
+            (inspected.captured_bytes, inspected.confirmed_bytes),
+            (8, 4)
+        );
+        assert_eq!(journal.read_audio(1).unwrap(), wav);
+        println!(
+            "blocked-fresh-manifest: writer-and-confirm-progress-ms={}; latest-durable=8/4; reader-was-blocked=true",
+            writer_elapsed_ms
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manifest_read_handles_remain_quota_charged_until_the_joined_pin_is_released() {
+    let directory = TemporaryRoot::new();
+    let store = NativeRecoveryStore::new(directory.0.clone(), DEFAULT_RECOVERY_QUOTA).unwrap();
+    let journal = store
+        .create("cs".into(), "manifest quota".into(), true, now())
+        .unwrap();
+    let pin = store.fixture_pin_manifest(journal.id()).unwrap();
+    let (release, entered) = store.pause_next_manifest_read(ManifestReadPhase::Read);
+    let reader = tokio::task::spawn_blocking(move || pin.read());
+    tokio::time::timeout(std::time::Duration::from_secs(5), entered)
+        .await
+        .unwrap()
+        .unwrap();
+    let wav = to_wav(&[1, 0, 2, 0]).unwrap();
+    journal
+        .checkpoint_snapshot(&[], 4, &[audio(&wav, 4)], false, now())
+        .unwrap();
+    let bytes: u64 = std::fs::read_dir(&store.0.path)
+        .unwrap()
+        .flat_map(|entry| {
+            let entry = entry.unwrap();
+            if entry.metadata().unwrap().is_dir() {
+                std::fs::read_dir(entry.path())
+                    .unwrap()
+                    .map(|child| child.unwrap().metadata().unwrap().len())
+                    .collect::<Vec<_>>()
+            } else {
+                vec![entry.metadata().unwrap().len()]
+            }
+        })
+        .sum();
+    let additional = (DEFAULT_RECOVERY_QUOTA - bytes) as usize;
+    assert!(
+        store.0.ensure_quota(additional).is_err(),
+        "Retired/open manifest capacity cannot disappear from quota."
+    );
+    drop(release);
+    assert!(reader.await.unwrap().is_err());
+    store.0.ensure_quota(additional).unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manifest_pin_survives_owner_release_but_never_returns_a_new_owners_cached_state() {
+    let directory = TemporaryRoot::new();
+    let store = NativeRecoveryStore::new(directory.0.clone(), DEFAULT_RECOVERY_QUOTA).unwrap();
+    let journal = store
+        .create("cs".into(), "original manifest lease".into(), true, now())
+        .unwrap();
+    let id = journal.id().to_owned();
+    let pin = store.fixture_pin_manifest(&id).unwrap();
+    let (release, entered) = store.pause_next_manifest_read(ManifestReadPhase::Unprotect);
+    let reader = tokio::task::spawn_blocking(move || pin.read());
+    tokio::time::timeout(std::time::Duration::from_secs(5), entered)
+        .await
+        .unwrap()
+        .unwrap();
+    drop(journal);
+    assert!(store.open(&id).is_err());
+    assert!(store.delete_idle(&id).is_err());
+    drop(release);
+    assert!(
+        reader
+            .await
+            .unwrap()
+            .unwrap_err()
+            .to_string()
+            .contains("owner has been released")
+    );
+    let mut reopened = store.open(&id).unwrap();
+    assert_eq!(
+        reopened.published_snapshot().unwrap().context,
+        "original manifest lease"
+    );
+    reopened.delete().unwrap();
+    assert!(reopened.published_snapshot().is_err());
+    assert!(reopened.snapshot().is_err());
+}
+
+#[test]
+fn failed_actual_publication_never_exposes_inflight_or_cached_success() {
+    let directory = TemporaryRoot::new();
+    let store = NativeRecoveryStore::new(directory.0.clone(), DEFAULT_RECOVERY_QUOTA).unwrap();
+    let journal = Arc::new(
+        store
+            .create(
+                "cs".into(),
+                "publication failure binding".into(),
+                true,
+                now(),
+            )
+            .unwrap(),
+    );
+    let path = store
+        .0
+        .session_path(journal.id())
+        .unwrap()
+        .join("manifest.enc");
+    let held = OpenOptions::new()
+        .read(true)
+        .share_mode(1)
+        .open(&path)
+        .unwrap();
+    let cipher_before = std::fs::read(&path).unwrap();
+    let wav = to_wav(&[1, 0, 2, 0]).unwrap();
+    assert!(
+        journal
+            .checkpoint_snapshot(&[], 4, &[audio(&wav, 4)], false, now())
+            .is_err()
+    );
+    assert!(
+        journal.published_snapshot().is_err(),
+        "An I/O error cannot fall back to a cache-success result."
+    );
+    assert_eq!(journal.snapshot().unwrap().captured_bytes, 0);
+    assert!(
+        journal.published_snapshot().is_err(),
+        "Fresh prefix inspection is not implicit pipeline recovery."
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), cipher_before);
+    drop(held);
+    journal
+        .checkpoint(&[], 4, &[audio(&wav, 4)], false, now())
+        .unwrap();
+    assert_eq!(journal.published_snapshot().unwrap().captured_bytes, 4);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inflight_checkpoint_view_stays_durable_and_fresh_io_error_is_not_a_cache_fallback() {
+    let directory = TemporaryRoot::new();
+    let store = NativeRecoveryStore::new(directory.0.clone(), DEFAULT_RECOVERY_QUOTA).unwrap();
+    let journal = Arc::new(
+        store
+            .create("cs".into(), "publication view".into(), true, now())
+            .unwrap(),
+    );
+    let (release, entered) = store.pause_next_fixture_write();
+    let writer = journal.clone();
+    let mut writing = tokio::task::spawn_blocking(move || {
+        let wav = to_wav(&[1, 0, 2, 0]).unwrap();
+        writer.checkpoint_snapshot(&[], 4, &[audio(&wav, 4)], false, now())
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(5), entered)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(journal.published_snapshot().unwrap().captured_bytes, 0);
+    drop(release);
+    (&mut writing).await.unwrap().unwrap();
+    assert_eq!(journal.published_snapshot().unwrap().captured_bytes, 4);
+    let pin = store.fixture_pin_manifest(journal.id()).unwrap();
+    let (release, entered) = store.pause_next_manifest_read(ManifestReadPhase::Open);
+    let reading = tokio::task::spawn_blocking(move || pin.read());
+    tokio::time::timeout(std::time::Duration::from_secs(5), entered)
+        .await
+        .unwrap()
+        .unwrap();
+    let path = store
+        .0
+        .session_path(journal.id())
+        .unwrap()
+        .join("manifest.enc");
+    std::fs::write(&path, b"corrupt controlled manifest").unwrap();
+    drop(release);
+    assert!(reading.await.unwrap().is_err());
+    assert!(journal.published_snapshot().is_err());
+    assert!(
+        journal
+            .checkpoint_snapshot(&[], 4, &[], true, now())
+            .is_err()
+    );
+    assert_eq!(std::fs::read(path).unwrap(), b"corrupt controlled manifest");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stale_manifest_read_failure_is_not_replaced_by_a_newer_cached_publication() {
+    let directory = TemporaryRoot::new();
+    let store = NativeRecoveryStore::new(directory.0.clone(), DEFAULT_RECOVERY_QUOTA).unwrap();
+    let journal = store
+        .create("cs".into(), "failed stale inspection".into(), true, now())
+        .unwrap();
+    let wav = to_wav(&[1, 0, 2, 0]).unwrap();
+    journal
+        .checkpoint_snapshot(&[], 4, &[audio(&wav, 4)], false, now())
+        .unwrap();
+    let pin = store.fixture_pin_manifest(journal.id()).unwrap();
+    let (release, entered) = store.pause_next_manifest_read(ManifestReadPhase::Open);
+    let reader = tokio::task::spawn_blocking(move || pin.read());
+    tokio::time::timeout(std::time::Duration::from_secs(5), entered)
+        .await
+        .unwrap()
+        .unwrap();
+    let alias = std::fs::read_dir(store.0.session_path(journal.id()).unwrap())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("manifest.reader.")
+        })
+        .unwrap();
+    std::fs::write(alias, b"controlled old-generation corruption").unwrap();
+    journal
+        .checkpoint_snapshot(&[], 8, &[audio(&wav, 8)], false, now())
+        .unwrap();
+    assert_eq!(journal.published_snapshot().unwrap().captured_bytes, 8);
+    drop(release);
+    assert!(
+        reader.await.unwrap().is_err(),
+        "Newer cache cannot mask failed actual IO/decryption."
+    );
+    assert!(journal.published_snapshot().is_err());
+    assert_eq!(journal.snapshot().unwrap().captured_bytes, 8);
+    assert!(journal.published_snapshot().is_err());
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn last_pin_delete_quota_metadata_hypothesis_has_an_explicit_actual_result() {
     let directory = TemporaryRoot::new();

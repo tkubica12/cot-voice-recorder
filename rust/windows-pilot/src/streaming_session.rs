@@ -181,7 +181,9 @@ impl<S: StreamingBackend> StreamingSession<S> {
         service: Arc<S>,
         recovery: bool,
     ) -> Result<Self, SessionError> {
-        let manifest = journal.snapshot().map_err(SessionError::Storage)?;
+        let manifest = journal
+            .published_snapshot()
+            .map_err(SessionError::Storage)?;
         if !manifest.streaming {
             return Err(SessionError::Closed);
         }
@@ -227,7 +229,10 @@ impl<S: StreamingBackend> StreamingSession<S> {
         self.inner.trace.clone()
     }
     pub fn snapshot(&self) -> Result<RecoveryManifest, SessionError> {
-        self.inner.journal.snapshot().map_err(SessionError::Storage)
+        self.inner
+            .journal
+            .published_snapshot()
+            .map_err(SessionError::Storage)
     }
 
     pub fn append(&self, mut pcm: &[u8]) -> Result<(), SessionError> {
@@ -294,18 +299,22 @@ impl<S: StreamingBackend> StreamingSession<S> {
         completed: time::OffsetDateTime,
         polished: bool,
     ) -> Result<(), SessionError> {
-        let mut state = self.inner.lock().map_err(session_failure)?;
         self.inner
-            .journal
-            .prepare_audit(text, completed, polished, time::OffsetDateTime::now_utc())
-            .map_err(SessionError::Storage)?;
-        state.manifest = self
-            .inner
-            .journal
-            .snapshot()
-            .map_err(SessionError::Storage)?;
-        self.inner.publish(&state);
-        Ok(())
+            .freeze_audit(text, completed, polished)
+            .map_err(session_failure)
+    }
+
+    pub(crate) async fn prepare_audit_async(
+        &self,
+        text: String,
+        completed: time::OffsetDateTime,
+        polished: bool,
+    ) -> Result<(), SessionError> {
+        let inner = self.inner.clone();
+        tokio::task::spawn_blocking(move || inner.freeze_audit(text, completed, polished))
+            .await
+            .map_err(|_| SessionError::Worker)?
+            .map_err(session_failure)
     }
 
     pub async fn wait_for_completion(
@@ -418,12 +427,24 @@ impl<S: StreamingBackend> Inner<S> {
 
     #[track_caller]
     fn lock(&self) -> Result<MutexGuard<'_, State>, Failure> {
+        self.lock_named("")
+    }
+
+    #[track_caller]
+    fn lock_named(&self, operation: &'static str) -> Result<MutexGuard<'_, State>, Failure> {
+        #[cfg(not(test))]
+        let _ = operation;
         #[cfg(test)]
         let mutation_wait = crate::mutation_trace::span("engine-lock-wait");
         #[cfg(test)]
-        let wait = self
-            .trace
-            .wait(&format!("{}", std::panic::Location::caller()));
+        let wait = {
+            let operation = if operation.is_empty() {
+                format!("{}", std::panic::Location::caller())
+            } else {
+                operation.to_owned()
+            };
+            self.trace.wait(&operation)
+        };
         self.synchronous_waiters.fetch_add(1, Ordering::AcqRel);
         let result = self.state.lock();
         self.synchronous_waiters.fetch_sub(1, Ordering::AcqRel);
@@ -438,6 +459,21 @@ impl<S: StreamingBackend> Inner<S> {
         return Ok(wait.acquired(guard));
         #[cfg(not(test))]
         Ok(guard)
+    }
+
+    fn freeze_audit(
+        &self,
+        text: String,
+        completed: time::OffsetDateTime,
+        polished: bool,
+    ) -> Result<(), Failure> {
+        let mut state = self.lock_named("prepare-audit")?;
+        state.manifest = self
+            .journal
+            .prepare_audit_snapshot(text, completed, polished, time::OffsetDateTime::now_utc())
+            .map_err(Failure::Storage)?;
+        self.publish(&state);
+        Ok(())
     }
     fn publish(&self, state: &State) {
         #[cfg(test)]
@@ -568,8 +604,9 @@ impl<S: StreamingBackend> Inner<S> {
         if through <= state.manifest.confirmed_bytes || through > state.manifest.captured_bytes {
             return Err(Failure::Api(ApiErrorKind::Unexpected));
         }
-        self.journal
-            .confirm_streaming(
+        state.manifest = self
+            .journal
+            .confirm_streaming_snapshot(
                 through,
                 text,
                 context,
@@ -578,7 +615,6 @@ impl<S: StreamingBackend> Inner<S> {
                 time::OffsetDateTime::now_utc(),
             )
             .map_err(Failure::Storage)?;
-        state.manifest = self.journal.snapshot().map_err(Failure::Storage)?;
         state.cache = None;
         self.publish(state);
         Ok(())
@@ -696,11 +732,10 @@ async fn send_audio<S: StreamingBackend>(
             };
             position += audio.0.len() as u64;
             if quiet >= 12_800 && position - committed >= 64_000 {
+                if !checkpoint_for_send(inner.clone(), stop.clone(), "send-audio-checkpoint")
+                    .await?
                 {
-                    let mut state = inner.async_lock("send-audio-checkpoint").await?;
-                    if !state.manifest.capture_complete {
-                        inner.checkpoint(&mut state, false)?;
-                    }
+                    return Ok(());
                 }
                 committed_to.store(position, Ordering::Release);
                 tokio::select! {
@@ -725,11 +760,8 @@ async fn send_audio<S: StreamingBackend>(
             break;
         }
     }
-    {
-        let mut state = inner.async_lock("send-audio-finish").await?;
-        if !state.manifest.capture_complete {
-            inner.checkpoint(&mut state, false)?;
-        }
+    if !checkpoint_for_send(inner, stop.clone(), "send-audio-finish").await? {
+        return Ok(());
     }
     committed_to.store(position, Ordering::Release);
     tokio::select! {
@@ -737,6 +769,29 @@ async fn send_audio<S: StreamingBackend>(
         _ = stop.changed() => Ok(()),
         result = sender.commit(true) => result.map_err(|error| Failure::Api(error.kind)),
     }
+}
+
+async fn checkpoint_for_send<S: StreamingBackend>(
+    inner: Arc<Inner<S>>,
+    stop: watch::Receiver<bool>,
+    operation: &'static str,
+) -> Result<bool, Failure> {
+    // One joined mutation per send loop; acquire its state lock on the blocking worker.
+    tokio::task::spawn_blocking(move || {
+        if *stop.borrow() {
+            return Ok(false);
+        }
+        let mut state = inner.lock_named(operation)?;
+        if *stop.borrow() {
+            return Ok(false);
+        }
+        if !state.manifest.capture_complete {
+            inner.checkpoint(&mut state, false)?;
+        }
+        Ok(true)
+    })
+    .await
+    .map_err(|_| Failure::Worker)?
 }
 
 async fn receive_text<S: StreamingBackend>(
@@ -766,32 +821,51 @@ async fn receive_text<S: StreamingBackend>(
         if *stop.borrow() {
             return Ok(());
         }
-        let mut state = inner.async_lock("receive-transcript").await?;
-        state.service_error = None;
-        match event {
+        let event = match event {
             DictationMessage::Confirmed {
                 item_id,
                 text,
                 byte_end,
             } => {
-                if byte_end > committed_to.load(Ordering::Acquire) {
-                    return Err(Failure::Api(ApiErrorKind::Unexpected));
-                }
-                let words = text.split_whitespace().count() as u32;
-                let full =
-                    append_preserving_prefix(&state.manifest.confirmed_text, &text, false, None);
-                inner.confirm(
-                    &mut state,
-                    byte_end,
-                    full,
-                    false,
-                    words,
-                    context.expect("Confirmed message owns its bounded context."),
-                )?;
-                state
-                    .hypotheses
-                    .retain(|hypothesis| hypothesis.id != item_id);
+                let writer = inner.clone();
+                let stopped = stop.clone();
+                let limit = committed_to.clone();
+                let context = context.expect("Confirmed message owns its bounded context.");
+                tokio::task::spawn_blocking(move || {
+                    if *stopped.borrow() {
+                        return Ok(());
+                    }
+                    let mut state = writer.lock_named("receive-transcript-confirm")?;
+                    if *stopped.borrow() {
+                        return Ok(());
+                    }
+                    if byte_end > limit.load(Ordering::Acquire) {
+                        return Err(Failure::Api(ApiErrorKind::Unexpected));
+                    }
+                    state.service_error = None;
+                    let words = text.split_whitespace().count() as u32;
+                    let full = append_preserving_prefix(
+                        &state.manifest.confirmed_text,
+                        &text,
+                        false,
+                        None,
+                    );
+                    writer.confirm(&mut state, byte_end, full, false, words, context)?;
+                    state
+                        .hypotheses
+                        .retain(|hypothesis| hypothesis.id != item_id);
+                    writer.publish(&state);
+                    Ok(())
+                })
+                .await
+                .map_err(|_| Failure::Worker)??;
+                continue;
             }
+            event => event,
+        };
+        let mut state = inner.async_lock("receive-transcript").await?;
+        state.service_error = None;
+        match event {
             DictationMessage::Done { byte_end } => {
                 if byte_end != state.manifest.confirmed_bytes {
                     return Err(Failure::Api(ApiErrorKind::Unexpected));
@@ -941,21 +1015,38 @@ async fn fallback<S: StreamingBackend>(
             if *stop.borrow() {
                 return Ok(());
             }
-            let mut state = inner.async_lock("fallback-prepare").await?;
-            let full = append_preserving_prefix(
-                &state.manifest.confirmed_text,
-                &text,
-                chunk.overlaps_previous || (first && !context.0.is_empty()),
-                Some(state.manifest.last_segment_words as usize),
-            );
-            inner.confirm(
-                &mut state,
-                start + chunk.end_byte,
-                full,
-                true,
-                text.split_whitespace().count() as u32,
-                next_context,
-            )?;
+            let writer = inner.clone();
+            let stopped = stop.clone();
+            let overlap = chunk.overlaps_previous || (first && !context.0.is_empty());
+            let applied = tokio::task::spawn_blocking(move || {
+                if *stopped.borrow() {
+                    return Ok(false);
+                }
+                let mut state = writer.lock_named("fallback-confirm")?;
+                if *stopped.borrow() {
+                    return Ok(false);
+                }
+                let full = append_preserving_prefix(
+                    &state.manifest.confirmed_text,
+                    &text,
+                    overlap,
+                    Some(state.manifest.last_segment_words as usize),
+                );
+                writer.confirm(
+                    &mut state,
+                    through,
+                    full,
+                    true,
+                    text.split_whitespace().count() as u32,
+                    next_context,
+                )?;
+                Ok(true)
+            })
+            .await
+            .map_err(|_| Failure::Worker)??;
+            if !applied {
+                return Ok(());
+            }
             first = false;
         }
         if position == captured {

@@ -340,7 +340,7 @@ async fn load_session<P: DictationPorts>(
     })
     .await
     .map_err(|_| NativeError::Verification("Recovery initialization worker failed."))??;
-    let state = journal.snapshot()?;
+    let state = journal.published_snapshot()?;
     if state.context != context {
         return Err(NativeError::Verification(
             "Use the original signed-in account and backend for Recovery.",
@@ -949,11 +949,10 @@ impl<P: DictationPorts> DictationHost<P> {
                                 }
                                 if let Session::Streaming(streaming) = &session {
                                     if existing.is_none() {
-                                        match streaming.prepare_audit(
-                                            text.clone(),
-                                            completed,
-                                            polished,
-                                        ) {
+                                        match streaming
+                                            .prepare_audit_async(text.clone(), completed, polished)
+                                            .await
+                                        {
                                             Ok(()) => {}
                                             Err(error) => {
                                                 eprintln!("Audit freeze: {error}");

@@ -3885,3 +3885,82 @@ independent-failure-verification.json. NOretry/nohour; nejmensi dalsi rootobject
 je konkretni dlouhy freshmanifestread uvnitr send-audio-checkpoint state/root
 criticalsection a jeho subphase/ownership proof, ne spekulativniOS/metadata
 optimalizace. Vsechny starefailedcases/071/5bproofy zustavaji revision-scoped.
+
+### Bounded own-publication repair pro send-audio-checkpoint manifest read
+
+Po neutral120sFAILED koordinator zadal pouze source/unit/regression opravu,
+zadny dalsi30/120/hour/quiet/CUI/device/install/Azure case. Root audit zahrnul
+send/finish checkpoint, confirm/fallback/audit, Legacy checkpoint/result-refresh,
+startup/controller History/completion, outbox a aktivni Recovery refresh.
+Vlastni alreadydurablypublished checkpoint je ted autoritativni view jen pri
+platnem rootwriter/session ownershipu; neni freshdiskhealth probe ani IOfallback.
+
+ReaderState uchovava immutablepublishedmanifest/generation/live-valid flags.
+Create/open seed pouze po durablewrite/freshread+audio-validation, update pouze
+po uspechu atomicpublication. Inflight/unsavedcandidate se nepublikuje. Failed
+mutation/audio/freshinspection invalidatehotview; po chybenevraci cache-success.
+Freshprefixinspection nema implicitne opravovatfailedenginecache. OwnerDrop
+revokesmetadata bez cekanina coarseRoot nebo mutatingIO; admissionlazyprunes
+releasedleases a readpins nadale brani delete/reopen. Root/readerlock poison je
+expliciterror, nikoli dokazvalidnicashe.
+
+Hot checkpoint/result/confirm/audit provadi stejny protectedwrite z OWNlatest
+publication pod existingrootwriterlease, ne repeatedencryptedload_current.
+Engine start/getters/history/outbox/activeRecoveryinfo rovnez no-content-I/O.
+Legacy result-refresh podstatelockem bere latestownpublication, nikoli snapshot
+vraceny jeste pred concurrentcaptureupdate. Public cold mutation API zustalo
+fresh-read/validate proti originalbindingu a ownpublication, schema v1-v4 bezezmeny.
+Zadny cachequota/pathcheck; aktualniI/O nadalevalidujefullpath/reparse/bounds/
+binding/digest, audio-before-manifest a confirmation-before-release.
+
+Explicitfreshinspection ma max1generation/deletionpin. Skutecny newcontrolled
+FS test ukazal: otevrenyLIVEdestinationRead i explicitshare7 s/bezOPEN_REPARSE
+zpusobi currentMoveFileExW(REPLACE|WRITE_THROUGH) HRESULT0x80070005. OWNhardlink
+read-name dovolil puvodniatomicreplacement i sREAD-onlyshare a zaroven zakazal
+inplacemutation; reader stalevideloldimmutablebytes. To neni diagnoza starehob7.
+Proto actualfreshopen/read/unprotect pracuji z temporaryimmutable read-name
+offruntime/outsideengine-rootlocks. Genconflict je explicitErr, ne stalesuccess
+nebo newer-cachefallback. Unsupportedhardlink je actualIOerror, ne copyfallback.
+Normalnihotgetters linknepotrebuji; coldread callers musi pouzitblockingworker.
+
+Readername cleanup je explicitjoinedblockingIO po closedhandle; Drop jenmetadata.
+Cleanupfailure zachovanequota-visible a brani dalsimreadnames na tomtoowneru,
+ne unboundedaccumulation. Crashname je codec-ignored/charged/scopeddeleted.
+Fullfreshquota staging/orphans/externalcharges zustala; extra boundedretained
+manifestcapacity kryje namedread snapshot vznikly behemwalku, neni cachedquota.
+Stagingflush/atomicrename ani checkpointtiming nebyly relaxovany/batched.
+
+Synchronous mutations ve streaming send/finish/receive-confirm/fallback/audit
+jsou ted boundedJOINEDblockingjobs s enginelock acquired INSIDEworkeru, ne mutex
+prenesenypresawait. Maxone awaitedjob perexistingbranch, zadna extraPCMqueue.
+Cancel/reconnect ceka zacateread/writejobs, commit nastava az po checkpointu.
+Puvodni1280B40ms50slots/2s30s/5sfixturejoin zustaly bezezmeny.
+
+| Surface | Current read/lock classification |
+| --- | --- |
+| Active engine checkpoint/result/confirm/audit, initial/getter/cursor/history | Own last durable generation; zadny encryptedmanifestread, shortmetadata access |
+| Actual data mutation | Protectedwrite/DPAPI/encoding/hash, fullfreshpath/quota metadata, stagingwrite/flush/rename/delete; serialized engine/root onblockingworker |
+| Explicit fresh snapshot | Shortroot admission metadata pin; hardlink/open/read/unprotect outsideengine/root; scopedread-name delete underroot onjoinedworker |
+| Public cold checkpoint/result/confirm/audit | Necessary freshvalidation load_current underroot ownership transaction; not called byhotengine paths |
+| Idle discovery/reopen/cleanup | Freshmanifest/audio validation still serialized forsafeadmission/deletion, offruntimebeforeengine; activeentries useownview. ResidualcoldIO maycontendroot, not declaredlatencyfix |
+| Drop | Metadatarevocation/pinrelease only, no new filesystemmutation/detachedworker |
+
+Controlledrealmanifest Open/Read/Unprotect gates prokazuji concurrentcapture/
+checkpoint/confirm/cursorprogress, generationconflict, ownerrelease/reopen,
+IOfail/newergencache rejection, publicationfailure/noinflightview, actualreader
+sharing/retainedquota/crashcleanup. Controller matrix2engines x3phases x5
+Stop/Discard/Interrupt/auth/shutdown cases pouziva ustreamu quietPCM+actuallive
+checkpoint/confirmation a konst.diskreadcounter: behemblockedinspection hot
+pipeline nepridala zadnymanifestread. Reconnect3phase test overil exactreplay
+start0/0,128000bytes a confirmedmonotonicEOF, joinedread/mutations. Existing
+2s/64000PCMnormal+controlledfailure shortsmokes zustaly bounds-only.
+
+Local339workspace/143native/strictClippy/fmt/release a7C#Recovery+7platform+
+6hiddenlifecycle parity PASS; matchingnewCI bude uvedeno az po exactcommit overeni.
+BlockedOpen/Read/Unprotect unit writer+confirm progress27.5682/23.111/25.8258ms
+byl zaznamenan PREDrelease inspectoru, ne po jeho diskreadu; nejsou to nove
+acceptance thresholds nebo statisticky profile.
+Timelineactual encrypted-read1 se zmenil na0, zatimco requiredpath/quota/write/
+publication phases zustaly; nejdeostatistickylatencyneboodhadOS_IOpodilu.
+Frozen120sFAILED44.405102/exact1416960allsealed/pending136960 a20sloaderUNKNOWN
+zustaly; oldb7finalaccepted/orphan14 se neprepisuji. Zadny novy longrun.

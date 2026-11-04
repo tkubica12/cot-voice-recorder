@@ -169,7 +169,9 @@ impl Drop for AudioBuffer {
 
 impl<S: BatchBackend> LegacySession<S> {
     pub fn start(journal: NativeRecoveryJournal, service: Arc<S>) -> Result<Self, SessionError> {
-        let manifest = journal.snapshot().map_err(SessionError::Storage)?;
+        let manifest = journal
+            .published_snapshot()
+            .map_err(SessionError::Storage)?;
         if manifest.streaming {
             return Err(SessionError::Closed);
         }
@@ -246,7 +248,10 @@ impl<S: BatchBackend> LegacySession<S> {
     }
 
     pub fn snapshot(&self) -> Result<RecoveryManifest, SessionError> {
-        self.inner.journal.snapshot().map_err(SessionError::Storage)
+        self.inner
+            .journal
+            .published_snapshot()
+            .map_err(SessionError::Storage)
     }
 
     pub async fn wait_for_completion(
@@ -403,14 +408,14 @@ impl<S: BatchBackend> Inner<S> {
             .collect();
         let result = self
             .journal
-            .checkpoint(
+            .checkpoint_snapshot(
                 &tail,
                 state.captured,
                 &views,
                 complete,
                 time::OffsetDateTime::now_utc(),
             )
-            .and_then(|()| self.journal.snapshot());
+            .and_then(|_| self.journal.published_snapshot());
         tail.fill(0);
         for chunk in &mut chunks {
             chunk.wav.fill(0);
@@ -521,11 +526,11 @@ async fn transcribe<S: BatchBackend>(inner: Arc<Inner<S>>, index: u32) -> Result
     tokio::task::spawn_blocking(move || {
         writer
             .journal
-            .save_result(index, text, time::OffsetDateTime::now_utc())?;
+            .save_result_snapshot(index, text, time::OffsetDateTime::now_utc())?;
         let mut state = writer
             .lock()
             .map_err(|_| NativeError::Verification("Dictation state lock is poisoned."))?;
-        state.manifest = writer.journal.snapshot()?;
+        state.manifest = writer.journal.published_snapshot()?;
         state.errors.remove(&index);
         writer.publish(&state);
         Ok::<_, NativeError>(())

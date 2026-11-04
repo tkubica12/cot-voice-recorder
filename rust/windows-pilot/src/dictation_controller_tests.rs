@@ -1557,6 +1557,161 @@ async fn shutdown_during_recording_joins_capture_and_preserves_audio_without_del
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn blocked_fresh_manifest_inspection_never_serializes_controller_capture_or_cancellation() {
+    use crate::recovery_store::ManifestReadPhase;
+    for streaming in [false, true] {
+        for phase in [
+            ManifestReadPhase::Open,
+            ManifestReadPhase::Read,
+            ManifestReadPhase::Unprotect,
+        ] {
+            for reason in [
+                StartupInterruption::Stopped,
+                StartupInterruption::Discarded,
+                StartupInterruption::Interrupted,
+                StartupInterruption::AuthChanged,
+                StartupInterruption::Shutdown,
+            ] {
+                let mut harness = Harness::new(streaming, false);
+                if streaming {
+                    harness
+                        .ports
+                        .0
+                        .backend
+                        .0
+                        .count_only
+                        .store(true, Ordering::Release);
+                }
+                harness.begin(DictationMode::Toggle).await;
+                let bytes = if streaming {
+                    volume_pcm(32000)
+                } else {
+                    pcm(32000)
+                };
+                harness.ports.feed(&bytes);
+                tokio::time::timeout(Duration::from_secs(5), async {
+                    while harness
+                        .ports
+                        .0
+                        .writer_completed_bytes
+                        .load(Ordering::Acquire)
+                        != 64000
+                    {
+                        tokio::time::sleep(Duration::from_millis(1)).await;
+                    }
+                })
+                .await
+                .unwrap();
+                let rows = harness.recovery.list().unwrap();
+                let id = rows[0].id.clone();
+                let pin = harness.recovery.fixture_pin_manifest(&id).unwrap();
+                let (release, entered) = harness.recovery.pause_next_manifest_read(phase);
+                let reader = tokio::task::spawn_blocking(move || pin.read());
+                tokio::time::timeout(Duration::from_secs(5), entered)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                let manifest_reads = harness.recovery.fixture_manifest_read_count();
+                harness.ports.feed(&bytes);
+                let progress = tokio::time::timeout(Duration::from_secs(5), async {
+                    while harness
+                        .ports
+                        .0
+                        .writer_completed_bytes
+                        .load(Ordering::Acquire)
+                        != 128000
+                        || streaming && harness.ports.0.capture_trace.get().unwrap().snapshot()["confirmed_bytes"].as_u64() != Some(128000)
+                    {
+                        tokio::time::sleep(Duration::from_millis(1)).await;
+                    }
+                })
+                .await;
+                if let Err(error) = progress {
+                    drop(release);
+                    let _ = reader.await;
+                    harness.close().await;
+                    panic!("Fresh manifest inspection blocked actual capture append: {error}");
+                }
+                let reader_still_blocked = !reader.is_finished();
+                match reason {
+                    StartupInterruption::Stopped => {
+                        harness.stop().await;
+                        let (_, _, reply) = harness.delivery().await;
+                        reply.send(DeliveryResult::CopiedOnly).unwrap();
+                        harness.stage(DictationStage::PasteSkipped).await;
+                        harness.idle().await;
+                    }
+                    StartupInterruption::Discarded => {
+                        harness
+                            .commands
+                            .send(DictationCommand::Discard)
+                            .await
+                            .unwrap();
+                        harness.idle().await;
+                    }
+                    StartupInterruption::Interrupted => {
+                        harness
+                            .commands
+                            .send(DictationCommand::Interrupt)
+                            .await
+                            .unwrap();
+                        harness.idle().await;
+                    }
+                    StartupInterruption::AuthChanged => {
+                        harness.ports.0.auth.send_replace(AuthState::SignedOut);
+                        harness.idle().await;
+                    }
+                    StartupInterruption::Shutdown => {}
+                }
+                harness.close().await;
+                let no_hot_disk_reads =
+                    harness.recovery.fixture_manifest_read_count() == manifest_reads;
+                let still_blocked_after_control = !reader.is_finished();
+                drop(release);
+                assert!(
+                    reader.await.unwrap().is_err(),
+                    "A released owner cannot publish a late inspection result."
+                );
+                assert!(reader_still_blocked && still_blocked_after_control);
+                assert!(
+                    no_hot_disk_reads,
+                    "Hot checkpoint/result/history/audit getters reread the encrypted manifest."
+                );
+                assert_eq!(
+                    harness.ports.0.accepted_bytes.load(Ordering::Acquire),
+                    128000
+                );
+                assert_eq!(
+                    harness
+                        .ports
+                        .0
+                        .writer_completed_bytes
+                        .load(Ordering::Acquire),
+                    128000
+                );
+                if reason != StartupInterruption::Stopped {
+                    assert!(harness.entries().is_empty());
+                    assert!(harness.ui.try_recv().is_err());
+                }
+                let journal = harness.recovery.open(&id).unwrap();
+                let state = journal.published_snapshot().unwrap();
+                assert_eq!(state.context, format!("{URL}\n{EMAIL}"));
+                assert_eq!(state.captured_bytes, 128000);
+                assert!(state.confirmed_bytes <= state.captured_bytes);
+                for chunk in state.chunks.iter().filter(|chunk| chunk.text.is_none()) {
+                    let audio = journal.read_audio(chunk.index).unwrap();
+                    let end = chunk.end_byte as usize;
+                    let all = [bytes.as_slice(), bytes.as_slice()].concat();
+                    assert_eq!(&audio[44..], &all[end - (audio.len() - 44)..end]);
+                }
+                drop(journal);
+                harness.recovery.delete_idle(&id).unwrap();
+            }
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn blocked_native_checkpoint_keeps_stop_discard_auth_and_shutdown_responsive_and_owned() {
     for streaming in [false, true] {
         for reason in [

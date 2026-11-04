@@ -107,13 +107,15 @@ impl<S: AuditUploader> AuditOutbox<S> {
                     continue;
                 }
             };
-            let state = journal.snapshot()?;
+            let state = journal.published_snapshot()?;
             let Some(audit) = &state.audit else { continue };
             if self.uploader.context().await.as_deref() != Some(state.context.as_str()) {
                 continue;
             }
             if utc_ticks(now)? - audit.completed_at_ticks >= 48 * 60 * 60 * 10_000_000 {
-                journal.delete()?;
+                tokio::task::spawn_blocking(move || journal.delete())
+                    .await
+                    .map_err(|_| NativeError::Verification("Audit deletion worker failed."))??;
                 result.expired += 1;
                 eprintln!(
                     "Audit expired before cloud acknowledgment; fixed original retention applies."
@@ -168,7 +170,11 @@ impl<S: AuditUploader> AuditOutbox<S> {
                     if policy.can_upload_audit()
                         && self.uploader.context().await.as_deref() == Some(state.context.as_str())
                     {
-                        journal.delete()?;
+                        tokio::task::spawn_blocking(move || journal.delete())
+                            .await
+                            .map_err(|_| {
+                                NativeError::Verification("Audit deletion worker failed.")
+                            })??;
                         result.acknowledged += 1;
                     }
                 }

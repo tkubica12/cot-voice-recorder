@@ -18,7 +18,7 @@ pub const DOTNET_UNIX_EPOCH_TICKS: i64 = 621_355_968_000_000_000;
 const MAX_TICKS: i64 = 3_155_378_975_999_999_999;
 const MAGIC: u32 = 0x5650_524a;
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct RecoveryChunk {
     pub index: u32,
     pub overlaps_previous: bool,
@@ -34,14 +34,14 @@ pub struct AudioCheckpoint<'a> {
     pub end_byte: u64,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct AuditCheckpoint {
     pub text: String,
     pub completed_at_ticks: i64,
     pub polished: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct RecoveryManifest {
     pub id: String,
     pub created_at_ticks: i64,

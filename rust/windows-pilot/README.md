@@ -244,8 +244,62 @@ updates its engine state from the manifest it just durably published while
 holding the engine lock, eliminating a second encode and immediate encrypted
 readback. Fresh state validation before mutation, every actual I/O path/reparse
 guard, quota scan including staging/orphans, and audio-before-manifest ordering
-remain unchanged. Legacy retains its fresh readback because batch result
-publication can precede acquisition of its engine state lock.
+remain unchanged at actual I/O. Active engine mutations now derive from the
+journal's own last **durably published** manifest under its single-writer/session
+ownership, not another encrypted read. Public cold mutation APIs still validate
+fresh disk state. Legacy re-reads the latest **owned publication** after acquiring
+its engine lock because batch result publication can precede that lock; it does
+not perform disk I/O merely to obtain those cursors.
+
+### Owned publication and explicit fresh inspection
+
+The journal keeps one immutable publication, a generation and live/valid-owner
+flags. Create seeds it only after durable creation; reopen seeds it only after
+fresh manifest/audio validation. Checkpoint/result/confirmation/audit publication
+updates it only after the atomic write succeeds. Inflight writes expose only the
+previous durable view. Reported mutation/audio/inspection failures invalidate
+the hot view rather than returning cached success. An explicit fresh prefix
+inspection does not implicitly restore a failed engine's cache.
+
+Engine startup and History/completion/audit getters use this owned view without
+encrypted reads or the coarse root lock. Active Recovery-list entries reuse it
+after fresh directory metadata in the existing root discovery transaction. Streaming
+send checkpoints, confirmation/fallback and audit-freeze mutations run as bounded
+joined blocking jobs; they acquire their engine lock **inside** the worker.
+There is no new PCM queue, batching delay or detached mutation. Commit still
+follows the required durable checkpoint and confirmation precedes audio release.
+
+Explicit fresh inspection instead admits one generation/deletion pin and reads
+an immutable temporary hard-link name of the published manifest on a blocking
+caller, outside engine/root locks. Actual Windows tests showed that a read handle
+on the live destination can reject the existing `MoveFileExW` replacement even
+with share-delete. Opening its separate read name permits the unchanged atomic
+replacement while a read-only share mask also denies in-place mutation.
+Unsupported hard links return an explicit I/O error; there is no copy or cached
+fresh-read fallback. Ordinary engine/UI/outbox owned getters need no read link.
+
+The fresh read validates the full path, opened reparse attributes, size, DPAPI,
+schema and original binding. A changed generation returns an explicit inspection
+conflict, never a regressed cursor or newer-cache fallback. Pins prevent whole
+journal deletion/reopen and reject results after owner release. Read-name cleanup
+is explicit joined blocking I/O after the handle closes; Drop releases metadata
+only. Failed cleanup remains quota-visible and prevents more read names on that
+lease. Crash leftovers are ignored by the codec, charged and removed by scoped
+recovery deletion. C# v1-v4 bytes are unchanged.
+
+Full quota scans still charge staging/orphans/external files. A bounded manifest
+pin capacity is also reserved until cleanup/join, covering an immutable read name
+that can appear while enumeration is in progress; this is not cached quota.
+Ownership revocation on journal Drop is metadata-only, and root admission lazily
+prunes revoked leases under its existing mutex.
+
+Necessary serialized mutation I/O remains: fresh path/quota metadata, encoding/
+hash/DPAPI, staging write/flush/rename and scoped deletion. Cold public mutations,
+idle discovery and reopen validation still read disk on blocking callers under
+their ownership transaction; they are not hot cursor getters. This source repair
+does not promise that every filesystem operation meets the capture budget.
+Deterministic blocked-open/read/unprotect controller/reconnect tests and a short
+smoke are not a new30s/120s/hour or product-memory acceptance result.
 
 While an owned persistence worker is pending, the controller still processes
 auth/shutdown/discard and the existing stop deadline. Expiry reports incomplete
