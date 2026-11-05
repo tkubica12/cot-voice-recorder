@@ -26,6 +26,21 @@ znovu v odpovidajicim scope.
 
 ## Aktualni progress
 
+Dokonceno SOURCE cleanup + fast-forward merge/push do `main`: testovany source
+commit `420922815b29152c5e82235ac4847335eab4e4d4`. Vsechny tri workflow
+na refactor i po pushi main prosly, celkem 7/7 required jobs v kazdem behu:
+[Rust/MSRV/container/native](https://github.com/tkubica12/cot-voice-recorder/actions/runs/42081337007),
+[SDK/HTTP/worker/cleanup](https://github.com/tkubica12/cot-voice-recorder/actions/runs/42081336841),
+[native installer](https://github.com/tkubica12/cot-voice-recorder/actions/runs/42081336788).
+Puvodni `29d30c6` Windows golden metadata-precision FAIL zustava zachovan;
+test-only fix respektuje puvodni RFC3339 instant semantics a byte-exact audit
+envelope/digest/path, s deterministickymi zero/trailing-zero clock cases.
+Po overenem mergi bylo odstraneno presne sest puvodnich nezavedenych managed
+programovych souboru, ktere odpovidaly soukrome zaloze. Bezici Rust aplikace,
+nove prihlaseni/data, konfigurace, uninstaller a autostart nebyly zmeneny.
+Zbyva samostatne schvaleny Rust cloud image cutover na existujicich ACA
+prostredcich; merge nebyl produkcni Azure deploy a nic cloudoveho nesmazal.
+
 Nove uzivatelske rozhodnuti po lokalni instalaci: cisty stav nove varianty,
 odstraneni puvodnich C#/Python aplikacnich zdroju a nasledny merge. Puvodni
 osobni stav byl jednorazove resetovan v presne schvalenem rozsahu; nove prihlaseni,
