@@ -44,7 +44,7 @@ uz uzivatel nechce.
 | Mereni Windows klienta | NOVA vyslovne schvalena quiet-window current071/checkout86f3b0f full-runtime signed-out30+30/3paired301-point PASS: p95Rust257.948ms,meanprivate3.427MiB,observedpeak3.992MiB. Vsechnyrawvalues/pairedthresholds/cleanup nezavisleovereny;starsi7bPASS ia2d/3f4FAILEDINCOMPLETE zachovany,neprepisuji se na signed-in/physical scope |
 | Microphone readiness | Jeden actual240ms probe a samostatne schvalena30+30 paired serie prosly; first-PCM p95Rust80.75% C#baseline, bez audio souboru/uploadu |
 | Engine longevity | Actual3600s synthetic PCM/real50min rotation,115200000 exact bytes; worst idle growth1.645MiB<10MiB, engine-only PASS |
-| Current controller functionality/reliability | Nova D->P oprava2f8ef3a: controlled send/confirm RED->GREEN, single-worker owner-specific128k/160k proof pod192k upperbound; ONEplain FUNCTIONAL600_ONLYPASS actual600.0084191s/exact19200000PCM/normaljoinsACK. Historicky05hourFAIL308s a0x5failure zachovany; nova finalhour dosud NOT_STARTED, CDB600 cancelled0. Neni wholeGUI/physical/install/privateAzure acceptance |
+| Current controller functionality/reliability | D->P2f8 ma platny600sPASS, ale ONEfinalhourFAIL1604.0445662s/51328000admitted (poexit vse durable). Nova owned-sealer oprava oddeluje i vlastni capture seal: session128k+originalqueue64k, reservation-before-dequeue, through-durablecommit; controlledownsealRED->GREEN192k. Jeji review/CI/kratkaakceptace se dokoncji; dalsi600/hour/CDB nebyl spusten ani zadan |
 | CI nativniho inkrementu | Exact2f8ef3a/CI41889751493 Windows/Linux/MSRV1.85/container ALL5SUCCESS, Windows157nativePASS16ignored, parity/guards a3s NoPorts functional smoke PASS. Older05/55/680/failedCI zustavaji revision-scoped; neni production cutover |
 | OAuth/token-store/PubSub klient | Native flow implementovany; samostatny live Google auth-only/local-signout a assisted manual clipboard probe PASS, full signed-in backend/controller dictation stale chybi; samostatny automatic DesktopGuard port viz dalsi radek |
 | Automatic DesktopGuard paste port | NOVYexactonephysicalpostfix5b test PASS:one4eventnativeCtrlV/exactownfieldmarker/normalclosed,no retry. Nejdenifullcontroller/hold-toggle/hour/realbackend acceptance;older50040BLOCKED/45788assisted zustavaji |
@@ -4633,5 +4633,132 @@ nebo physical/fullGUI/install/privateAzure akceptaci. Stare failedhour308s
 a artifact0x5/23040RAM-not-durable se neprepisuji ani nepripisuji AV/watcheru.
 Nasledne byl zadan prave ONEfinal3600s funkcni NoPorts/Temp run nad STEJNYM
 frozen2f8image/PDB/Rusttree a matchingCI, bez noveho buildu/perfprofilu.
-V tomto dokumentacnim checkpointu je finalhour stale NOT_STARTED; jeho
-vysledek nelze odvodit z tohoto600s PASS.
+Tento600s checkpoint vznikl PRED finalhour; nasledny skutecny FAIL je niz.
+Nevyvozuje se z600s PASS hodinova spolehlivost.
+
+### ONE final functional hour over2f8: FAIL1604s, all admitted PCM sealed after exit
+
+Stejny2f8compiledsource/Rusttree0bc54/frozenfixturedd5de786/PDB a8inputs
+z600sPASS; checkout9526473 se lisil pouze dokumentaci. Zadny CDB/Procmon/
+resourcesampler/build/testload/sourcechange behem runu. Prvni immutablefailure
+**Overflow1604.0445662s**, attempt40101/last40100=**51328000admitted**,
+rejected1280; received51264000/completed51262720,
+lastpublishedsaved51200000/confirmed51136000. Actualcapturedcounter51264000
+a full50queue64000B; activeappend1806.682ms. CURRENTrootphase je
+`validate-target-path`72.6487ms, LAST`atomic-write` neni current.
+Jde o user-mode phaseage, nikoli latency konkretniho syscallu.
+Zadny novy NativeError0x5 nebo first-rename witness.
+
+Original2sstopdeadline byl viditelne prekrocen. Nasledny Harness.close
+5sControllerjoin/!busy check se vratil pred intentionalproducerpanic;
+presny closewalltime neni exportovan. Native101/helper1/libtest1613.05stotal.
+Neni normalhour/outboxACK/Historyhandoff/outboxjoin/50minrotation PASS.
+ActualDowner/buffer_start/sealing nebyly exportovane a ownertrace byl
+disabled: samotne captured/saved counters NEPROKAZUJI capture-versus-send/
+confirm owner ani nepripisuji OS/AV pricinu. Source nicmene stale provadel
+vlastni64000seal synchronne z jedineho captureworkeru; tuto obecnou
+blokujici cestu dalsi controlledtest primo reprodukuje.
+
+Nezavisly POEXITstdinDPAPI/WAV/digest/sample/order/binding/cipher proof:
+saved=accepted51328000, confirmed51136000, pending192000, overlap0,
+1191manifestentries/4referencedfiles/0orphans/0confirmedleftovers.
+`capture_complete=true` jen partialEOF. History[]/zadnehandoff.
+172snapshotfiles a8frozeninputs byly po decrypt znovu hashverified;
+knownhelper80108/collector85300/native84020 absent. Pouze exactownedTempGUID
+c433b941cf5744fcbf0b3a565f4e1e0e odstranen AZ po verifiedsnapshot.
+Persistentproof `functional-controller-hour-2f8ef3a/{postexit-prefix,
+independent-verification}.json`; zadny rerun. Dalsi queryhelper10stimeout
+nebyl targetNativeError ani absenceproof; naslednydirectPIDcheck uspel.
+
+### Joined owned streaming sealer and durable-THROUGH commits
+
+Pokracujici minimalni streaming oprava zachovava D->P model,64000 trigger,
+original1280B40ms50slots a2s/30s/5s, datumove schema/binding/path/kvoty/
+DPAPIv1-v4/flush/MoveFileEx flags i fail-closed incomplete outcome.
+Append uz nebere D a neprovadi IO: kratka PCM copy, coalescedsealrequest
+pri>=64000, pripadne Condvar roomwait s uvolnenym P a100ms recheck
+cancel/discard/closed/failure. Session cap **128000B soucet filling+
+detached/unpublished seal+rezervace**, nikoli dva128k buffery s nezavislym
+limitem. Batch az128000PCM+44WAV je pod existujicim192044B codec limitem.
+WAV/DPAPI/cipher/cache/reservedcapacity nejsou tvrzeny jako uniquePCM.
+
+JEDEN sealertask spousti nejvyse JEDEN blockingsealjob a vzdy ho joinuje,
+i po cancel. Durable job znovu kontroluje skutecnou threshold/complete/failure
+pod D->P; po cizim seal pod64000 je request no-op. DetachedPCM zustava
+charged a vlastnene az po skutecnem durablepublish; chyba ponecha OBA
+RAM owners, starycipher/durableprefix a latchedStorage, probudi vsechny
+roomwaiters, zadny successcache/default. Workerpanic/poison je viditelny.
+Finish intent zastavi nove captureadmission a predem cekajici backgroundjob,
+pak D->P finalseal uzavre capture; normalcompletion neni publikovan pred IO.
+Shutdown cancel+notify JOINUJE pump,sealer a jejich startedIO pred uvolnenim
+activejournalownership/delete_idle. Drop pouze cancel+notify, neceka na D.
+
+**In-hand accounting:** samotnych128kPCM+50queuedframes by bez opatreni
+opomijelo packet uz dequeued a cekajici uvnitr append (dalsich1280B).
+Skutecny controller proto pred `blocking_recv` rezervuje pod P cely dalsi
+native maxframe1280B. RAII reservation prechazi do copy nebo se pri
+EOF/discard/failure vrati; ostatni appendcallers ji nemohou spotrebovat.
+Zadny P se nedrzi pri recv/D/join. Tedy session+reservation<=128000
+a originalqueue<=64000 => **192000 unique admittedPCM total**, ne193280.
+Reservationguard plati IDENTICKY v test i production: packet nadslotroom
+vraciStorage a nemeni captured/buffer/charge. Synthetic controller bulkdriver
+seka data na<=1280B packets a explicitne ceka na boundedchannelroom; nejde
+o productionpacingchange a skutecny40msfunctionalcapture stale pouziva puvodni
+fail-fasttry_feed bezretry. Prime engineappend tests mohou mit vetsi vstup,
+ale neobchazeji captureSlotguard ani se netvari jako50slot pipelineproof.
+
+Sender potrebuje durable data THROUGH commitcursor, ne novy checkpoint
+vsech pozdeji prijatych vzorku. Pod D se checkpointuje jen pokud
+publishedsaved<THROUGH; cursor nad captured je error a commit bezdurable
+coverage nesmi projit. Finalcapturecheckpoint stale uklada vsechny prijate
+vzorky. Obe raceorders se testuji: capturefirst->coveredTHROUGHnoIO;
+senderfirst->pendingbackgroundbelowtriggernoIO. Legitimne neulozeny
+cursor si persistence stale vynuti. Zadny nove odlozeny checkpoint interval.
+
+**Dukazy a meze:** actualsinglepersist_capture RED nad2f8 blokuje vOWNseal
+na64000. GREENpri stale pausedIO dosahne session128000 a vrati capturecopy;
+presne50dalsichqueuedframes se vejde a nasledujici je Full pri192000.
+Stejne sender-owned32000seal+96000filling+64000queue=192000. Po release
+vsechny orderedPCM/binding/durablecursors a joins. Roomreservation brani
+TOCTOU i dalsimu primeappendcalleru. Actualerror/cipherprefix, cancellation/
+joinownership, combinedfinalseal behind realconfirmation, poison/panic,
+Stop/auth/Discard/shutdown, pinnedread/reconnect a generation guards se
+overuji oddelene. Approx4-6s storage-spike prostor zavisi na ownerovi,
+prubehu seal a zaplneni; NEzarucuje libovolne pomaly disk/nekonecny stall.
+RAM-only audio muze pri crashi zmizet, nic se neslibuje jako losslessarchive.
+
+Localdefaultparallelworkspace pri soucasnych realFS/DPAPI/faulttests mel
+159nativePASS/3FAIL/16ignored (2sstop/hand-off a3sfaultordering), ulozeno
+v `owned-sealer-work/workspace-first.log`, nevymazano jako PASS.
+Targetedcontroller25PASS2ignored a celeworkspace se stavajicim serialrunnerem
+162nativePASS16ignored prosly bez zmeny produkcnichbudgets.
+CI transparentne oddeluje nativefilesystem/lifecycleintegration do
+`--test-threads=1`; zbytek workspace zustava paralelni. Zadny test se
+neskipuje, vlastni workerthreads/barriers v concurrencyregressions zustavaji,
+MSRV/alltargets/Clippy/build coverage se nemeni. Serialhosttest PASS neni
+dukaz productionconcurrency/disklatency pri libovolnem zatizeni.
+Uzky Opus5.5ExtraHigh read-onlyreview nenasel highconfidenceproductionbug
+v `streaming_session.rs`C8B38369...31BA a `dictation.rs`53668773...2446;
+potom se chirurgicky zprisnil stejny packetguard i pro testconfig
+(odstraneni cfgnot-test vyjimky), nepretvrzujeme review celeho pozdejsiho
+diffu. Finalidenticalguardcode local163nativePASS16ignored+7bin-tests,
+paralelni zbytekworkspace, fmt/Clippyalltargets/release a7C#recovery+4dictation
+parity prosly. Packetguardunit prokazuje1282BStoragebez captured/buffer/
+reservationmutation,1280valid/640evenvalid aRAIIcancelcleanup.
+Existing3sTempfunctional nad finalfixture528a0244...0aa6
+PASS3.0158245s/exact96000PCM/cursors[64000,96000], normaljoinsACK/
+History-before-handoff/polisher/pinsaliases0/stderr0.12POEXITfiles a vsechny
+compiledinputhashes shodne, ownnative71240absent a pouze ownership-markedTemp
+odstranen AZpoverifiedsnapshot. Precleanupcipher/counts externiNOT_OBSERVED,
+nativeassertions probihaji predACKdelete. Proof `owned-sealer-work/
+smoke-final-independent.json`. MatchingCI po sourcecommitu jeste PENDING;
+starsi2f8CI/600PASS se nepreznacuji na tuto binarku.
+
+**Legacy zbyvajici sourcegate:** `legacy_session.rs:225-238` stale drzi
+vlastni state pres chunkerappend a synchronni checkpoint; result-save
+uz je IO-before-short-state podle existujiciho priorartu, vlastni capture
+checkpoint vsak stale muze zablokovat singleconsumer. Nejmensi analogicka
+zmena potrebuje owned/joined checkpoint s ohranicenym PCM+chunker-tail
+snapshotem, monotoniccaptured/saved a originaloverlap/cancel/drain parity.
+Streamingsealer z tohoto nedela automaticky legacy/fullcapture PASS;
+legacy implementace se v teto omezene streamingoprave neprepisuje.

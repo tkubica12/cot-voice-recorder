@@ -108,6 +108,7 @@ fn admission_failure_is_typed_exact_and_immutable_before_cleanup() {
 
 #[derive(Default)]
 struct BackendState {
+    audio_gate: Mutex<Option<oneshot::Receiver<()>>>,
     batches: Mutex<Vec<Vec<u8>>>,
     stream: Mutex<Vec<u8>>,
     starts: Mutex<Vec<u64>>,
@@ -169,6 +170,10 @@ struct StreamSender {
 
 impl AudioSender for StreamSender {
     async fn audio(&self, pcm: &[u8]) -> Result<(), ApiError> {
+        let gate = self.backend.0.audio_gate.lock().unwrap().take();
+        if let Some(gate) = gate {
+            gate.await.map_err(|_| failure())?;
+        }
         self.end.fetch_add(pcm.len() as u64, Ordering::AcqRel);
         let start = self
             .backend
@@ -404,11 +409,33 @@ impl Ports {
         }))
     }
 
-    fn feed(&self, bytes: &[u8]) {
-        self.try_feed(bytes).unwrap();
+    async fn feed(&self, bytes: &[u8]) {
+        for packet in bytes.chunks(crate::microphone::BUFFER_BYTES) {
+            tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    let ready = {
+                        let state = self.0.capture.lock().unwrap();
+                        let sender = state
+                            .sender
+                            .as_ref()
+                            .expect("Synthetic capture was stopped.");
+                        assert!(!sender.is_closed(), "Synthetic capture consumer closed.");
+                        sender.capacity() != 0
+                    };
+                    if ready {
+                        self.try_feed(packet).unwrap();
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            })
+            .await
+            .expect("Explicit synthetic bulk-driver backpressure timed out.");
+        }
     }
 
     fn try_feed(&self, bytes: &[u8]) -> Result<(), AdmissionError> {
+        assert!(bytes.len() <= crate::microphone::BUFFER_BYTES && bytes.len() % 2 == 0);
         let state = self.0.capture.lock().unwrap();
         let sequence = self.0.attempted_sequence.fetch_add(1, Ordering::AcqRel) + 1;
         let result = match state.sender.as_ref() {
@@ -689,17 +716,7 @@ impl Harness {
 
     async fn feed_many(&self, buffer: &[u8], count: usize) {
         for _ in 0..count {
-            let sender = self
-                .ports
-                .0
-                .capture
-                .lock()
-                .unwrap()
-                .sender
-                .as_ref()
-                .unwrap()
-                .clone();
-            sender.send(CaptureBuffer(buffer.to_vec())).await.unwrap();
+            self.ports.feed(buffer).await;
         }
     }
 
@@ -1189,7 +1206,8 @@ async fn controlled_realtime_storage_failure(export_producer_context: bool) {
     assert_eq!(failure["frame_index"].as_u64().unwrap(), sequence);
     assert_eq!(failure["accepted_bytes"], admission["accepted_bytes"]);
     assert_eq!(failure["produced_bytes"], accepted);
-    assert_eq!(admission["writer_completed_bytes"], 49 * 1280);
+    let completed = admission["writer_completed_bytes"].as_u64().unwrap();
+    assert!(completed >= 64_000 && completed <= accepted);
     assert_eq!(admission["last_published_saved_bytes"], 0);
     assert_eq!(admission["last_published_confirmed_bytes"], 0);
     let witness: serde_json::Value = serde_json::from_slice(
@@ -1390,8 +1408,8 @@ async fn both_modes_and_engines_drain_stop_tail_and_persist_history_before_synth
             let mut harness = Harness::new(streaming, false);
             harness.begin(mode).await;
             let mut bytes = pcm(16000);
-            harness.ports.feed(&bytes[..16000]);
-            harness.ports.feed(&bytes[16000..]);
+            harness.ports.feed(&bytes[..16000]).await;
+            harness.ports.feed(&bytes[16000..]).await;
             let tail = pcm(640);
             harness.ports.0.capture.lock().unwrap().tail = tail.clone();
             bytes.extend_from_slice(&tail);
@@ -1451,7 +1469,7 @@ async fn polishing_success_and_failure_preserve_original_history_and_never_deliv
                 .failed
                 .store(failed, Ordering::Release);
             harness.begin(DictationMode::Hold).await;
-            harness.ports.feed(&pcm(16000));
+            harness.ports.feed(&pcm(16000)).await;
             harness.stop().await;
             let (text, _, reply) = harness.delivery().await;
             let history = harness.entries();
@@ -1484,7 +1502,7 @@ async fn discard_deletes_only_its_session_but_interrupt_and_auth_change_retain_a
             let mut harness = Harness::new(streaming, false);
             harness.begin(DictationMode::Toggle).await;
             let bytes = pcm(16000);
-            harness.ports.feed(&bytes);
+            harness.ports.feed(&bytes).await;
             match reason {
                 StartupInterruption::Discarded => harness
                     .commands
@@ -1557,7 +1575,7 @@ async fn capture_start_and_stop_failures_are_visible_and_never_handoff_text() {
         let mut harness = Harness::new(streaming, false);
         harness.ports.0.fail_stop.store(true, Ordering::Release);
         harness.begin(DictationMode::Hold).await;
-        harness.ports.feed(&pcm(16000));
+        harness.ports.feed(&pcm(16000)).await;
         harness.stop().await;
         harness.idle().await;
         assert!(harness.status.borrow().issue.is_some());
@@ -1575,7 +1593,7 @@ async fn failed_history_write_keeps_recovery_and_never_requests_clipboard_or_pas
         let mut harness = Harness::new(streaming, false);
         std::fs::create_dir(harness.root.join("history.json")).unwrap();
         harness.begin(DictationMode::Hold).await;
-        harness.ports.feed(&pcm(16000));
+        harness.ports.feed(&pcm(16000)).await;
         harness.stop().await;
         harness.idle().await;
         assert!(harness.status.borrow().issue.is_some());
@@ -1637,7 +1655,7 @@ async fn shutdown_during_recording_joins_capture_and_preserves_audio_without_del
     for streaming in [false, true] {
         let mut harness = Harness::new(streaming, false);
         harness.begin(DictationMode::Toggle).await;
-        harness.ports.feed(&pcm(16000));
+        harness.ports.feed(&pcm(16000)).await;
         harness.close().await;
         assert!(harness.entries().is_empty());
         assert!(harness.ui.try_recv().is_err());
@@ -1678,7 +1696,7 @@ async fn blocked_fresh_manifest_inspection_never_serializes_controller_capture_o
                 } else {
                     pcm(32000)
                 };
-                harness.ports.feed(&bytes);
+                harness.ports.feed(&bytes).await;
                 tokio::time::timeout(Duration::from_secs(5), async {
                     while harness
                         .ports
@@ -1702,7 +1720,7 @@ async fn blocked_fresh_manifest_inspection_never_serializes_controller_capture_o
                     .unwrap()
                     .unwrap();
                 let manifest_reads = harness.recovery.fixture_manifest_read_count();
-                harness.ports.feed(&bytes);
+                harness.ports.feed(&bytes).await;
                 let progress = tokio::time::timeout(Duration::from_secs(5), async {
                     while harness
                         .ports
@@ -1815,19 +1833,40 @@ async fn blocked_native_checkpoint_keeps_stop_discard_auth_and_shutdown_responsi
             harness.begin(DictationMode::Toggle).await;
             let (release, blocked) = harness.recovery.pause_next_fixture_write();
             let mut bytes = pcm(32000);
-            harness.ports.feed(&bytes);
+            harness.ports.feed(&bytes).await;
             tokio::time::timeout(Duration::from_secs(5), blocked)
                 .await
                 .unwrap()
                 .unwrap();
-            assert!(harness.ports.0.writer_active.load(Ordering::Acquire));
+            if !streaming {
+                assert!(harness.ports.0.writer_active.load(Ordering::Acquire));
+            }
             assert_eq!(
                 harness.recovery.fixture_io_progress()["phase"],
                 "fixture-pause"
             );
             let packet = pcm(crate::microphone::BUFFER_BYTES / 2);
+            if streaming {
+                for _ in 0..crate::microphone::OUTPUT_BUFFER_COUNT {
+                    harness.ports.feed(&packet).await;
+                    bytes.extend_from_slice(&packet);
+                }
+                tokio::time::timeout(Duration::from_secs(5), async {
+                    while harness
+                        .ports
+                        .0
+                        .writer_completed_bytes
+                        .load(Ordering::Acquire)
+                        < bytes.len() as u64
+                    {
+                        tokio::time::sleep(Duration::from_millis(1)).await;
+                    }
+                })
+                .await
+                .unwrap();
+            }
             for _ in 0..crate::microphone::OUTPUT_BUFFER_COUNT {
-                harness.ports.feed(&packet);
+                harness.ports.feed(&packet).await;
                 bytes.extend_from_slice(&packet);
             }
             assert_eq!(
@@ -1916,7 +1955,7 @@ async fn sampled_monitor_does_not_wait_for_blocked_engine_or_journal_mutexes() {
     let mut harness = Harness::new(true, false);
     harness.begin(DictationMode::Hold).await;
     let (release, blocked) = harness.recovery.pause_next_fixture_write();
-    harness.ports.feed(&pcm(32000));
+    harness.ports.feed(&pcm(32000)).await;
     tokio::time::timeout(Duration::from_secs(5), blocked)
         .await
         .unwrap()
@@ -1956,14 +1995,31 @@ async fn blocked_checkpoint_exposes_stop_deadline_without_false_join_or_lost_acc
         harness.begin(DictationMode::Toggle).await;
         let (release, blocked) = harness.recovery.pause_next_fixture_write();
         let mut bytes = pcm(32000);
-        harness.ports.feed(&bytes);
+        harness.ports.feed(&bytes).await;
         tokio::time::timeout(Duration::from_secs(5), blocked)
             .await
             .unwrap()
             .unwrap();
         let packet = pcm(crate::microphone::BUFFER_BYTES / 2);
         for _ in 0..crate::microphone::OUTPUT_BUFFER_COUNT {
-            harness.ports.feed(&packet);
+            harness.ports.feed(&packet).await;
+            bytes.extend_from_slice(&packet);
+        }
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while harness
+                .ports
+                .0
+                .writer_completed_bytes
+                .load(Ordering::Acquire)
+                < bytes.len() as u64
+            {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .unwrap();
+        for _ in 0..crate::microphone::OUTPUT_BUFFER_COUNT {
+            harness.ports.feed(&packet).await;
             bytes.extend_from_slice(&packet);
         }
         assert_eq!(
@@ -2046,7 +2102,7 @@ async fn final_seal_does_not_starve_timers_and_pending_cancellation_cannot_deliv
             harness.begin(DictationMode::Hold).await;
             let (release, blocked) = harness.recovery.pause_next_fixture_write();
             let bytes = pcm(640);
-            harness.ports.feed(&bytes);
+            harness.ports.feed(&bytes).await;
             harness.stop().await;
             tokio::time::timeout(Duration::from_secs(5), blocked)
                 .await
@@ -2104,17 +2160,37 @@ async fn slow_pinned_audio_read_allows_capture_progress_and_joins_before_cancell
         StartupInterruption::Shutdown,
     ] {
         let mut harness = Harness::new(true, false);
+        let (unblock_audio, audio_gate) = oneshot::channel();
+        *harness.ports.0.backend.0.audio_gate.lock().unwrap() = Some(audio_gate);
         let (release, blocked) = harness.recovery.pause_next_pinned_read();
         harness.begin(DictationMode::Hold).await;
         let mut bytes = pcm(32000);
-        harness.ports.feed(&bytes);
+        harness.ports.feed(&bytes).await;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let rows = harness.recovery.list().unwrap();
+                if harness
+                    .recovery
+                    .fixture_snapshot(&rows[0].id)
+                    .unwrap()
+                    .captured_bytes
+                    == 64_000
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .unwrap();
+        unblock_audio.send(()).unwrap();
         tokio::time::timeout(Duration::from_secs(5), blocked)
             .await
             .unwrap()
             .unwrap();
         let frame = pcm(crate::microphone::BUFFER_BYTES / 2);
         for _ in 0..20 {
-            harness.ports.feed(&frame);
+            harness.ports.feed(&frame).await;
             bytes.extend_from_slice(&frame);
         }
         let progressed = tokio::time::timeout(Duration::from_secs(1), async {
@@ -2196,7 +2272,7 @@ async fn disk_write_failure_preserves_the_durable_prefix_binding_and_is_not_fals
         let mut harness = Harness::new(streaming, false);
         harness.begin(DictationMode::Hold).await;
         let prefix = pcm(32000);
-        harness.ports.feed(&prefix);
+        harness.ports.feed(&prefix).await;
         let rows = harness.recovery.list().unwrap();
         assert_eq!(rows.len(), 1);
         let id = rows[0].id.clone();
@@ -2214,7 +2290,7 @@ async fn disk_write_failure_preserves_the_durable_prefix_binding_and_is_not_fals
         let path = harness.root.join("recovery").join(&id).join("manifest.enc");
         let original_cipher = std::fs::read(&path).unwrap();
         let (release, blocked) = harness.recovery.pause_next_fixture_write();
-        harness.ports.feed(&prefix);
+        harness.ports.feed(&prefix).await;
         tokio::time::timeout(Duration::from_secs(5), blocked)
             .await
             .unwrap()
@@ -2237,10 +2313,17 @@ async fn disk_write_failure_preserves_the_durable_prefix_binding_and_is_not_fals
         );
         let context = harness.ports.0.admission_failure.get().unwrap().clone();
         assert_eq!(context["accepted_bytes"], admitted);
-        assert_eq!(context["last_accepted_sequence"], 7);
-        assert_eq!(context["attempted_sequence"], 8);
-        assert_eq!(context["writer_received_bytes"], 128000);
-        assert_eq!(context["writer_completed_bytes"], 64000);
+        assert_eq!(context["last_accepted_sequence"], admitted / 1280);
+        assert_eq!(context["attempted_sequence"], admitted / 1280 + 1);
+        if streaming {
+            let received = context["writer_received_bytes"].as_u64().unwrap();
+            let completed = context["writer_completed_bytes"].as_u64().unwrap();
+            assert!((128_000..=admitted).contains(&received));
+            assert!((128_000..=received).contains(&completed));
+        } else {
+            assert_eq!(context["writer_received_bytes"], 128000);
+            assert_eq!(context["writer_completed_bytes"], 128000 - 1280);
+        }
         assert_eq!(context["last_published_saved_bytes"], 64000);
         assert_eq!(context["last_published_confirmed_bytes"], 0);
         assert_eq!(context["cursors_are_not_a_fresh_disk_snapshot"], true);
@@ -2287,7 +2370,7 @@ async fn queued_ui_delivery_is_cancelled_on_auth_change_and_explicit_discard() {
     for discard in [false, true] {
         let mut harness = Harness::new(false, false);
         harness.begin(DictationMode::Hold).await;
-        harness.ports.feed(&pcm(16000));
+        harness.ports.feed(&pcm(16000)).await;
         harness.stop().await;
         let (_, cancelled, reply) = harness.delivery().await;
         if discard {
@@ -2323,7 +2406,7 @@ async fn provisional_stream_and_failed_batch_fallback_never_become_delivered_his
         .store(true, Ordering::Release);
     harness.begin(DictationMode::Toggle).await;
     let bytes = pcm(16000);
-    harness.ports.feed(&bytes);
+    harness.ports.feed(&bytes).await;
     harness
         .view(|view| view.preview.contains("provisional"))
         .await;
@@ -2361,7 +2444,7 @@ async fn auth_discard_and_shutdown_cancel_and_join_a_blocked_completion() {
             .batch_blocked
             .store(true, Ordering::Release);
         harness.begin(DictationMode::Hold).await;
-        harness.ports.feed(&pcm(16000));
+        harness.ports.feed(&pcm(16000)).await;
         harness.stop().await;
         tokio::time::timeout(Duration::from_secs(5), async {
             while harness.ports.0.backend.0.batches.lock().unwrap().is_empty() {
@@ -2402,7 +2485,7 @@ async fn unavailable_ui_is_reported_after_durable_history_without_retry_or_deliv
     for streaming in [false, true] {
         let mut harness = Harness::new(streaming, false);
         harness.begin(DictationMode::Hold).await;
-        harness.ports.feed(&pcm(16000));
+        harness.ports.feed(&pcm(16000)).await;
         harness.ui.close();
         harness.stop().await;
         harness.stage(DictationStage::PasteSkipped).await;

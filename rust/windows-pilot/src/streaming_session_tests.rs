@@ -226,9 +226,14 @@ async fn capture_progresses_while_send_checkpoint_or_confirmation_io_is_paused()
         session.append(&bytes[..32_000]).unwrap();
         let (_stop, stopped) = watch::channel(false);
         if confirming {
-            checkpoint_for_send(session.inner.clone(), stopped.clone(), "regression-prepare")
-                .await
-                .unwrap();
+            checkpoint_for_send(
+                session.inner.clone(),
+                stopped.clone(),
+                32_000,
+                "regression-prepare",
+            )
+            .await
+            .unwrap();
         }
         let (release, entered) = store.pause_next_fixture_write();
         let owner = session.inner.clone();
@@ -242,7 +247,7 @@ async fn capture_progresses_while_send_checkpoint_or_confirmation_io_is_paused()
                 .await
                 .unwrap()
             } else {
-                checkpoint_for_send(owner, stopped, "regression-send-checkpoint")
+                checkpoint_for_send(owner, stopped, 32_000, "regression-send-checkpoint")
                     .await
                     .map(|_| ())
             }
@@ -308,7 +313,7 @@ async fn sender_and_capture_seals_use_one_real_persistence_worker_and_the_origin
         let (store, journal) = journal(&directory);
         let service = Service::new(Mode::Healthy);
         let session = Arc::new(StreamingSession::start(journal, Arc::new(service), true).unwrap());
-        let expected = if sender_owned { 160_000 } else { 128_000 };
+        let expected = 192_000;
         let bytes: Vec<_> = (0..expected / 2)
             .flat_map(|index| ((index % 97) as i16 - 48).to_le_bytes())
             .collect();
@@ -318,11 +323,18 @@ async fn sender_and_capture_seals_use_one_real_persistence_worker_and_the_origin
         let (queue, receiver) = mpsc::channel(OUTPUT_BUFFER_COUNT);
         let (stopped, stopped_state) = watch::channel(false);
         let capture = tokio::task::spawn_blocking(move || {
-            crate::dictation::persist_capture(receiver, &AtomicBool::new(false), &stopped, |pcm| {
-                writer.append(pcm)?;
-                returned.fetch_add(pcm.len() as u64, Ordering::Release);
-                Ok(())
-            })
+            let discard = AtomicBool::new(false);
+            crate::dictation::persist_capture_with_room(
+                receiver,
+                &discard,
+                &stopped,
+                || writer.reserve_capture(&discard),
+                |pcm, slot| {
+                    slot.unwrap().append(pcm)?;
+                    returned.fetch_add(pcm.len() as u64, Ordering::Release);
+                    Ok(())
+                },
+            )
         });
         if sender_owned {
             for packet in bytes[..32_000].chunks_exact(BUFFER_BYTES) {
@@ -341,7 +353,7 @@ async fn sender_and_capture_seals_use_one_real_persistence_worker_and_the_origin
         let (_stop, stopped_sender) = watch::channel(false);
         let sending = sender_owned.then(|| {
             tokio::spawn(async move {
-                checkpoint_for_send(owner, stopped_sender, "real-worker-sender-seal").await
+                checkpoint_for_send(owner, stopped_sender, 32_000, "real-worker-sender-seal").await
             })
         });
         if !sender_owned {
@@ -354,9 +366,9 @@ async fn sender_and_capture_seals_use_one_real_persistence_worker_and_the_origin
             .unwrap()
             .unwrap();
         let inflight = if sender_owned { 32_000 } else { 64_000 };
-        let pcm_end = if sender_owned { 96_000 } else { 64_000 };
-        if sender_owned {
-            for packet in bytes[32_000..96_000].chunks_exact(BUFFER_BYTES) {
+        let pcm_end = 128_000;
+        {
+            for packet in bytes[inflight..pcm_end].chunks_exact(BUFFER_BYTES) {
                 assert!(queue.send(CaptureBuffer(packet.to_vec())).await.is_ok());
             }
         }
@@ -368,10 +380,15 @@ async fn sender_and_capture_seals_use_one_real_persistence_worker_and_the_origin
         .await;
         let buffered = {
             let pcm = session.inner.lock_pcm().unwrap();
+            assert_eq!(pcm.sealing_bytes + pcm.buffer.len(), 128_000);
+            assert_eq!(pcm.reserved_bytes, 0);
             (pcm.buffer_start, pcm.buffer.clone(), pcm.buffer.capacity())
         };
-        for packet in bytes[pcm_end..].chunks_exact(BUFFER_BYTES) {
-            assert!(queue.try_send(CaptureBuffer(packet.to_vec())).is_ok());
+        let window_filled_before_release = full.is_ok();
+        if window_filled_before_release {
+            for packet in bytes[pcm_end..].chunks_exact(BUFFER_BYTES) {
+                assert!(queue.try_send(CaptureBuffer(packet.to_vec())).is_ok());
+            }
         }
         let bounded = matches!(
             queue.try_send(CaptureBuffer(vec![0; BUFFER_BYTES])),
@@ -405,12 +422,16 @@ async fn sender_and_capture_seals_use_one_real_persistence_worker_and_the_origin
             .shutdown()
             .await
             .unwrap();
-        assert!(full.is_ok() && bounded && owned_while_paused && *stopped_state.borrow());
-        assert_eq!(completed_while_paused, pcm_end as u64 - BUFFER_BYTES as u64);
+        assert!(
+            window_filled_before_release,
+            "Single capture worker blocked in its own durable seal; sender_owned={sender_owned}"
+        );
+        assert!(bounded && owned_while_paused && *stopped_state.borrow());
+        assert_eq!(completed_while_paused, pcm_end as u64);
         assert_eq!(completed.load(Ordering::Acquire), expected as u64);
         assert_eq!(
             buffered,
-            (inflight as u64, bytes[inflight..pcm_end].to_vec(), 64_000)
+            (inflight as u64, bytes[inflight..pcm_end].to_vec(), 128_000)
         );
         assert_eq!(durable, 0);
         let unique_ram = inflight + buffered.1.len() + OUTPUT_BUFFER_COUNT * BUFFER_BYTES;
@@ -423,6 +444,275 @@ async fn sender_and_capture_seals_use_one_real_persistence_worker_and_the_origin
         println!(
             "single-persist_capture:sender_owned={sender_owned};unique_ram={unique_ram};upper_bound=192000;source_queue_slots={OUTPUT_BUFFER_COUNT};joined=true"
         );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sealer_failure_wakes_reserved_capture_waiters_and_keeps_unpublished_pcm_and_cipher() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let directory = TemporaryRoot::new();
+    let (store, journal) = journal(&directory);
+    let id = journal.id().to_owned();
+    let path = directory.0.join(&id).join("manifest.enc");
+    let before = std::fs::read(&path).unwrap();
+    let held = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(1)
+        .open(&path)
+        .unwrap();
+    let service = Service::new(Mode::Healthy);
+    let session = Arc::new(StreamingSession::start(journal, Arc::new(service), true).unwrap());
+    let (release, entered) = store.pause_next_fixture_write();
+    session.append(&vec![1; 64_000]).unwrap();
+    tokio::time::timeout(Duration::from_secs(5), entered)
+        .await
+        .unwrap()
+        .unwrap();
+    session.append(&vec![2; 64_000]).unwrap();
+    let writer = session.clone();
+    let mut waiting =
+        tokio::task::spawn_blocking(move || writer.reserve_capture(&AtomicBool::new(false)));
+    let blocked = tokio::time::timeout(Duration::from_millis(100), &mut waiting)
+        .await
+        .is_err();
+    drop(release);
+    let failure = tokio::time::timeout(Duration::from_secs(5), waiting)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(failure, Err(SessionError::Storage(_))) && blocked);
+    {
+        let state = session.inner.lock().unwrap();
+        assert_eq!(state.sealing.as_ref().unwrap().pcm.0, vec![1; 64_000]);
+        assert_eq!(state.manifest.captured_bytes, 0);
+    }
+    {
+        let pcm = session.inner.lock_pcm().unwrap();
+        assert_eq!(pcm.sealing_bytes, 64_000);
+        assert_eq!(pcm.buffer, vec![2; 64_000]);
+        assert_eq!(pcm.reserved_bytes, 0);
+    }
+    let progress = session.progress().borrow().clone();
+    assert!(progress.storage_failed && !progress.capture_complete);
+    assert_eq!(
+        (progress.captured_bytes, progress.saved_bytes),
+        (128_000, 0)
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    assert!(matches!(
+        Arc::try_unwrap(session).ok().unwrap().shutdown().await,
+        Err(SessionError::Storage(_))
+    ));
+    drop(held);
+    assert_eq!(store.fixture_snapshot(&id).unwrap().captured_bytes, 0);
+    store.delete_idle(&id).unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shutdown_wakes_room_waiters_but_joins_the_started_seal_before_releasing_journal_ownership()
+{
+    let directory = TemporaryRoot::new();
+    let (store, journal) = journal(&directory);
+    let id = journal.id().to_owned();
+    let service = Service::new(Mode::Healthy);
+    let session = Arc::new(StreamingSession::start(journal, Arc::new(service), true).unwrap());
+    let (release, entered) = store.pause_next_fixture_write();
+    session.append(&vec![1; 64_000]).unwrap();
+    tokio::time::timeout(Duration::from_secs(5), entered)
+        .await
+        .unwrap()
+        .unwrap();
+    session.append(&vec![2; 64_000]).unwrap();
+    let waiter = session.clone();
+    let mut waiting =
+        tokio::task::spawn_blocking(move || waiter.reserve_capture(&AtomicBool::new(false)));
+    let blocked = tokio::time::timeout(Duration::from_millis(100), &mut waiting)
+        .await
+        .is_err();
+    session.inner.cancel();
+    let wake = tokio::time::timeout(Duration::from_secs(1), waiting)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(blocked && matches!(wake, Err(SessionError::Closed)));
+    let session = Arc::try_unwrap(session).ok().unwrap();
+    let finishing = tokio::task::spawn_blocking(move || {
+        session.finish_capture().unwrap();
+        session
+    });
+    let mut shutdown = tokio::spawn(async move { finishing.await.unwrap().shutdown().await });
+    let premature = tokio::time::timeout(Duration::from_millis(100), &mut shutdown).await;
+    let joined_too_soon = premature.is_ok();
+    drop(release);
+    match premature {
+        Ok(result) => result.unwrap().unwrap(),
+        Err(_) => shutdown.await.unwrap().unwrap(),
+    }
+    assert!(!joined_too_soon);
+    let saved = store.fixture_snapshot(&id).unwrap();
+    assert!(saved.capture_complete && saved.captured_bytes == 128_000);
+    let reader = store.open(&id).unwrap();
+    let mut bytes = Vec::new();
+    for chunk in &saved.chunks {
+        bytes.extend_from_slice(&reader.read_audio(chunk.index).unwrap()[44..]);
+    }
+    assert_eq!(bytes, [vec![1; 64_000], vec![2; 64_000]].concat());
+    drop(reader);
+    store.delete_idle(&id).unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn capture_slot_enforces_the_same_native_packet_guard_in_tests_and_releases_every_reservation()
+ {
+    let directory = TemporaryRoot::new();
+    let (_, journal) = journal(&directory);
+    let service = Service::new(Mode::Healthy);
+    let session = StreamingSession::start(journal, Arc::new(service), true).unwrap();
+    let discard = AtomicBool::new(false);
+    let mut slot = session.reserve_capture(&discard).unwrap().unwrap();
+    assert!(matches!(
+        slot.append(&[0; 1_282]),
+        Err(SessionError::Storage(_))
+    ));
+    {
+        let pcm = session.inner.lock_pcm().unwrap();
+        assert_eq!(
+            (pcm.captured, pcm.buffer.len(), pcm.reserved_bytes),
+            (0, 0, 1_280)
+        );
+    }
+    assert_eq!(session.progress().borrow().captured_bytes, 0);
+    drop(slot);
+    assert_eq!(session.inner.lock_pcm().unwrap().reserved_bytes, 0);
+    let mut slot = session.reserve_capture(&discard).unwrap().unwrap();
+    slot.append(&[1; 1_280]).unwrap();
+    drop(slot);
+    let mut slot = session.reserve_capture(&discard).unwrap().unwrap();
+    slot.append(&[2; 640]).unwrap();
+    assert_eq!(session.inner.lock_pcm().unwrap().reserved_bytes, 640);
+    drop(slot);
+    let mut slot = session.reserve_capture(&discard).unwrap().unwrap();
+    session.inner.cancel();
+    assert!(matches!(slot.append(&[3; 640]), Err(SessionError::Closed)));
+    drop(slot);
+    assert_eq!(session.inner.lock_pcm().unwrap().reserved_bytes, 0);
+    assert_eq!(session.progress().borrow().captured_bytes, 1_920);
+    session.finish_capture().unwrap();
+    assert_eq!(session.snapshot().unwrap().captured_bytes, 1_920);
+    session.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reserved_next_frame_cannot_be_stolen_by_another_append_or_hold_the_pcm_mutex() {
+    let directory = TemporaryRoot::new();
+    let (_, journal) = journal(&directory);
+    let service = Service::new(Mode::Healthy);
+    let session = Arc::new(StreamingSession::start(journal, Arc::new(service), true).unwrap());
+    let mut slot = session
+        .reserve_capture(&AtomicBool::new(false))
+        .unwrap()
+        .unwrap();
+    let state = session.inner.lock().unwrap();
+    session.append(&vec![1; 126_720]).unwrap();
+    assert_eq!(session.inner.lock_pcm().unwrap().reserved_bytes, 1_280);
+    slot.append(&[2; 1_280]).unwrap();
+    drop(slot);
+    assert_eq!(session.inner.captured.load(Ordering::Acquire), 128_000);
+    assert_eq!(session.inner.lock_pcm().unwrap().reserved_bytes, 0);
+    drop(state);
+    let session = Arc::try_unwrap(session).ok().unwrap();
+    session.finish_capture().unwrap();
+    let saved = session.snapshot().unwrap();
+    assert_eq!(saved.captured_bytes, 128_000);
+    assert!(saved.chunks.iter().all(|chunk| chunk.audio_bytes as usize
+        <= voiceprompt_client_protocol::recovery::MAX_AUDIO_BYTES));
+    session.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sealer_worker_panic_and_poison_are_visible_and_release_room_waiters_without_saved_success()
+{
+    for poison in [false, true] {
+        let directory = TemporaryRoot::new();
+        let (_, journal) = journal(&directory);
+        let service = Service::new(Mode::Healthy);
+        let session = Arc::new(StreamingSession::start(journal, Arc::new(service), true).unwrap());
+        session.append(&[1; 1_280]).unwrap();
+        let owner = session.inner.clone();
+        let job = tokio::task::spawn_blocking(move || {
+            if poison {
+                let _guard = owner.pcm.lock().unwrap();
+                panic!("Controlled own PCM mutex poison.");
+            }
+            panic!("Controlled joined seal worker panic.");
+        });
+        assert!(matches!(
+            join_seal(&session.inner, job).await,
+            Err(SessionError::Worker)
+        ));
+        assert!(session.progress().borrow().storage_failed);
+        assert_eq!(session.progress().borrow().saved_bytes, 0);
+        assert!(matches!(
+            session.reserve_capture(&AtomicBool::new(false)),
+            Err(SessionError::Storage(_))
+        ));
+        let shutdown = Arc::try_unwrap(session).ok().unwrap().shutdown().await;
+        if poison {
+            assert!(matches!(shutdown, Ok(()) | Err(SessionError::Storage(_))));
+        } else {
+            shutdown.unwrap();
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn both_checkpoint_race_orders_skip_already_durable_through_and_legitimate_later_cursor_is_saved()
+ {
+    for sender_first in [false, true] {
+        let directory = TemporaryRoot::new();
+        let (_, journal) = journal(&directory);
+        let service = Service::new(Mode::Healthy);
+        let session = StreamingSession::start(journal, Arc::new(service), true).unwrap();
+        let (_stop, stopped) = watch::channel(false);
+        {
+            let mut state = session.inner.lock().unwrap();
+            session.append(&vec![0; 64_000]).unwrap();
+            // Hold D to deterministically select which owner publishes first.
+            if sender_first {
+                session.inner.checkpoint(&mut state, false).unwrap();
+            }
+        }
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while session.progress().borrow().saved_bytes != 64_000 {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .unwrap();
+        session.append(&[1; 2_560]).unwrap();
+        let before = session.snapshot().unwrap();
+        assert!(
+            checkpoint_for_send(
+                session.inner.clone(),
+                stopped.clone(),
+                64_000,
+                "already-covered"
+            )
+            .await
+            .unwrap()
+        );
+        assert_eq!(session.snapshot().unwrap(), before);
+        assert_eq!(before.chunks.len(), 1);
+        assert!(
+            checkpoint_for_send(session.inner.clone(), stopped, 66_560, "new-through")
+                .await
+                .unwrap()
+        );
+        let covered = session.snapshot().unwrap();
+        assert_eq!(covered.captured_bytes, 66_560);
+        assert_eq!(covered.chunks.len(), 2);
+        session.finish_capture().unwrap();
+        session.shutdown().await.unwrap();
     }
 }
 
@@ -448,10 +738,9 @@ async fn failed_inflight_seal_keeps_both_pcm_owners_and_never_promotes_the_durab
     let (release, entered) = store.pause_next_fixture_write();
     let owner = session.inner.clone();
     let (_stop, stopped) = watch::channel(false);
-    let sealing =
-        tokio::spawn(
-            async move { checkpoint_for_send(owner, stopped, "failed-sender-seal").await },
-        );
+    let sealing = tokio::spawn(async move {
+        checkpoint_for_send(owner, stopped, 32_000, "failed-sender-seal").await
+    });
     tokio::time::timeout(Duration::from_secs(5), entered)
         .await
         .unwrap()
@@ -530,7 +819,7 @@ async fn finish_and_cancel_join_the_actual_pumps_paused_confirmation_without_los
             .unwrap();
         let writer = session.clone();
         let mut append = tokio::task::spawn_blocking(move || {
-            for _ in 0..30 {
+            for _ in 0..75 {
                 writer.append(&[0; 1_280])?;
             }
             Ok::<_, SessionError>(())
@@ -580,9 +869,10 @@ async fn finish_and_cancel_join_the_actual_pumps_paused_confirmation_without_los
         let saved = store.fixture_snapshot(&id).unwrap();
         assert!(!joined_while_paused);
         assert!(saved.capture_complete);
-        assert_eq!(saved.captured_bytes, 102_400);
+        assert_eq!(saved.captured_bytes, 160_000);
         assert_eq!(saved.context, "synthetic context");
-        assert_eq!(saved.confirmed_bytes, if cancel { 64_000 } else { 102_400 });
+        assert_eq!(saved.confirmed_bytes, if cancel { 64_000 } else { 160_000 });
+        assert_eq!(saved.chunks.len(), 2);
         for chunk in saved.chunks.iter().filter(|chunk| chunk.text.is_none()) {
             let reader = store.open(&id).unwrap();
             assert!(
@@ -708,8 +998,7 @@ async fn reconnect_and_confirmation_use_only_owned_publications_while_fresh_mani
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn complete_writer_checkpoint_mutation_timeline_records_actual_io_without_target_lock_monitoring()
- {
+async fn explicit_durable_checkpoint_timeline_records_io_while_pcm_append_remains_memory_only() {
     let directory = TemporaryRoot::new();
     let (_, journal) = journal(&directory);
     let service = Service::new(Mode::Healthy);
@@ -720,7 +1009,12 @@ async fn complete_writer_checkpoint_mutation_timeline_records_actual_io_without_
     let recording = capture.clone();
     tokio::task::spawn_blocking(move || {
         let _scope = recording.enter();
-        writer.append(&vec![0; 64_000]).unwrap();
+        writer.append(&vec![0; 32_000]).unwrap();
+        let mut state = writer
+            .inner
+            .lock_named("explicit-timeline-checkpoint")
+            .unwrap();
+        writer.inner.checkpoint(&mut state, false).unwrap();
     })
     .await
     .unwrap();

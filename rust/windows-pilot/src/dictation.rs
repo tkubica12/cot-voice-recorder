@@ -416,16 +416,49 @@ async fn stop_microphone<P: DictationPorts>(microphone: Option<P::Capture>) -> b
     }
 }
 
+#[cfg(test)]
 pub(crate) fn persist_capture(
-    mut receiver: mpsc::Receiver<CaptureBuffer>,
+    receiver: mpsc::Receiver<CaptureBuffer>,
     discard: &AtomicBool,
     stopped: &watch::Sender<bool>,
     mut persist: impl FnMut(&[u8]) -> Result<(), SessionError>,
 ) -> Result<(), SessionError> {
+    persist_capture_with_room(
+        receiver,
+        discard,
+        stopped,
+        || Ok(()),
+        |pcm, ()| persist(pcm),
+    )
+}
+
+pub(crate) fn persist_capture_with_room<R>(
+    mut receiver: mpsc::Receiver<CaptureBuffer>,
+    discard: &AtomicBool,
+    stopped: &watch::Sender<bool>,
+    mut reserve: impl FnMut() -> Result<R, SessionError>,
+    mut persist: impl FnMut(&[u8], R) -> Result<(), SessionError>,
+) -> Result<(), SessionError> {
     let mut failure = None;
-    while let Some(buffer) = receiver.blocking_recv() {
-        if !discard.load(Ordering::Acquire) && failure.is_none() {
-            if let Err(error) = persist(&buffer.0) {
+    loop {
+        let reservation = if !discard.load(Ordering::Acquire) && failure.is_none() {
+            match reserve() {
+                Ok(reservation) => Some(reservation),
+                Err(error) => {
+                    eprintln!("Audio persistence admission: {error}");
+                    failure = Some(error);
+                    stopped.send_replace(true);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        let Some(buffer) = receiver.blocking_recv() else {
+            break;
+        };
+        if let Some(reservation) = reservation.filter(|_| !discard.load(Ordering::Acquire)) {
+            if let Err(error) = persist(&buffer.0, reservation) {
                 eprintln!("Audio persistence worker: {error}");
                 failure = Some(error);
                 stopped.send_replace(true);
@@ -654,14 +687,26 @@ impl<P: DictationPorts> DictationHost<P> {
                     #[cfg(test)]
                     probe.register_capture_trace(session.fixture_lock_trace());
                     let worker = tokio::task::spawn_blocking(move || {
-                        let result = persist_capture(receiver, &discard, &capture_stopped, |pcm| {
-                            #[cfg(test)]
-                            probe.capture_write_started(pcm.len());
-                            let result = session.append(pcm);
-                            #[cfg(test)]
-                            probe.capture_write_finished(result.is_ok());
-                            result
-                        });
+                        let result = persist_capture_with_room(
+                            receiver,
+                            &discard,
+                            &capture_stopped,
+                            || match &session {
+                                Session::Streaming(session) => session.reserve_capture(&discard),
+                                Session::Legacy(_) => Ok(None),
+                            },
+                            |pcm, reservation| {
+                                #[cfg(test)]
+                                probe.capture_write_started(pcm.len());
+                                let result = match reservation {
+                                    Some(mut slot) => slot.append(pcm),
+                                    None => session.append(pcm),
+                                };
+                                #[cfg(test)]
+                                probe.capture_write_finished(result.is_ok());
+                                result
+                            },
+                        );
                         finish_capture(session, result, discard.load(Ordering::Acquire))
                     });
                     CapturePersistence::Live(worker)
