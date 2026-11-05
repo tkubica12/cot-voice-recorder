@@ -60,15 +60,30 @@ def shifted_dates(value, delta: timedelta):
         r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:\d\d)", value
     ):
         date = datetime.fromisoformat(value.replace("Z", "+00:00")) + delta
-        result = date.isoformat(timespec="microseconds" if "." in value else "seconds")
+        result = date.isoformat(timespec="microseconds" if date.microsecond else "seconds")
         return result.replace("+00:00", "Z") if value.endswith("Z") else result
     return value
 
 
-def archive_case(data: bytes, expected: bytes) -> tuple[bytes, dict]:
+def metadata_dates(value):
+    if isinstance(value, dict):
+        return {
+            key: datetime.fromisoformat(item.replace("Z", "+00:00"))
+            if key in {"completed_at", "expires_at"} and isinstance(item, str)
+            else metadata_dates(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [metadata_dates(item) for item in value]
+    return value
+
+
+def archive_case(
+    data: bytes, expected: bytes, *, clock: datetime | None = None
+) -> tuple[bytes, dict]:
     request, response = json.loads(data), json.loads(expected)
     completed = datetime.fromisoformat(request["payload"]["completed_at"].replace("Z", "+00:00"))
-    delta = datetime.now(UTC) - timedelta(hours=1) - completed
+    delta = (clock or datetime.now(UTC)) - timedelta(hours=1) - completed
     request = shifted_dates(request, delta)
     response = shifted_dates(response, delta)
     if response["status"] == 200:
@@ -150,7 +165,10 @@ class GoldenContracts(unittest.TestCase):
                     for diagnostic in record.get("required_diagnostics", []):
                         self.assertIn(diagnostic, result.stderr.decode("utf-8"))
                 elif archive_expected is not None:
-                    self.assertEqual(json.loads(result.stdout), archive_expected)
+                    self.assertEqual(
+                        metadata_dates(json.loads(result.stdout)),
+                        metadata_dates(archive_expected),
+                    )
                 elif target == "cloud" or modes[0] in JSON_MODES:
                     self.assertEqual(json.loads(result.stdout), json.loads(expected))
                 elif modes[0] == "auth-url":
@@ -167,6 +185,31 @@ class GoldenContracts(unittest.TestCase):
                     self.assertEqual(result.stdout.strip(), expected.strip())
                 else:
                     self.assertEqual(result.stdout, expected)
+
+    def test_archive_clock_rebasing_keeps_exact_envelope_and_semantic_metadata_precision(
+        self,
+    ) -> None:
+        cases = [
+            row
+            for row in MANIFEST["records"]
+            if row["target"] == "cloud" and row["args"] == ["archive"]
+        ]
+        for microsecond in (0, 100000, 123450):
+            clock = datetime.now(UTC).replace(microsecond=microsecond)
+            for row in cases:
+                data, expected = archive_case(blob(row["input"]), blob(row["stdout"]), clock=clock)
+                with self.subTest(microsecond=microsecond, input=row["input"]):
+                    result = subprocess.run(
+                        [str(BINARIES["cloud"]), "archive"],
+                        input=data,
+                        capture_output=True,
+                        timeout=20,
+                        check=False,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(
+                        metadata_dates(json.loads(result.stdout)), metadata_dates(expected)
+                    )
 
 
 class HttpFixture:

@@ -29,6 +29,11 @@ not the installed client or existing backend. Current-time audit fields are
 shifted together; the expected canonical envelope/digest is recomputed from
 the frozen Python envelope. Server-generated creation/receipt times must be
 valid and within the current run. All other checked wire fields remain frozen.
+Audit metadata timestamps are compared as RFC3339 instants, as in the original
+Python model comparison; insignificant trailing fractional zeroes are not a wire
+change. The envelope, digest and content path remain byte-exact. Deterministic
+zero, `.100000` and trailing-zero clock cases prevent platform clock precision
+from making the rebased corpus flaky.
 The existing error contract checks and the complete 40-iteration rejected-body
 sequence are retained, without a performance profile.
 The historical lifecycle probe deliberately used the accepted free-form client
