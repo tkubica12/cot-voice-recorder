@@ -26,6 +26,32 @@ znovu v odpovidajicim scope.
 
 ## Aktualni progress
 
+Nove uzivatelske rozhodnuti po lokalni instalaci: cisty stav nove varianty,
+odstraneni puvodnich C#/Python aplikacnich zdroju a nasledny merge. Puvodni
+osobni stav byl jednorazove resetovan v presne schvalenem rozsahu; nove prihlaseni,
+historie a bezici Rust aplikace se jiz nemazou ani neobnovuji ze stare zalohy.
+Skutecny uzivatelsky hlasovy workflow byl potvrzen normalnim dokoncenym vysledkem
+Rust klienta, nikoli jen provisionalnim textem. Puvodne planovany izolovany
+own-target Ctrl+V ani presna delka tohoto realneho pokusu nebyly primo pozorovany;
+nejde o novy takto rizeny E2E PASS. Zadny dalsi realny capture se neopakuje.
+
+Aktualne probiha SOURCE cleanup pred mergem: pred odstranovanim reference
+vznikl verzovany synteticky golden korpus s provenance stareho commitu a
+jednotlivych zdrojovych/probe hashy. Export prosel 32 skutecnymi C#/Python
+parity testy a 14 Windows platform/recovery testy. Rust blackbox nyni overuje
+808 wire/audio/client/cloud vektoru a 159 zachovanych signed HTTP pozadavku,
+vcetne rejected-body keepalive, plus puvodni prompty a recovery v1-v4.
+Samostatny maly CurrentUser DPAPI/isolated-IPC testtool nepotrebuje puvodni
+Windows Core ani aplikaci. Toto je nahrada testovacich vazeb pred source
+vymenou, nikoli tvrzeni, ze C#/Python zdroje uz byly odstraneny.
+
+Merge do `main` nasleduje az po source cleanup a CI a po konkretnim finalnim
+pokynu koordinatora. Vsechny ctyri verzovane workflow vetve pouze buildi/testuji
+a ukladaji artefakty; neobsahuji Azure login, ACR publish, produkcni deploy ani
+release. Externi organizacni hooky tim nejsou overene. Azure Rust cutover je
+nadale samostatny neprovedeny krok s vlastnim schvalenim; existujici Python
+container v Azure nebyl zmenen ani odstranen.
+
 Aktualni uzivatelske rozhodnuti: dosavadni performance evidence mu staci;
 dalsi performance benchmarky,30+30/idle/RSS/latency/score-chasing serie a rucni
 orchestrace mereni se neprovadeji. Prioritou je dokonceni funkcnosti a
@@ -47,11 +73,11 @@ uz uzivatel nechce.
 | Current controller functionality/reliability | WindowsNoPorts FUNCTIONALcapture/data/controller gates obouenginu uzavreny vpresnemscope: STREAMING AB98 actual3600.0017623/exact115200000/real50minrotation/joinsACK; LEGACY currentec6production source native600data+150C#WAV/joinsPASS a correctedtestfixture actual120.008364/fullnormalflow/strictstderr0/native0collector0PASS. Controlled192k/EMIT/MAX4/oddfragment/ASRworkingstate/faultproofy zachovany. Neni fullGUI/physical/install/privateAzure/wholemigrationPASS |
 | CI nativniho inkrementu | Currenta5f8081/CI42035902584 ALL5SUCCESS strictAPI+actualWinlog177native/20root+10host/6C#120600golden/both3smodes/MSRVWinLinux/container. Oldec6CI420173attempt2ALL5/attempt1guardFAIL aebeaCI420291ALL5 zustavaji scoped. NativeFS/fault integration serialni, ostatniworkspaceparalelni; neni production cutover |
 | Legacy functional profile | Actual600.0015811 NATIVEcapture/storage/150C#WAV/ASRorder/deliveryjoinsPASS/raw19200000, ale ORIGINALcollectorFAIL1/42fakeRefinerwarnings retained. Po minimaltest-onlyuniqueanchorfix actual120.008364/raw3840000/30C#WAV/provider4006400/polisher0fallback/deliveryACK+joineddelete/strictstderr0/native0collector0PASS. Stejne5productionhashes+product2c6f; zadny600repeat/legacyhour |
-| OAuth/token-store/PubSub klient | Native flow implementovany; samostatny live Google auth-only/local-signout a assisted manual clipboard probe PASS, full signed-in backend/controller dictation stale chybi; samostatny automatic DesktopGuard port viz dalsi radek |
+| OAuth/token-store/PubSub klient | Native flow implementovany; samostatne auth-only/clipboard dukazy zachovany. Nove nainstalovany Rust klient po cistem resetu je prihlaseny/Connected a skutecny uzivatelsky diktovaci workflow ma normalni finalni History vysledek bez fallback/recovery. Presny own-target Ctrl+V tohoto pokusu primo nepozorovan; neprepisuje samostatny portovy dukaz nize |
 | Automatic DesktopGuard paste port | NOVYexactonephysicalpostfix5b test PASS:one4eventnativeCtrlV/exactownfieldmarker/normalclosed,no retry. Nejdenifullcontroller/hold-toggle/hour/realbackend acceptance;older50040BLOCKED/45788assisted zustavaji |
 | Diktovani/recovery UI | Native microphone/hotkeys/overlay/paste controller, oba enginy, journal, polishing a outbox implementovany; real-world a rozsahlejsi fault/E2E akceptace zbyva |
 | History cache | JSON/retence/200 entries, atomicka persistence, native list/text a manual copy latest/selected/original implementovany; C# file parity overena |
-| Settings a instalator | C#JSONfields/nativeSettingsHistoryRecovery/DPI/peruserautostart/compatibleIPC implementovany. CURRENTnormal2c6f BUILD-ONLYInno setup93de6c68/3606385B sestaven do uniqueartifact; payload+setup original9iconimages byte-exact. Insidearchivepayloadhashes UNVERIFIED(existing7zipcannotparse); nicneinstalovano. NativePE0.1.0/setuptext1.5.1bezversionbump |
+| Settings a instalator | CURRENTnormal2c6f/Inno93de6c68 byl vyslovne schvalene per-user nainstalovan. Skutecne instalovane EXE a originalICO odpovidaji staging hashum; puvodni konkretni autostart volba zachovana. Private rollback zaloha zustava oddelena. Samostatne neexecutovane archive extraction stale neprovedeno, ale skutecny doruceny payload je overeny. NativePE0.1.0/setuptext1.5.1preview bez noveho release/versionbump |
 | Original icon a podobne zive popup UI | Original ICO embedded/byte-exact a DPI sizes overeny; WPF-matched reactive overlay15 raster pairs a noactivate/900ms proof, actual144DPI original-themed main/History/Recovery/default/min/lazy presentation overeny. Human keyboard/screen-reader/monitor/physical akceptace stale zbyva |
 | Rust cloud API, worker, cleanup | API/AI/PubSub/live relay, processors/finalization/queue loop, cleanup, bootstrap/CLI a source-only image wiring implementovany; image CI proslo, uplna akceptace zbyva |
 | Cloud adapter-matched performance | 33d04aa actual verified-HTTPS Azurite RustREST/PythonSDK30+30/3x100flows PASS po nezavislem prepocitani; neni actual Azure IAM/PE/ACA/model ani worker-latency acceptance |
@@ -85,8 +111,10 @@ postupne commity a pushe do samostatne vetve `refactor-rust`.
 
 - Pracovat v teto vetvi v existujicim checkoutu, ne v nove worktree.
 - Commitovat ucelene zmeny po odpovidajicim overeni a pushovat pouze tuto vetev.
-- Nemergovat do `main`, nevytvaret release ani nenasazovat do produkce.
-- Nemazat nebo neprepisovat osobni historii, tokeny, recovery ani cloudova data.
+- Merge do `main` je nove vyzadany po source cleanup/CI a finalnim koordinovanem
+  pokynu. Do te doby pushovat pouze `refactor-rust`; zadny release ani Azure deploy.
+- Puvodni osobni stav byl pozdeji vyslovne schvalene jednorazove resetovan.
+  Novou historii/tokeny/recovery bezici aplikace a cloudova data nadale zachovat.
 - Pouzivat lokalni synteticka data a oddeleny testovaci stav.
 - Zachovat soucasnou C#/Python implementaci jako referenci a rollback, dokud
   neni konkretni nahrada kompletni a overena.

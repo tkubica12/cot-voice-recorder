@@ -1,4 +1,4 @@
-"""Cross-language client-contract and encrypted-cache tests; synthetic data only."""
+"""Frozen legacy client wires and independent OS encrypted-cache contracts."""
 
 from __future__ import annotations
 
@@ -13,6 +13,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
+from legacy_reference import invoke
+
 CLIENT: Path
 PILOT: Path
 REFERENCE: Path
@@ -24,6 +27,8 @@ def payload(value: object) -> bytes:
 
 
 def run(command: list[str], data: bytes = b"") -> subprocess.CompletedProcess[bytes]:
+    if command[:2] == ["dotnet", str(REFERENCE)]:
+        return invoke(command[2:], data, REFERENCE)
     return subprocess.run(command, input=data, capture_output=True, timeout=20, check=False)
 
 

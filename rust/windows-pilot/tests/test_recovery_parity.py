@@ -1,4 +1,4 @@
-"""Recovery manifest v1-v4 parity against the actual C# store; synthetic data only."""
+"""Frozen C# v1-v4 recovery wires and independent OS protection; synthetic only."""
 
 from __future__ import annotations
 
@@ -10,9 +10,13 @@ import os
 import shutil
 import struct
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
+from legacy_reference import invoke
 
 PILOT: Path
 REFERENCE: Path
@@ -21,9 +25,9 @@ TICKS = 621_355_968_000_000_000
 
 
 def run(command: list[str], data: bytes = b"") -> subprocess.CompletedProcess[bytes]:
-    return subprocess.run(
-        command, input=data, capture_output=True, timeout=20, check=False
-    )
+    if command[:2] == ["dotnet", str(REFERENCE)]:
+        return invoke(command[2:], data, REFERENCE)
+    return subprocess.run(command, input=data, capture_output=True, timeout=20, check=False)
 
 
 def checked(command: list[str], data: bytes = b"") -> bytes:
@@ -60,9 +64,7 @@ def legacy(version: int, audio: bytes) -> bytes:
 
 class RecoveryParityTests(unittest.TestCase):
     def test_junctions_are_rejected_before_read_write_or_delete(self) -> None:
-        with tempfile.TemporaryDirectory(
-            prefix="VoicePrompt-recovery-junction-"
-        ) as directory:
+        with tempfile.TemporaryDirectory(prefix="VoicePrompt-recovery-junction-") as directory:
             root = Path(directory).joinpath("root")
             target = Path(directory).joinpath("target")
             root.mkdir()
@@ -132,13 +134,9 @@ class RecoveryParityTests(unittest.TestCase):
         for mode in ["legacy", "streaming", "audit"]:
             with (
                 self.subTest(mode=mode),
-                tempfile.TemporaryDirectory(
-                    prefix="VoicePrompt-recovery-native-"
-                ) as directory,
+                tempfile.TemporaryDirectory(prefix="VoicePrompt-recovery-native-") as directory,
             ):
-                plain = checked(
-                    [str(PILOT), "--recovery-journal-fixture", directory, mode], audio
-                )
+                plain = checked([str(PILOT), "--recovery-journal-fixture", directory, mode], audio)
                 sessions = [path for path in Path(directory).iterdir() if path.is_dir()]
                 self.assertEqual(len(sessions), 1)
                 session = sessions[0]
@@ -173,14 +171,10 @@ class RecoveryParityTests(unittest.TestCase):
                 else:
                     self.assertIsNone(state["Chunks"][1]["Text"])
                     self.assertTrue(session.joinpath("00000001.wav.enc").exists())
-                self.assertEqual(
-                    Path(directory).joinpath("writer.lock").stat().st_size, 0
-                )
+                self.assertEqual(Path(directory).joinpath("writer.lock").stat().st_size, 0)
 
     def test_writer_ownership_is_enforced_between_real_native_processes(self) -> None:
-        with tempfile.TemporaryDirectory(
-            prefix="VoicePrompt-recovery-lock-"
-        ) as directory:
+        with tempfile.TemporaryDirectory(prefix="VoicePrompt-recovery-lock-") as directory:
             owner = subprocess.Popen(
                 [str(PILOT), "--recovery-root-lock-fixture", directory],
                 stdin=subprocess.PIPE,
@@ -193,17 +187,13 @@ class RecoveryParityTests(unittest.TestCase):
                     ready = executor.submit(owner.stdout.readline).result(timeout=15)
                 self.assertEqual(ready, b"ready\n")
                 self.assertIsNone(owner.poll())
-                refused = run(
-                    [str(PILOT), "--recovery-root-lock-fixture", directory], b"\n"
-                )
+                refused = run([str(PILOT), "--recovery-root-lock-fixture", directory], b"\n")
                 self.assertNotEqual(refused.returncode, 0)
                 self.assertIn(b"exclusive recovery writer", refused.stderr)
                 _, error = owner.communicate(b"\n", timeout=15)
                 self.assertEqual(owner.returncode, 0, error)
                 self.assertEqual(
-                    checked(
-                        [str(PILOT), "--recovery-root-lock-fixture", directory], b"\n"
-                    ),
+                    checked([str(PILOT), "--recovery-root-lock-fixture", directory], b"\n"),
                     b"ready\n",
                 )
             finally:
@@ -217,19 +207,13 @@ class RecoveryParityTests(unittest.TestCase):
         for mode in ["legacy", "streaming", "audit"]:
             with (
                 self.subTest(mode=mode),
-                tempfile.TemporaryDirectory(
-                    prefix="VoicePrompt-recovery-current-"
-                ) as directory,
+                tempfile.TemporaryDirectory(prefix="VoicePrompt-recovery-current-") as directory,
             ):
                 before = json.loads(
-                    checked(
-                        ["dotnet", str(REFERENCE), "recovery-create", directory, mode]
-                    )
+                    checked(["dotnet", str(REFERENCE), "recovery-create", directory, mode])
                 )
                 path = Path(directory).joinpath(before["Id"], "manifest.enc")
-                original_plain = checked(
-                    ["dotnet", str(REFERENCE), "unprotect"], path.read_bytes()
-                )
+                original_plain = checked(["dotnet", str(REFERENCE), "unprotect"], path.read_bytes())
                 rust_plain = checked([str(PILOT), "--recovery-load-fixture", str(path)])
                 self.assertEqual(rust_plain, original_plain)
                 checked([str(PILOT), "--recovery-save-fixture", str(path)], rust_plain)
@@ -262,49 +246,35 @@ class RecoveryParityTests(unittest.TestCase):
         for version in [1, 2]:
             with (
                 self.subTest(version=version),
-                tempfile.TemporaryDirectory(
-                    prefix="VoicePrompt-recovery-legacy-"
-                ) as directory,
+                tempfile.TemporaryDirectory(prefix="VoicePrompt-recovery-legacy-") as directory,
             ):
                 session = Path(directory).joinpath(ID)
                 session.mkdir()
                 path = session.joinpath("manifest.enc")
-                path.write_bytes(
-                    checked([str(PILOT), "--protect-stdin"], legacy(version, audio))
-                )
+                path.write_bytes(checked([str(PILOT), "--protect-stdin"], legacy(version, audio)))
                 session.joinpath("00000000.wav.enc").write_bytes(
                     checked([str(PILOT), "--protect-stdin"], audio)
                 )
                 before = json.loads(
-                    checked(
-                        ["dotnet", str(REFERENCE), "recovery-inspect", directory, ID]
-                    )
+                    checked(["dotnet", str(REFERENCE), "recovery-inspect", directory, ID])
                 )
                 self.assertFalse(before["Streaming"])
                 self.assertEqual(before["Chunks"][0]["EndByte"], 0)
-                self.assertEqual(
-                    before["Context"], "" if version == 1 else "synthetic context"
-                )
+                self.assertEqual(before["Context"], "" if version == 1 else "synthetic context")
                 latest = checked([str(PILOT), "--recovery-load-fixture", str(path)])
                 self.assertEqual(struct.unpack_from("<i", latest, 4)[0], 3)
                 checked([str(PILOT), "--recovery-save-fixture", str(path)], latest)
                 after = json.loads(
-                    checked(
-                        ["dotnet", str(REFERENCE), "recovery-inspect", directory, ID]
-                    )
+                    checked(["dotnet", str(REFERENCE), "recovery-inspect", directory, ID])
                 )
                 self.assertEqual(before, after)
-                opened = checked(
-                    [str(PILOT), "--recovery-open-journal-fixture", directory, ID]
-                )
+                opened = checked([str(PILOT), "--recovery-open-journal-fixture", directory, ID])
                 self.assertEqual(opened, latest)
 
     def test_corrupt_plaintext_never_replaces_the_existing_encrypted_manifest(
         self,
     ) -> None:
-        with tempfile.TemporaryDirectory(
-            prefix="VoicePrompt-recovery-invalid-"
-        ) as directory:
+        with tempfile.TemporaryDirectory(prefix="VoicePrompt-recovery-invalid-") as directory:
             state = json.loads(
                 checked(
                     [
@@ -319,9 +289,7 @@ class RecoveryParityTests(unittest.TestCase):
             path = Path(directory).joinpath(state["Id"], "manifest.enc")
             before = path.read_bytes()
             for invalid in [b"corrupt", b"", bytes([0]) * 120]:
-                refused = run(
-                    [str(PILOT), "--recovery-save-fixture", str(path)], invalid
-                )
+                refused = run([str(PILOT), "--recovery-save-fixture", str(path)], invalid)
                 self.assertNotEqual(refused.returncode, 0)
                 self.assertEqual(path.read_bytes(), before)
             path.write_bytes(b"corrupt synthetic ciphertext")
@@ -330,17 +298,13 @@ class RecoveryParityTests(unittest.TestCase):
             self.assertEqual(path.read_bytes(), b"corrupt synthetic ciphertext")
 
     def test_fixture_paths_cannot_escape_the_recovery_layout(self) -> None:
-        with tempfile.TemporaryDirectory(
-            prefix="VoicePrompt-recovery-paths-"
-        ) as directory:
+        with tempfile.TemporaryDirectory(prefix="VoicePrompt-recovery-paths-") as directory:
             for path in [
                 Path(directory).joinpath("manifest.enc"),
                 Path(directory).joinpath(ID.upper(), "manifest.enc"),
                 Path(directory).joinpath(ID, "unexpected.bin"),
             ]:
-                refused = run(
-                    [str(PILOT), "--recovery-save-fixture", str(path)], b"synthetic"
-                )
+                refused = run([str(PILOT), "--recovery-save-fixture", str(path)], b"synthetic")
                 self.assertNotEqual(refused.returncode, 0)
                 self.assertFalse(path.exists())
             self.assertEqual(list(Path(directory).iterdir()), [])
