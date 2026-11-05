@@ -44,7 +44,7 @@ uz uzivatel nechce.
 | Mereni Windows klienta | NOVA vyslovne schvalena quiet-window current071/checkout86f3b0f full-runtime signed-out30+30/3paired301-point PASS: p95Rust257.948ms,meanprivate3.427MiB,observedpeak3.992MiB. Vsechnyrawvalues/pairedthresholds/cleanup nezavisleovereny;starsi7bPASS ia2d/3f4FAILEDINCOMPLETE zachovany,neprepisuji se na signed-in/physical scope |
 | Microphone readiness | Jeden actual240ms probe a samostatne schvalena30+30 paired serie prosly; first-PCM p95Rust80.75% C#baseline, bez audio souboru/uploadu |
 | Engine longevity | Actual3600s synthetic PCM/real50min rotation,115200000 exact bytes; worst idle growth1.645MiB<10MiB, engine-only PASS |
-| Current controller functionality/reliability | Owned-sealer ab98d64: session128k+originalqueue64k/reservation-before-dequeue/THROUGH, controlledRED->GREEN192k a3sPASS. ExactCI41977537100ALL5SUCCESS; conditional600 hostlaunch1 selhal pri ready-read PREDmainbegin(mainPCM0), ne sealerFAIL. Hostread guard se opravuje beznativechanges; 2f8hourFAIL1604s a starsi failures zachovany |
+| Current controller functionality/reliability | Owned-sealer ab98d64/CI41977537100ALL5SUCCESS; hostguardEB7/CI41980420636ALL5SUCCESS. ONEcorrectedFUNCTIONAL600_ONLYPASS actual600.0020259s/exact19200000PCM/normaljoinsACK. Puvodnihostlaunch1/main0a2f8hourFAIL1604s zachovany. Newhour/50minrotation nadab98 stale chybi; legacyownsynccheckpoint potrebujeanalogickoucodeopravu |
 | CI nativniho inkrementu | Exactab98d64/CI41977537100 Windows/Linux/MSRV1.85/container ALL5SUCCESS, Windows163nativePASS16ignored, samepacketguard/parity a3s NoPorts smoke PASS. NativeFS/fault integration je explicitneserialni; ostatniworkspaceparalelni. Old2f8/05/failedCI zustavaji revision-scoped, neni production cutover |
 | OAuth/token-store/PubSub klient | Native flow implementovany; samostatny live Google auth-only/local-signout a assisted manual clipboard probe PASS, full signed-in backend/controller dictation stale chybi; samostatny automatic DesktopGuard port viz dalsi radek |
 | Automatic DesktopGuard paste port | NOVYexactonephysicalpostfix5b test PASS:one4eventnativeCtrlV/exactownfieldmarker/normalclosed,no retry. Nejdenifullcontroller/hold-toggle/hour/realbackend acceptance;older50040BLOCKED/45788assisted zustavaji |
@@ -4799,10 +4799,64 @@ PowerShell5 launch se overuje separefile stdout/stderr a presnym
 `Start-Process -Wait -PassThru` exitcode; benignexit7probe overil oba
 markery+7. Samotne `.WaitForExit()` bez StartProcessWait zanechalo
 ExitCodeNULL a NEBYLO vydavano za observed0.
-MatchingharnessCI/currentshortsmoke a praveJEDENcorrected600launch jsou
-podminene nasledne povoleny, protoze mainprevious0 je explicitneprokazan.
-Jakmile mainzacne, zadny automaticky dalsi600/hour. Nativecompiledsource
-zde zustavaab98/tree3c92091f; noveharnessrevision se zaznamena zvlast.
+MatchingharnessCI `41980420636` pro host-only
+`eb7e352e26ec20cc9d35e3e5946a77e172b57c74` je ALL5SUCCESS,
+vcetne Winready/rootguards/currentserialnative/3s smoke aMSRV/container.
+Nativecompiledsource zustavaab98/tree3c92091f, nikoli novaproduktovaimplementace.
+Protoze previousMAIN0 je prokazan, nasledoval praveJEDEN povolenycorrected600
+launch niz. Zadny automaticky dalsi600/hour.
+
+### ONE corrected owned-sealer FUNCTIONAL600: PASS with unchanged native image
+
+Nativeab98/fixture528a0244e354a8f0ce312a6d44523d3770068e9a7253b7762097f6e5acb60aa6/
+PDB/Rusttree3c92091f a hostEB7. All5hostCI i puvodni nativeCI/shortsmoke,
+previousMAIN0proofhash a8frozeninputs prosly VerifyOnly predlaunch.
+PS5argumentexpression byla bezspusteni overena proti exactCLI; skutecny
+launcher ulozil plne separatnistreams+immutableobservedExit0.
+
+Readinessrootmarker/nonce/PID/binsha/strictfields byly validni,
+actualbegin nonce overen.240expectedmissing-read attempts trvalo4.2363654s
+v puvodnim15sdeadline (first+last FileNotFoundWin2, zadny deniedfallback).
+Actualcapture **600.0020259s**, exact **19200000 produced/admitted/
+received/completed-append/saved/sent/confirmed bytes**,15000native1280B
+packetequivalents,300strictlyorderedcursors/streamstarts[0].
+Normal original2s/30s/5s controller/capturewriter/read/pump/outbox joins
+aACK, History-before-handoff, polisher a exportovane pins/inspections/
+aliascapacity0. Native+hoststderr0, zadny firsterror/renamewitness.
+Room/reservation/backgroundjob counters **NOT_INDEPENDENTLY_EXPORTED**:
+jejich lifetime/join/deletion je code+nativeassertionproof, nikoli vymyslena
+externi counter0. Nativefreshmanifest/byte/order/cursorproof je PREDACKdelete;
+externi precleanupcipher/counts **NOT_OBSERVED**.
+
+POEXIT72snapshotfilehashes,8frozeninputs, priorMAIN0proof a nezmeneny
+cleanEB7/source tree overeny; knownhelper120356/collector103172/native100856
+absent. Pouze exactownedTemp57b7ed2312a64bc48936e2b533f8cdc2 odstranen
+AZpoverifiedsnapshot.10flushedminuteprogressrecords, resource samplerNE.
+Persistentproof `functional-controller-600s-ab98-hostfix/independent-verification.json`.
+Puvodnifailedhost1/main0 zustava; toto je presneONEcorrectedlaunch/main1,
+ne opakovani jizbezel600produceru. Neni hour/real50minrotation/GUI/install/
+privateAzure/performance ani historickeho0x5actorPASS.
+
+### Functional completion ledger after owned-sealer600
+
+| Surface | Implemented/verified | Specific remaining gate |
+| --- | --- | --- |
+| Streaming native capture/persistence | Joinedsealer, exact192kbound including in-hand reservation, actualfault/cancel/pin/replay/through proofs,163native+7bin/parity/MSRV/containerCI a actual600sPASS | New nativeimage zatim nema actual3600s/real50minrotation acceptance; zadny novy hour automaticky |
+| Legacy engine and fallback | Existing codec/chunker/ASR2requests/resultorder/recovery/controllerscopes aC#tail/v1-v4 parity remain passing | Vlastni synchronous capture checkpoint225-238 staleblokuje consumer; potrebuje minimalni ownedraw-window/sealer zmenu a actualsingleworkerRED/GREEN, ne novy performanceprofil |
+| Native stop/error/recovery | Originalbudgets, incompletefeedback, originalbinding/durableprefix/cipher/orphans a History-before-handoff/outbox policy overeny | Pomalydisk neznamena losslessarchive; zadny zaruceny completionpriunwritable/nekonecnemstall. Historicky0x5actorUNKNOWN zachovan, ne automaticky nova corruptdurabledata |
+| Windows client surfaces | Auth/network/settings/history/recovery/polishing/paste controller a originalicon/theme jsou implementovane, drivejsi actualport a syntheticUI evidence zustava scoped | Uplny signed-in physicalhold/toggle/mic+backend/delivery flow a keyboard/screen-reader/DPI/monitor acceptance stale vyzaduji vlastni opravneny real-world test; ne nahrazovat600NoPorts |
+| Installer and rollback | Installer source a predchozi build, data/DPAPI/C#rollback compatibility existuji | Po finalcodefreeze obnovit installerartifact; skutecny install/upgrade/uninstall/rollback dosud neproveden a neni povolen timto NoPortsrunem |
+| Rust cloud API/worker/cleanup | Implemented adapters/contracts, offline+RESTfixture/parity a unprivilegedcontainerCI, classicalACAarchitektura zachovana | ActualprivateAzureUAMI/IAM/PE/Speech/queue/KEDA/scheduledJob runtime a cutover nejsou overene. Zadny productiondeploy/resource/access mutation nebo placeny modelcall nebyl proveden |
+| Performance | Uzivatel prijal dosavadni revision-scoped evidence jako dostatecnou | Zadny dalsi CPU/RSS/startup/hour10MiB benchmark se nevraci; funkcni hour neni pametovamerka |
+
+Nejmensi zbyvajici CODEkrok je analogicka legacycapture isolation, nikoli
+znovu CDB/performance/permissionloop. Read-onlyassessment nadab98 je ulozen
+v `owned-sealer-work/legacy-checkpoint-assessment.txt`: sdilet chargedRAW
+window/reservation, vlastni joinedlegacysealer pod D feeduje nezmeneny
+PcmChunker a uklada explicitend+tail/chunks; nove128kRAM-not-durable jsou
+oddelene od existujiciho192kchunker allocation/durablecontext/600msoverlap
+a encodedtail/copies. Finishdrain/flush/ASR2/result-order/rollback ziskaji
+vlastni controlledproof. Legacycode se pri tomto600runu nemenil.
 
 **Legacy zbyvajici sourcegate:** `legacy_session.rs:225-238` stale drzi
 vlastni state pres chunkerappend a synchronni checkpoint; result-save
