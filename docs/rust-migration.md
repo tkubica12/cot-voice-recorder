@@ -51,7 +51,7 @@ uz uzivatel nechce.
 | Automatic DesktopGuard paste port | NOVYexactonephysicalpostfix5b test PASS:one4eventnativeCtrlV/exactownfieldmarker/normalclosed,no retry. Nejdenifullcontroller/hold-toggle/hour/realbackend acceptance;older50040BLOCKED/45788assisted zustavaji |
 | Diktovani/recovery UI | Native microphone/hotkeys/overlay/paste controller, oba enginy, journal, polishing a outbox implementovany; real-world a rozsahlejsi fault/E2E akceptace zbyva |
 | History cache | JSON/retence/200 entries, atomicka persistence, native list/text a manual copy latest/selected/original implementovany; C# file parity overena |
-| Settings a instalator | Vsechna C# JSON pole, nativni Settings/History/Recovery, DPI fonty, per-user autostart a kompatibilni IPC; installer sestaven, nebyl instalovan |
+| Settings a instalator | C#JSONfields/nativeSettingsHistoryRecovery/DPI/peruserautostart/compatibleIPC implementovany. CURRENTnormal2c6f BUILD-ONLYInno setup93de6c68/3606385B sestaven do uniqueartifact; payload+setup original9iconimages byte-exact. Insidearchivepayloadhashes UNVERIFIED(existing7zipcannotparse); nicneinstalovano. NativePE0.1.0/setuptext1.5.1bezversionbump |
 | Original icon a podobne zive popup UI | Original ICO embedded/byte-exact a DPI sizes overeny; WPF-matched reactive overlay15 raster pairs a noactivate/900ms proof, actual144DPI original-themed main/History/Recovery/default/min/lazy presentation overeny. Human keyboard/screen-reader/monitor/physical akceptace stale zbyva |
 | Rust cloud API, worker, cleanup | API/AI/PubSub/live relay, processors/finalization/queue loop, cleanup, bootstrap/CLI a source-only image wiring implementovany; image CI proslo, uplna akceptace zbyva |
 | Cloud adapter-matched performance | 33d04aa actual verified-HTTPS Azurite RustREST/PythonSDK30+30/3x100flows PASS po nezavislem prepocitani; neni actual Azure IAM/PE/ACA/model ani worker-latency acceptance |
@@ -5418,9 +5418,83 @@ performancebenchmarky ani genericky dalsihour nejsou potrebny/zadany.
 | Hosting a rozsah | KlasickaACA APImin1/queueworkerKEDAmin0/hourlycleanupJob/UAMI/privatePE zachovany; Androidnezmenen; historicalfailedruns/evidence retained | ZadnyACAExpress/Sandboxswitch/resource/access/scale/domainchange, release/merge/mainpush nebo paidmodelcall nebyl timto povolen |
 | Performance | Uzivatel prijal dosavadnirevision-scoped evidence jako dostatecnou | NoPorts120/600/3600 je FUNCTIONALproof, ne noveCPU/RSS/startup/hourmemorythresholdPASS. Dalsibenchmarky se nevraceji |
 
-Prakticky nasledujici release-engineeringkrok je novy BUILD-ONLYinstaller
+Tehdejsi nasledujici release-engineeringkrok byl novy BUILD-ONLYinstaller
 z currentproduct2c6f + checksum/stagingmanifest a zachovanyC#/Pythonrollback.
 To neinstaluje aplikaci ani nenasazujeAzure. Potom musi konkretni
 release/stagingrozhodnuti oddelit jeste neprovedene physicalUI/install/
 privatecloudacceptance; ne genericpermissionloop nebo dalsiruntimebenchmark.
 Cela migrace se proto NEoznacuje "nasazena/perfektneotestovana/vsehotovo".
+
+### Current build-only installer staging and three remaining user gates
+
+Puvodne povolenybuild-onlyscope byl znovu vyslovne zadany koordinatorem.
+Existing `scripts/Build-RustWindowsInstaller.ps1` a existujici InnoSetup6
+compiler skutecne vytvorily NOVY `VoicePrompt-Rust-Setup.exe`, ne kopii
+drivejsiho5bsetupu. Vse ulozeno v uniqueownartifact
+`installer-staging-current-e8d747e8a7f541b683c0a356f5246143`.
+BuildscriptExit0; normalcargo `--offline --locked --release -p
+voiceprompt-windows-pilot`, zadneopt-infeatures/loopback/libtest.
+Normaldependencygraph native/client-protocolfeaturesempty; product2c6f
+byte-exact. NoPortsignoredcontroller/pattern/libtestmarkers vpayloadu
+nejsou; existingguardedexplicitpathdiagnosticCLI neni zameneny za libtest.
+
+| File | Actualsize | SHA256 |
+| --- | --- | --- |
+| Currentsetup | 3606385B | `93de6c686c0a3cd860f66876976e7ee8d27f8cadf7aa05437a8f4d80fe8278c5` |
+| NormalpayloadVoicePrompt.exe | 6345728B | `2c6f50619b1813d60d934afb90e252f9bcdf10b2fee559a812352ebf6c44590b` |
+| Originalapp.ico | 57631B | `5c43009a56fd315d150a0cbf4574c7dda858296a0006321ba5647023f72faa42` |
+
+ActualPEresourceinspection pouzila LoadLibraryEx DATAFILE/IMAGE_RESOURCE,
+nikoli spusteni: PAYLOADgroup1 a SETUPnamedMAINICON maji vsech9originalICO
+imagebytes presne. Setupdescriptionresource="VoicePrompt Setup",
+payload="VoicePrompt native Windows client"; actualsetupwindowtitle
+NOT_OBSERVED (setup se nespoustel), sourceAppVerName je
+"VoicePrompt 1.5.1 Rust migration preview".
+
+Versionlabels se NETIPOVALY/NEBUMPOVALY: normalpayloadFile/ProductVersion
+0.1.0 (fixed0.1.0.0), installerProductVersiontext1.5.1,
+installerfixedFile/ProductVersion0.0.0.0 aFileVersiontextblank.
+Existingcompiler se identifikuje "Inno Setup 6 Command-Line Compiler";
+jeho PEversion0.0.0.0 je zaznamenana, minorverze se neodvozuje.
+Setup i payload jsou unsigned (PEsecuritycertificatetablesize0).
+Jde o stagedRustpreview, nikoli novouverejnouverzinebo release.
+
+Staged-filemanifest ma PRESNE EXE+ICO, bez wildcardJSON/OAuthconfig/
+tokens/History/Recovery/syntheticstatefiles. BoundedASCII/UTF16scan
+credential-shapedJSON/JWT/privatekey/refresh-tokenpatterns mel0matches,
+bezvypsanihodnot; je to heuristicpluscontrolledinputbinding, ne absolutni
+secretdetectionproof. SourceperuserAppId odpovidaC#, PrivilegesRequiredlowest,
+HKCURun/shortcuts--installed aGracefulQuit/20scompatibleIPC/no forcekill
+zustavaji. ZadnyLocalAppDatadeletesection; data/config/DPAPI/C#v1-v4rollback
+parity a sourcepreservationcontract ulozeny vmanifestu, NEactualupgradePASS.
+
+**INSIDEARCHIVEPAYLOADHASHES_UNVERIFIED:** existing7-Zip26.05
+nemohlInnoarchiveotevrit (actualnonzeroexit/logretained); zadny
+innoextract/innounp vdiscoverableexistingcommands a zadnytool se nestahoval.
+Stageinputhashes/compileroutputbinding jsou VERIFIED a actualPEicons
+jsou VERIFIED, ale nevydavaji se za setup-extractionproof.
+`staging-manifest.json`, `SHA256SUMS.txt`, sourcecopies/hashes,
+resource/safetyscan/normalgraph/compilerlogs a `USER-TEST-HANDOFF.txt`
+jsou vtomtezartefaktu. Drivejsisetup uchovan oddelene jako NOT_CURRENT.
+
+Nebyl spustensetup ani stagedVoicePrompt.exe, neprobehl install/upgrade/
+uninstall/personallogin/autostartregistry/shortcutchange, zadneproddata/
+Azure/resource/accessmutation/release/tag/versionbump. Rusttree/codeCI
+z predchozihofunctionalproof zustavaji nezmenene.
+
+Po tomto currentbuild-onlystaging nejsou zadane dalsisourceopravy ani
+NoPorts/hour/benchmark/CDBserie. Zbyvaji presne TRI konkretni
+USERauthority/acceptance skupiny, pouze pripravene k rozhodnuti:
+
+1. IsolatedphysicalWindowsE2E mic->actualbackendAIcost->guardedpaste do
+   schvalenehocile/hold-toggle-focus a interactivekeyboard/screen-reader/
+   DPI-monitor scope; CUIkeyboardBLOCKED neni nahrazen syntheticproofem.
+2. Actualperuserinstall-upgrade-uninstall-rollback s explicitnimtargetem,
+   preservationpersonaldata/config a postinstall/autostartchoices.
+3. ActualAzureprivateIAM/VNet/UAMI/workerqueue/cleanupJob/provider/runtime
+   a cutoverdeployment s explicitnimiresource/access/modelcostopravnenimi.
+
+Zadna z techto tri skupin se zbuild-onlyscope automatickyneprovadi.
+KlasickaACA/C#Pythonrollback/productiondefaults a vsechna scopedmilestone/
+historicalfailureevidence zustavaji zachovane. Staging je READY_FOR_USER_TEST
+s vyseuvedenymi omezenimi, nikoli "installed/deployed/wholemigrationaccepted".
