@@ -1,5 +1,7 @@
 """Pure bounded storage-root guards; no native capture, GUI or resource sampler."""
 import json
+import errno
+import hashlib
 import os
 import subprocess
 import sys
@@ -37,6 +39,136 @@ class FixtureStorageTests(unittest.TestCase):
     def tearDown(self):
         self.override.stop()
         self.directory.cleanup()
+
+    def ready_case(self, name="ready-evidence"):
+        evidence = self.output / name
+        evidence.mkdir()
+        owned = storage.FixtureRoot(evidence)
+        binary = self.area / "owned-native.bin"
+        binary.write_bytes(b"synthetic immutable native image")
+        digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+        process = Mock(pid=123)
+        process.poll.return_value = None
+        ready = {
+            "scope": capture.CONTROLLER_SCOPE, "pid": process.pid, "physical_ports": False,
+            "network_or_auth": False, "full_client_profile": False,
+            "current_controller": True, "renderer": False, "main_ui_or_tray": False,
+            "real_auth_or_pubsub": False, "polisher_and_outbox": True,
+        }
+        return owned, binary, digest, process, ready
+
+    def test_ready_atomic_publication_missing_and_shared_read_window_retries_only_within_deadline(self):
+        owned, binary, digest, process, ready = self.ready_case()
+        path = owned.path / "ready.json"
+        checks = 0
+        def publish_on_poll():
+            nonlocal checks
+            checks += 1
+            if checks == 2:
+                temporary = owned.path / "ready.tmp"
+                temporary.write_bytes(json.dumps(ready).encode())
+                temporary.replace(path)
+            return None
+        process.poll.side_effect = publish_on_poll
+        original = Path.open
+        denied = False
+        def sharing_window(candidate, *args, **kwargs):
+            nonlocal denied
+            if candidate == path and not denied:
+                denied = True
+                raise PermissionError(errno.EACCES, "controlled ready sharing window")
+            return original(candidate, *args, **kwargs)
+        with patch.object(Path, "open", sharing_window):
+            self.assertEqual(capture.wait_ready(owned, process, binary, digest, 1), ready)
+        report = json.loads((owned.evidence / "readiness-read.json").read_bytes())
+        self.assertEqual(report["attempts"], 3)
+        self.assertEqual(report["first_error"]["errno"], errno.ENOENT)
+        self.assertEqual(report["last_error"]["errno"], errno.EACCES)
+        self.assertEqual(report["binary_sha256"], digest)
+        self.assertTrue(report["root_marker_and_directory_identity_verified"])
+
+    def test_ready_permanent_denial_and_process_exit_report_first_last_errors_without_success(self):
+        for exited in [False, True]:
+            owned, binary, digest, process, ready = self.ready_case(str(exited))
+            path = owned.path / "ready.json"
+            path.write_bytes(json.dumps(ready).encode())
+            if exited:
+                process.poll.side_effect = [None, 7, 7]
+            original = Path.open
+            def denied(candidate, *args, **kwargs):
+                if candidate == path:
+                    raise PermissionError(errno.EACCES, "controlled stable denial")
+                return original(candidate, *args, **kwargs)
+            with patch.object(Path, "open", denied), self.assertRaises(capture.ReadinessError) as failed:
+                capture.wait_ready(owned, process, binary, digest, 0.02)
+            report = failed.exception.report
+            self.assertEqual(report["first_error"]["errno"], errno.EACCES)
+            self.assertEqual(report["last_error"]["errno"], errno.EACCES)
+            self.assertGreaterEqual(report["attempts"], 1)
+            self.assertEqual(report["native_exit_code"], 7 if exited else None)
+            self.assertIn("exited" if exited else "deadline", report["reason"])
+            self.assertFalse((owned.evidence / "readiness-read.json").exists())
+            self.assertFalse((owned.path / "begin").exists())
+
+    def test_ready_invalid_json_pid_bool_shape_hash_and_nonce_fail_without_cached_success(self):
+        for case in ["json", "pid", "shape", "bool", "hash", "nonce"]:
+            owned, binary, digest, process, ready = self.ready_case(case)
+            if case == "pid":
+                ready["pid"] += 1
+            elif case == "shape":
+                ready["unexpected"] = True
+            elif case == "bool":
+                ready["physical_ports"] = 0
+            elif case == "hash":
+                binary.write_bytes(b"different native")
+            elif case == "nonce":
+                (owned.path / "migration-fixture.json").write_text(json.dumps({
+                    "scope": storage.SCOPE, "instance_key": "wrong",
+                }))
+            (owned.path / "ready.json").write_bytes(
+                b"{" if case == "json" else json.dumps(ready).encode())
+            with self.assertRaises(ValueError if case == "nonce" else capture.ReadinessError):
+                capture.wait_ready(owned, process, binary, digest, 1)
+            self.assertFalse((owned.evidence / "readiness-read.json").exists())
+            self.assertFalse((owned.path / "begin").exists())
+
+    @unittest.skipUnless(os.name == "nt", "Actual own Windows file-sharing guard.")
+    def test_actual_owned_ready_exclusive_handle_is_observed_then_released_without_native_capture(self):
+        import ctypes
+        from ctypes import wintypes
+        owned, binary, digest, process, ready = self.ready_case()
+        path = owned.path / "ready.json"
+        path.write_bytes(json.dumps(ready).encode())
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                                      ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+        kernel.CreateFileW.restype = wintypes.HANDLE
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel.CloseHandle.restype = wintypes.BOOL
+        handle = kernel.CreateFileW(str(path), 0x80000000, 0, None, 3, 0, None)
+        self.assertNotEqual(handle, ctypes.c_void_p(-1).value)
+        observed = []
+        original = Path.open
+        def read_and_release(candidate, *args, **kwargs):
+            nonlocal handle
+            try:
+                return original(candidate, *args, **kwargs)
+            except PermissionError as error:
+                if candidate == path:
+                    observed.append(error.errno)
+                    self.assertTrue(kernel.CloseHandle(handle))
+                    handle = None
+                raise
+        try:
+            with patch.object(Path, "open", read_and_release):
+                self.assertEqual(capture.wait_ready(owned, process, binary, digest, 1), ready)
+        finally:
+            if handle is not None:
+                kernel.CloseHandle(handle)
+        self.assertEqual(observed, [errno.EACCES])
+        report = json.loads((owned.evidence / "readiness-read.json").read_bytes())
+        self.assertEqual(report["attempts"], 2)
+        self.assertEqual(report["first_error"]["errno"], errno.EACCES)
 
     def test_new_GUID_marker_and_separation_are_canonical(self):
         with storage.FixtureRoot(self.output) as owned:

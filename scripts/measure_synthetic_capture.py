@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import json
 import os
@@ -14,7 +15,7 @@ import time
 from collections import deque
 from pathlib import Path
 from typing import BinaryIO
-from synthetic_fixture_root import FixtureRoot
+from synthetic_fixture_root import FixtureRoot, guard
 
 ROOT = Path(__file__).resolve().parents[1]
 SCOPE = "native-streaming-engine-realtime-synthetic-pcm"
@@ -51,6 +52,90 @@ def wait(path: Path, process: subprocess.Popen, seconds: int) -> dict:
             raise TimeoutError(f"Synthetic engine did not publish {path.name}.")
         time.sleep(0.01)
     return json.loads(path.read_bytes())
+
+
+class ReadinessError(RuntimeError):
+    def __init__(self, report: dict):
+        self.report = report
+        super().__init__("Owned ready control failed: " + json.dumps(report))
+
+
+def wait_ready(
+    owned: FixtureRoot, process: subprocess.Popen, binary: Path, digest: str, seconds: float
+) -> dict:
+    path = owned.path / "ready.json"
+    expected = {
+        "scope": CONTROLLER_SCOPE, "pid": process.pid, "physical_ports": False,
+        "network_or_auth": False, "full_client_profile": False,
+        "current_controller": True, "renderer": False, "main_ui_or_tray": False,
+        "real_auth_or_pubsub": False, "polisher_and_outbox": True,
+    }
+    started = time.monotonic()
+    deadline = started + seconds
+    attempts = 0
+    first = last = None
+
+    def fail(reason: str) -> None:
+        raise ReadinessError({
+            "control_file": path.name, "reason": reason, "attempts": attempts,
+            "elapsed_seconds": time.monotonic() - started,
+            "deadline_seconds": seconds, "native_pid": process.pid,
+            "native_exit_code": process.poll(), "first_error": first, "last_error": last,
+        })
+
+    while True:
+        owned.owned()
+        if process.poll() is not None:
+            fail("owned native exited before validated readiness")
+        if time.monotonic() >= deadline:
+            fail("original ready deadline expired")
+        attempts += 1
+        try:
+            guard(path)
+            with path.open("rb") as source:
+                data = source.read(4097)
+            if len(data) > 4096:
+                fail("ready control exceeds 4096 bytes")
+        except OSError as error:
+            item = {
+                "type": type(error).__name__, "errno": error.errno,
+                "winerror": getattr(error, "winerror", None),
+                "message": str(error.strerror or type(error).__name__)[:256],
+            }
+            if first is None:
+                first = item
+            last = item
+            winerror = getattr(error, "winerror", None)
+            if not (
+                winerror in (2, 3, 5, 32, 33)
+                or (winerror is None and error.errno in (errno.ENOENT, errno.EACCES))
+            ):
+                fail("non-transient control read error")
+            time.sleep(min(0.01, max(0, deadline - time.monotonic())))
+            continue
+        try:
+            ready = json.loads(data)
+        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            fail(f"invalid complete ready JSON: {type(error).__name__}")
+        if (
+            type(ready) is not dict or ready.keys() != expected.keys()
+            or any(type(ready[key]) is not type(value) or ready[key] != value
+                   for key, value in expected.items())
+        ):
+            fail("ready scope/PID/fields do not match the owned native")
+        owned.owned()
+        if hashlib.sha256(binary.read_bytes()).hexdigest() != digest:
+            fail("owned native binary hash changed")
+        if process.poll() is not None or time.monotonic() >= deadline:
+            fail("native exit or deadline during ready validation")
+        create(owned.evidence / "readiness-read.json", json.dumps({
+            "status": "validated", "attempts": attempts,
+            "elapsed_seconds": time.monotonic() - started,
+            "deadline_seconds": seconds, "first_error": first, "last_error": last,
+            "native_pid": process.pid, "binary_sha256": digest,
+            "root_marker_and_directory_identity_verified": True,
+        }).encode())
+        return ready
 
 
 def start_readers(process: subprocess.Popen, readers: list[threading.Thread]) -> None:
@@ -560,15 +645,11 @@ def run_functional(
                 "control_directory": str(control), "scope": CONTROLLER_SCOPE,
                 "functional_only": True, "resource_sampling": False,
             }).encode())
-            ready = wait(control / "ready.json", process, 15)
-            if ready != {
-                "scope": CONTROLLER_SCOPE, "pid": process.pid, "physical_ports": False,
-                "network_or_auth": False, "full_client_profile": False,
-                "current_controller": True, "renderer": False, "main_ui_or_tray": False,
-                "real_auth_or_pubsub": False, "polisher_and_outbox": True,
-            }:
-                raise RuntimeError("Functional controller readiness/scope identity mismatch.")
+            ready = wait_ready(owned, process, binary, digest, 15)
             create(directory / "readiness.json", json.dumps(ready).encode())
+            owned.owned()
+            if process.poll() is not None:
+                raise RuntimeError("Owned native exited before main begin.")
             create(control / "begin", nonce.encode())
             deadline = time.monotonic() + audio_seconds + 60
             minute = 60
@@ -646,6 +727,7 @@ def run_functional(
                 "status": "failed", "scope": CONTROLLER_SCOPE, "functional_only": True,
                 "source_revision": revision, "native_source_revision": native_revision or revision,
                 "binary_sha256": digest, "pid": process.pid, "error": str(error),
+                "readiness_read": error.report if isinstance(error, ReadinessError) else None,
                 "stdout": out, "stderr": failure, "whole_migration_acceptance": False,
             }, indent=2).encode())
             owned.preserve(process, failed=True)

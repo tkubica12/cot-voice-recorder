@@ -44,8 +44,8 @@ uz uzivatel nechce.
 | Mereni Windows klienta | NOVA vyslovne schvalena quiet-window current071/checkout86f3b0f full-runtime signed-out30+30/3paired301-point PASS: p95Rust257.948ms,meanprivate3.427MiB,observedpeak3.992MiB. Vsechnyrawvalues/pairedthresholds/cleanup nezavisleovereny;starsi7bPASS ia2d/3f4FAILEDINCOMPLETE zachovany,neprepisuji se na signed-in/physical scope |
 | Microphone readiness | Jeden actual240ms probe a samostatne schvalena30+30 paired serie prosly; first-PCM p95Rust80.75% C#baseline, bez audio souboru/uploadu |
 | Engine longevity | Actual3600s synthetic PCM/real50min rotation,115200000 exact bytes; worst idle growth1.645MiB<10MiB, engine-only PASS |
-| Current controller functionality/reliability | D->P2f8 ma platny600sPASS, ale ONEfinalhourFAIL1604.0445662s/51328000admitted (poexit vse durable). Nova owned-sealer oprava oddeluje i vlastni capture seal: session128k+originalqueue64k, reservation-before-dequeue, through-durablecommit; controlledownsealRED->GREEN192k. Jeji review/CI/kratkaakceptace se dokoncji; dalsi600/hour/CDB nebyl spusten ani zadan |
-| CI nativniho inkrementu | Exact2f8ef3a/CI41889751493 Windows/Linux/MSRV1.85/container ALL5SUCCESS, Windows157nativePASS16ignored, parity/guards a3s NoPorts functional smoke PASS. Older05/55/680/failedCI zustavaji revision-scoped; neni production cutover |
+| Current controller functionality/reliability | Owned-sealer ab98d64: session128k+originalqueue64k/reservation-before-dequeue/THROUGH, controlledRED->GREEN192k a3sPASS. ExactCI41977537100ALL5SUCCESS; conditional600 hostlaunch1 selhal pri ready-read PREDmainbegin(mainPCM0), ne sealerFAIL. Hostread guard se opravuje beznativechanges; 2f8hourFAIL1604s a starsi failures zachovany |
+| CI nativniho inkrementu | Exactab98d64/CI41977537100 Windows/Linux/MSRV1.85/container ALL5SUCCESS, Windows163nativePASS16ignored, samepacketguard/parity a3s NoPorts smoke PASS. NativeFS/fault integration je explicitneserialni; ostatniworkspaceparalelni. Old2f8/05/failedCI zustavaji revision-scoped, neni production cutover |
 | OAuth/token-store/PubSub klient | Native flow implementovany; samostatny live Google auth-only/local-signout a assisted manual clipboard probe PASS, full signed-in backend/controller dictation stale chybi; samostatny automatic DesktopGuard port viz dalsi radek |
 | Automatic DesktopGuard paste port | NOVYexactonephysicalpostfix5b test PASS:one4eventnativeCtrlV/exactownfieldmarker/normalclosed,no retry. Nejdenifullcontroller/hold-toggle/hour/realbackend acceptance;older50040BLOCKED/45788assisted zustavaji |
 | Diktovani/recovery UI | Native microphone/hotkeys/overlay/paste controller, oba enginy, journal, polishing a outbox implementovany; real-world a rozsahlejsi fault/E2E akceptace zbyva |
@@ -4751,8 +4751,58 @@ History-before-handoff/polisher/pinsaliases0/stderr0.12POEXITfiles a vsechny
 compiledinputhashes shodne, ownnative71240absent a pouze ownership-markedTemp
 odstranen AZpoverifiedsnapshot. Precleanupcipher/counts externiNOT_OBSERVED,
 nativeassertions probihaji predACKdelete. Proof `owned-sealer-work/
-smoke-final-independent.json`. MatchingCI po sourcecommitu jeste PENDING;
-starsi2f8CI/600PASS se nepreznacuji na tuto binarku.
+smoke-final-independent.json`. Codecommit
+`ab98d64eac06ae2475ca84ea175ae6331b2fd43e`, Rusttree
+`3c92091f40b5d69e73e3f6bd35bff02fe5751a85` a matchingCI41977537100 jsou
+ALL5SUCCESS vcetne Winserialnative/3s smoke/MSRV+Linux/container.
+Starsi2f8CI/600PASS se nepreznacuji na tuto binarku.
+
+### ab98 conditional600: host ready-read failure before main, not native capture failure
+
+ONEhostlaunch over stejnyfixture528a0244/PDB/Rusttreeab98 a8frozeninputs
+byl povolen az po exactCI+VerifyOnly. Existingwarmup probehl do nativniho
+ready publication; nasledne Pythonhost `wait` pouzil exists->singleopen a
+obdrzel **PermissionError Errno13 na vlastnim ready.json**. Collector ukoncil
+vlastni nativni proces a uchoval POEXITstav; native stderr prazdny. NaPS5
+nativePythonstderr navic vyvolal RemoteException ve launcheru a zanechal
+prazdny launcherlog; prvni hosterror je vsak ulozeny v failure.json.
+Neni to NativeError/MoveFileEx/HRESULT/NTSTATUS ani actorattribution.
+
+Nezavisly postexitproof: ready.json validni/spravny native114536/NoPorts,
+`begin` ABSENT, host-readinessreport ABSENT, zadneproducer/progress/error/
+completionmarkers, **main600produced/admitted0**. Warmup neni preznacen
+naNONE ani600PASS.5snapshotfilehashes+8inputs+cleanab98/tree shodne,
+knownhelper98400/collector85472/native114536 absent; pouze exactownedTemp
+7e97a473c5b54267b08fa546e3d0f77f odstranen po verifiedsnapshot.
+Zadny druhylaunch/retry automaticky. Persistentproof
+`functional-controller-600s-ab98d64/independent-verification.json`.
+
+Host-only nahrada cte POUZE vlastni `ready.json` pod identickym markerem/
+nonce/directoryidentity a no-reparse guardem. V puvodnim15sdeadline zkousi
+jen missing/access/share/lock readerrors pri stale bezicim OWNnative;
+ostatniIO, invalidJSON/extrafields/booltype/PID/rootnonce/hash mismatch
+konci fail. Pred main je nutny completevalidatedreport+sourcebinSHA
+a stale zivynative. Zadny cachedready/prazdnysuccess, prodIOflags/retry/
+queue/budget/diskACL se nemeni. Trvaly deny/deadline/exit hlasi FIRST+
+LASTerrno/winerror/type, attemptcount/duration a nativeexitstatus.
+Rust `hour_publish` je skutecny atomic_write(CreateNew), ne partialJSONfile;
+vznikly readerror se neprohlasuje za dokazanou pricinu ci konkretni OSactor.
+
+16boundedguardtests zahrnuji actualownWindows exclusive readyhandle
+(CreateFileWshare0, po prvnim skutecnem deniedread release) a atomicpublish/
+missing/readsharing window, permanentdeny/exit/deadline, invalidJSON/PID/
+bool/extra fields/nonce/binsha. Existujicich6nativehost/logguards se
+spousti s jejich spravnym CaptureFixture basename; nespravny
+ControllerFixtureargument z prvniho localinvocation je uchovany jako
+testinvocationFAIL, ne maskovany productregression.
+PowerShell5 launch se overuje separefile stdout/stderr a presnym
+`Start-Process -Wait -PassThru` exitcode; benignexit7probe overil oba
+markery+7. Samotne `.WaitForExit()` bez StartProcessWait zanechalo
+ExitCodeNULL a NEBYLO vydavano za observed0.
+MatchingharnessCI/currentshortsmoke a praveJEDENcorrected600launch jsou
+podminene nasledne povoleny, protoze mainprevious0 je explicitneprokazan.
+Jakmile mainzacne, zadny automaticky dalsi600/hour. Nativecompiledsource
+zde zustavaab98/tree3c92091f; noveharnessrevision se zaznamena zvlast.
 
 **Legacy zbyvajici sourcegate:** `legacy_session.rs:225-238` stale drzi
 vlastni state pres chunkerappend a synchronni checkpoint; result-save
