@@ -94,18 +94,16 @@ Neither exception touches Storage, which remains fully private.
 `infra/deploy.ps1` is the authoritative, idempotent, **two-phase** orchestrator:
 
 1. **Phase 1** (`deployApps=false`) — provision all infrastructure + identity + RBAC.
-2. **Build** — `az acr build` publishes the root-context `rust/cloud/Dockerfile`.
-3. **Phase 2** (`deployApps=true`) — deploy `ca-api`, `ca-worker`, `caj-cleanup`.
+2. **Image** — supply an already published public GHCR digest from `publish-cloud`.
+3. **Phase 2** (`deployApps=true`) — provision `ca-api`, `ca-worker`, `caj-cleanup`.
 
 ```powershell
 cd infra
-# Full provision + build + deploy (idempotent; re-run any time):
-./deploy.ps1
+# Separate full-infrastructure operation; NOT the existing-service image cutover:
+./deploy.ps1 -ContainerImage 'ghcr.io/tkubica12/cot-voice-recorder@sha256:<verified-digest>'
 
 # Common options:
-./deploy.ps1 -ImageTag v3                 # explicit image tag (default: git-<sha>)
-./deploy.ps1 -SkipBuild -ImageTag v3      # redeploy apps with an existing image
-./deploy.ps1 -InfraOnly                   # provision + build, skip the apps
+./deploy.ps1 -InfraOnly                   # provision infrastructure only
 ```
 
 The script prints the API base URL and all resource outputs at the end.
@@ -115,6 +113,22 @@ Executing this script is still a real infrastructure/RBAC/build/deployment
 operation, not an offline check. The source change itself has not cut over the
 existing Azure services. Independent Python SDK test tools use the approved
 Microsoft feed and `scripts/uv.lock`; no Python runtime is packaged in the image.
+
+## Publishing and existing-service image updates
+
+The trusted-main `.github/workflows/publish-cloud.yml` is the only image build/push
+route. It uses a tracked-source allowlist and ephemeral `GITHUB_TOKEN` to publish
+`ghcr.io/tkubica12/cot-voice-recorder:sha-<full-commit>`. Public package visibility
+and anonymous manifest/config access must be verified; public repository visibility
+alone is insufficient. Production uses the immutable digest.
+
+Existing deployments need only image/necessary entrypoint updates to `ca-api`,
+`ca-worker` and `caj-cleanup`, with original image/commands/args recorded for
+rollback. Preserve their UAMI, private network, URL, scaling and hourly schedule;
+do not rerun this full provisioning script for that update. An anonymous
+`ghcr.io` registry reference needs no PAT or new managed-identity role.
+Keep the existing ACR and prior digest for rollback until separately authorized
+for retirement. Neither the publish workflow nor CI deploys Azure automatically.
 
 ### Parameters and secrets
 

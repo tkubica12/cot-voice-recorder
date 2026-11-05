@@ -7,8 +7,8 @@
     Phase 1  : provision all infrastructure (VNet, private Storage, ACR, Web PubSub,
                Log Analytics, user-assigned identity, RBAC, Container Apps env) with
                deployApps=false.
-    Build    : build & push the backend image to the freshly-created ACR with
-               `az acr build` (managed-identity pull; no registry credentials).
+    Image    : use an already published immutable public GHCR digest. Image
+               publishing belongs to the trusted-main GitHub Actions workflow.
     Phase 2  : deploy the API + worker Container Apps and the cleanup Job with
                deployApps=true, pointing at the pushed image.
 
@@ -26,46 +26,39 @@ param(
     [string] $SpeechLocation = 'northeurope',
     [string] $EnvironmentName = 'dev',
     [string] $ProjectName = 'cot-voice-recorder',
-    [string] $ImageRepository = 'voice-recorder-backend',
-    [string] $ImageTag = '',
+    [string] $ContainerImage = '',
     # Rust is the source default; executing this script still deploys real resources.
     [ValidateSet('Rust')]
     [string] $BackendRuntime = 'Rust',
     # Optional git-ignored parameters file with real OAuth audiences / owner email.
     [string] $LocalParametersFile = '',
-    [switch] $SkipBuild,
     [switch] $InfraOnly
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-# Windows consoles default to cp1252; `az acr build` streams UTF-8 build logs which
-# can crash the CLI's log writer ('charmap' codec error). Force UTF-8 for the process.
+# Keep Azure CLI output encoding stable on Windows.
 $env:PYTHONUTF8 = '1'
 $env:PYTHONIOENCODING = 'utf-8'
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 
 $InfraDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$RepoRoot = Split-Path -Parent $InfraDir
 $MainBicep = Join-Path $InfraDir 'main.bicep'
 $BaseParams = Join-Path $InfraDir 'main.parameters.json'
 
 function Invoke-Az {
     param([Parameter(Mandatory)][string[]] $Args, [string] $What = 'az command')
     Write-Host "az $($Args -join ' ')" -ForegroundColor DarkGray
-    $output = & az @Args
+    $output = & az @Args --subscription $SubscriptionId
     if ($LASTEXITCODE -ne 0) {
         throw "$What failed (exit $LASTEXITCODE)."
     }
     return $output
 }
 
-if (-not $ImageTag) {
-    $sha = ''
-    try { $sha = (& git -C $RepoRoot rev-parse --short HEAD 2>$null) } catch { $sha = '' }
-    if ($LASTEXITCODE -ne 0) { $sha = '' }
-    if ($sha) { $ImageTag = "git-$sha" } else { $ImageTag = (Get-Date -Format 'yyyyMMddHHmmss') }
+if (-not $InfraOnly -and $ContainerImage -notmatch '^ghcr\.io/[a-z0-9._/-]+@sha256:[a-f0-9]{64}$') {
+    throw 'Publish with GitHub Actions first and supply -ContainerImage as an immutable public GHCR digest. This script never builds or pushes an ACR image.'
 }
 
 Write-Host "=== cot-voice-recorder deploy ===" -ForegroundColor Cyan
@@ -73,10 +66,8 @@ Write-Host "Subscription : $SubscriptionId"
 Write-Host "Location     : $Location"
 Write-Host "Speech region: $SpeechLocation"
 Write-Host "Environment  : $EnvironmentName"
-Write-Host "Image tag    : $ImageTag"
+Write-Host "Image        : $ContainerImage"
 Write-Host ""
-
-Invoke-Az @('account','set','--subscription', $SubscriptionId) 'account set' | Out-Null
 
 # Build the common parameter argument list (base file + optional local override).
 $paramArgs = @('--parameters', "@$BaseParams")
@@ -111,59 +102,10 @@ $storageAccountName = $o.storageAccountName.value
 Write-Host "ACR          : $acrName ($acrLoginServer)" -ForegroundColor Green
 Write-Host "Storage      : $storageAccountName" -ForegroundColor Green
 
-$imageRef = "$acrLoginServer/$ImageRepository`:$ImageTag"
+$imageRef = $ContainerImage
 
 # ----------------------------------------------------------------- Build
-if (-not $SkipBuild) {
-    Write-Host "`n--- Build & push image via az acr build ---" -ForegroundColor Cyan
-    $buildContext = $RepoRoot
-    $dockerfile = 'rust/cloud/Dockerfile'
-    Push-Location $buildContext
-    try {
-        $buildArgs = @(
-            'acr','build',
-            '--registry', $acrName,
-            '--image', "$ImageRepository`:$ImageTag",
-            '--file', $dockerfile
-        )
-        $buildArgs += @('.')
-        # `az acr build` can crash the local CLI while streaming UTF-8 logs on a
-        # Windows cp1252 console even though the server-side build succeeds. Tolerate
-        # that specific failure by verifying the run status instead of blind trust.
-        Write-Host "az $($buildArgs -join ' ')" -ForegroundColor DarkGray
-        & az @buildArgs
-        $buildExit = $LASTEXITCODE
-        if ($buildExit -ne 0) {
-            Write-Warning "az acr build exited $buildExit (likely a Windows log-stream encoding crash). Verifying server-side run status..."
-            # The client can die before the server-side run finishes, so poll rather
-            # than sample once: a still-running build would otherwise look like a
-            # failure and abort an otherwise healthy deployment.
-            $status = ''
-            $deadline = (Get-Date).AddMinutes(30)
-            while ((Get-Date) -lt $deadline) {
-                $status = (& az acr task list-runs --registry $acrName --top 20 `
-                        --query "[?outputImages[?tag=='$ImageTag' && repository=='$ImageRepository']] | [0].status" -o tsv)
-                if (-not $status) {
-                    # Output images are only recorded once a run succeeds; fall back to
-                    # the newest run so a failed/queued build is still observable.
-                    $status = (& az acr task list-runs --registry $acrName --top 1 --query "[0].status" -o tsv)
-                }
-                if ($status -in @('Succeeded', 'Failed', 'Canceled', 'Error', 'Timeout')) { break }
-                Write-Host "  ACR run status: '$status' - waiting..." -ForegroundColor DarkGray
-                Start-Sleep -Seconds 15
-            }
-            if ($status -ne 'Succeeded') { throw "ACR build did not succeed (server status: '$status')." }
-            Write-Host "Server-side ACR run status: Succeeded (ignored client log-stream crash)." -ForegroundColor Yellow
-        }
-    }
-    finally {
-        Pop-Location
-    }
-    Write-Host "Image pushed : $imageRef" -ForegroundColor Green
-}
-else {
-    Write-Host "SkipBuild set - assuming $imageRef already exists." -ForegroundColor Yellow
-}
+
 
 if ($InfraOnly) {
     Write-Host "`nInfraOnly set - skipping app deployment." -ForegroundColor Yellow

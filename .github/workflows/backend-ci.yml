@@ -4,12 +4,16 @@ on:
   push:
     paths:
       - "rust/**"
+      - ".dockerignore"
+      - ".github/workflows/publish-cloud.yml"
       - "scripts/**"
       - "openapi/**"
       - ".github/workflows/backend-ci.yml"
   pull_request:
     paths:
       - "rust/**"
+      - ".dockerignore"
+      - ".github/workflows/publish-cloud.yml"
       - "scripts/**"
       - "openapi/**"
       - ".github/workflows/backend-ci.yml"
@@ -47,6 +51,8 @@ jobs:
           cargo build --manifest-path rust/Cargo.toml --offline --locked --release -p voiceprompt-cloud --example cloud_contract
       - name: Frozen independent wire and real signed Rust HTTP contracts
         run: uv run --project scripts --locked python rust/tests/test_golden_contracts.py --examples rust/target/release/examples
+      - name: Production context excludes private data and test fixtures
+        run: uv run --project scripts --locked python scripts/tests/test_cloud_context.py
       - name: Historical report safeguards and current Rust authenticated factory
         run: uv run --project scripts --locked python scripts/tests/test_backend_measurement_fixture.py --rust rust/target/release/examples/cloud_contract
       - name: HTTPS fixture isolation and owned-cleanup safeguards

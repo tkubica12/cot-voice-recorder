@@ -1,0 +1,105 @@
+name: publish-cloud
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/publish-cloud.yml"
+      - ".dockerignore"
+      - ".cargo/config.toml"
+      - "rust/Cargo.toml"
+      - "rust/Cargo.lock"
+      - "rust/src/**"
+      - "rust/client-protocol/**"
+      - "rust/windows-pilot/**"
+      - "rust/cloud/**"
+      - "scripts/prepare_cloud_context.py"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-cloud-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository == 'tkubica12/cot-voice-recorder' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/tkubica12/cot-voice-recorder
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Export only immutable allowlisted production source
+        run: |
+          python scripts/prepare_cloud_context.py --revision "$GITHUB_SHA" --output "$RUNNER_TEMP/cloud-context" --proof "$RUNNER_TEMP/cloud-context-proof.json"
+      - name: Build one normal Linux amd64 Rust image
+        run: |
+          docker build --platform linux/amd64 --file "$RUNNER_TEMP/cloud-context/rust/cloud/Dockerfile" --tag "$IMAGE:sha-$GITHUB_SHA" --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" --label "org.opencontainers.image.revision=$GITHUB_SHA" --label "org.opencontainers.image.licenses=MIT" "$RUNNER_TEMP/cloud-context"
+      - name: Verify native entrypoint, architecture, rootfs and credential-free configuration
+        run: |
+          docker run --rm --entrypoint id "$IMAGE:sha-$GITHUB_SHA" -u | grep '^10001$'
+          docker run --rm "$IMAGE:sha-$GITHUB_SHA" --help
+          if docker run --rm "$IMAGE:sha-$GITHUB_SHA" check-config; then
+            echo "Missing production configuration must fail."
+            exit 1
+          fi
+          docker image inspect "$IMAGE:sha-$GITHUB_SHA" > "$RUNNER_TEMP/image-inspect.json"
+          container=$(docker create "$IMAGE:sha-$GITHUB_SHA")
+          trap 'docker rm "$container" >/dev/null' EXIT
+          docker export "$container" > "$RUNNER_TEMP/cloud-rootfs.tar"
+          python - <<'PY'
+          import hashlib,json,os,pathlib,tarfile
+          root=pathlib.Path(os.environ["RUNNER_TEMP"])
+          info=json.loads((root/"image-inspect.json").read_bytes())[0]
+          assert info["Os"]=="linux" and info["Architecture"]=="amd64"
+          assert info["Config"]["User"]=="10001:10001"
+          assert info["Config"]["Entrypoint"]==["voice-recorder"]
+          assert info["Config"]["Cmd"]==["api","--host","0.0.0.0","--port","8000"]
+          assert info["Config"]["Labels"]["org.opencontainers.image.revision"]==os.environ["GITHUB_SHA"]
+          assert {e.split("=",1)[0] for e in info["Config"]["Env"]} <= {"PATH","VR_ENVIRONMENT"}
+          forbidden={"google-desktop-client.json","tokens.bin","history.json","settings.json",".env",".secrets"}
+          with tarfile.open(root/"cloud-rootfs.tar") as archive:
+              members=archive.getmembers()
+              assert not any(forbidden.intersection(pathlib.PurePosixPath(m.name).parts) for m in members)
+              assert not any(m.name.startswith(("build/","root/.cargo/","usr/src/voiceprompt/")) for m in members)
+              binary=archive.extractfile("usr/local/bin/voice-recorder").read()
+              assert binary.startswith(b"\x7fELF")
+          proof={"revision":os.environ["GITHUB_SHA"],"os":info["Os"],"architecture":info["Architecture"],"entrypoint":info["Config"]["Entrypoint"],"cmd":info["Config"]["Cmd"],"user":info["Config"]["User"],"native_binary_sha256":hashlib.sha256(binary).hexdigest(),"runtime_configuration_baked_in":False}
+          (root/"cloud-image-proof.json").write_text(json.dumps(proof,indent=2))
+          PY
+      - name: Authenticate only with this job's ephemeral GitHub token
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Publish only the commit tag and record immutable digest
+        run: |
+          docker push "$IMAGE:sha-$GITHUB_SHA" | tee "$RUNNER_TEMP/cloud-push.txt"
+          python - <<'PY'
+          import os,pathlib,re
+          root=pathlib.Path(os.environ["RUNNER_TEMP"])
+          digests=set(re.findall(r"digest:\s*(sha256:[a-f0-9]{64})",root.joinpath("cloud-push.txt").read_text()))
+          assert len(digests)==1, "The push receipt must identify exactly one immutable digest."
+          root.joinpath("cloud-image-digest.txt").write_text(os.environ["IMAGE"]+"@"+digests.pop()+"\n")
+          PY
+          grep -E '^ghcr.io/tkubica12/cot-voice-recorder@sha256:[a-f0-9]{64}$' "$RUNNER_TEMP/cloud-image-digest.txt"
+          cat "$RUNNER_TEMP/cloud-image-digest.txt" >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve source/image proof without credentials or runtime configuration
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloud-image-proof
+          path: |
+            ${{ runner.temp }}/cloud-context-proof.json
+            ${{ runner.temp }}/cloud-image-proof.json
+            ${{ runner.temp }}/cloud-image-digest.txt
+          if-no-files-found: error
+      - name: Remove ephemeral registry login
+        if: always()
+        run: docker logout ghcr.io

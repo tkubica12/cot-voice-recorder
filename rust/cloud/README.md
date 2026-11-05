@@ -1,5 +1,20 @@
 # Rust cloud migration
 
+The trusted-main `publish-cloud` workflow builds the normal Linux/amd64 image
+once, probes it without runtime credentials, and publishes only the full
+commit-SHA tag to `ghcr.io/tkubica12/cot-voice-recorder` using the job-scoped
+`GITHUB_TOKEN`. It does not deploy to Azure or contain Azure credentials.
+The image is intended to be public; initial GHCR package visibility must be
+explicitly set and verified with an anonymous manifest pull before deployment.
+Deploy the recorded digest, never a floating tag. Keep the existing ACR image
+and registry configuration for rollback.
+
+The build context is exported from immutable tracked production source with
+`scripts/prepare_cloud_context.py` and a deny-by-default `.dockerignore`.
+Runtime configuration, test-data files, local credentials, build outputs and
+session/backup artifacts are excluded. Existing CI contract/MSRV/container
+checks remain independent gates before production rollout.
+
 > **Source cleanup:** current compatibility commands use `rust/tests/golden` and `scripts/uv.lock`, not the removed C#/Python applications. Older revision-scoped measurement/reference descriptions below remain historical evidence, not runnable legacy-product instructions. The live Azure cutover remains separate and unperformed.
 
 This crate provides source-default Rust API/worker/cleanup entry points, **not an

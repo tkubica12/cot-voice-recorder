@@ -216,19 +216,23 @@ single allowlisted account.
 
 ```powershell
 cd infra
-./deploy.ps1 -LocalParametersFile main.parameters.local.json
+./deploy.ps1 -ContainerImage 'ghcr.io/tkubica12/cot-voice-recorder@sha256:<verified-digest>' -LocalParametersFile main.parameters.local.json
 ```
 
 The idempotent deployment:
 
 1. creates the VNet, private endpoints, DNS zones, Storage, ACR, Web PubSub, managed identity,
    and role assignments;
-2. builds the backend image in ACR;
+2. uses the immutable public GHCR image published by the trusted-main Actions workflow;
 3. deploys the external API, queue-scaled worker, and hourly cleanup job.
 
 The script prints the API URL when complete. Storage public access and shared-key
 authentication remain disabled; runtime access uses managed identity. See
 [`infra/README.md`](infra/README.md) for parameters, redeployment, and operations.
+For an existing deployment, update only the three service images and necessary
+entrypoints; do not rerun full provisioning. ACR and its old image remain rollback
+resources until separately retired. Package visibility must be verified by an
+anonymous GHCR pull before switching production.
 
 ### 3. Build and install Android
 

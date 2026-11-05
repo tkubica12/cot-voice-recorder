@@ -3,8 +3,8 @@
 # Azure Developer CLI project mapping for cot-voice-recorder.
 #
 # NOTE: The authoritative, repeatable deployment path is infra/deploy.ps1 (a
-# two-phase provision -> image build -> app deploy flow required because the
-# Container Apps pull the backend image from the ACR created in phase 1, and
+# separate provision -> published GHCR image -> app deploy flow. The
+# Container Apps use an already published immutable public GHCR digest, and
 # Storage is private so the API only becomes healthy once RBAC + private DNS are
 # in place). `azd provision` can create the infrastructure (deployApps=false),
 # but use deploy.ps1 for the full end-to-end flow. See infra/README.md.
@@ -17,11 +17,6 @@ infra:
   path: infra
   module: main
 
-services:
-  api:
-    project: .
-    language: docker
-    host: containerapp
-    docker:
-      path: ./rust/cloud/Dockerfile
-      context: .
+# Image publishing is exclusively .github/workflows/publish-cloud.yml.
+# Keep azd provision available, but do not implicitly build/push to ACR or
+# perform a production image cutover through azd deploy.
