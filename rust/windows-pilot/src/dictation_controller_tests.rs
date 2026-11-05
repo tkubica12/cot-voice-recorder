@@ -1728,6 +1728,7 @@ async fn blocked_fresh_manifest_inspection_never_serializes_controller_capture_o
                         .writer_completed_bytes
                         .load(Ordering::Acquire)
                         != 128000
+                        || harness.ports.0.capture_trace.get().unwrap().snapshot()["saved_bytes"].as_u64() != Some(128000)
                         || streaming && harness.ports.0.capture_trace.get().unwrap().snapshot()["confirmed_bytes"].as_u64() != Some(128000)
                     {
                         tokio::time::sleep(Duration::from_millis(1)).await;
@@ -1838,15 +1839,12 @@ async fn blocked_native_checkpoint_keeps_stop_discard_auth_and_shutdown_responsi
                 .await
                 .unwrap()
                 .unwrap();
-            if !streaming {
-                assert!(harness.ports.0.writer_active.load(Ordering::Acquire));
-            }
             assert_eq!(
                 harness.recovery.fixture_io_progress()["phase"],
                 "fixture-pause"
             );
             let packet = pcm(crate::microphone::BUFFER_BYTES / 2);
-            if streaming {
+            {
                 for _ in 0..crate::microphone::OUTPUT_BUFFER_COUNT {
                     harness.ports.feed(&packet).await;
                     bytes.extend_from_slice(&packet);
@@ -2315,15 +2313,10 @@ async fn disk_write_failure_preserves_the_durable_prefix_binding_and_is_not_fals
         assert_eq!(context["accepted_bytes"], admitted);
         assert_eq!(context["last_accepted_sequence"], admitted / 1280);
         assert_eq!(context["attempted_sequence"], admitted / 1280 + 1);
-        if streaming {
-            let received = context["writer_received_bytes"].as_u64().unwrap();
-            let completed = context["writer_completed_bytes"].as_u64().unwrap();
-            assert!((128_000..=admitted).contains(&received));
-            assert!((128_000..=received).contains(&completed));
-        } else {
-            assert_eq!(context["writer_received_bytes"], 128000);
-            assert_eq!(context["writer_completed_bytes"], 128000 - 1280);
-        }
+        let received = context["writer_received_bytes"].as_u64().unwrap();
+        let completed = context["writer_completed_bytes"].as_u64().unwrap();
+        assert!((128_000..=admitted).contains(&received));
+        assert!((128_000..=received).contains(&completed));
         assert_eq!(context["last_published_saved_bytes"], 64000);
         assert_eq!(context["last_published_confirmed_bytes"], 0);
         assert_eq!(context["cursors_are_not_a_fresh_disk_snapshot"], true);

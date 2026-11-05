@@ -63,6 +63,35 @@ def check_backend_model() -> None:
 
 
 class DictationParityTests(unittest.TestCase):
+    def test_restored_maximum_four_chunk_legacy_batch_matches_actual_csharp(self) -> None:
+        prefix = struct.pack("<h", 1200) * 95680
+        raw = b"".join(
+            struct.pack("<h", 0 if 52 <= frame <= 71 or 152 <= frame <= 171 else 1200) * 320
+            for frame in range(1, 201)
+        )
+        self.assertEqual((len(prefix), len(raw)), (191360, 128000))
+        compare("legacy-state", prefix, is_json=True)
+        audio = CLIENT.with_name("audio_contract.exe")
+        for fragment in [640, 1280, 128000]:
+            rust = run([str(audio), "chunk", str(fragment)], "191360", prefix + raw)
+            csharp = run(["dotnet", str(REFERENCE), "chunk", str(fragment)], "191360", prefix + raw)
+            self.assertEqual(rust, csharp)
+            self.assertEqual(struct.unpack_from("<I", rust)[0], 4)
+            position = 4
+            ends = []
+            overlaps = []
+            for _ in range(4):
+                end, overlap, length = struct.unpack_from("<Q?I", rust, position)
+                position += 13
+                self.assertLessEqual(length, 192044)
+                self.assertEqual(rust[position:position + 4], b"RIFF")
+                position += length
+                ends.append(end)
+                overlaps.append(overlap)
+            self.assertEqual(position, len(rust))
+            self.assertEqual(ends, [192000, 236800, 300800, 319360])
+            self.assertEqual(overlaps, [False, True, False, False])
+
     def test_normalization_matches_bmp_and_supplementary_compatibility_fixtures(
         self,
     ) -> None:
@@ -145,7 +174,7 @@ class DictationParityTests(unittest.TestCase):
         self,
     ) -> None:
         generator = random.Random(2026)
-        for size in [0, 17, 640, 6400, 191999, 200000]:
+        for size in [0, 17, 640, 6400, 64001, 191999, 200000]:
             pcm = b"".join(
                 struct.pack("<h", generator.randrange(-1000, 1000))
                 for _ in range(size // 2)

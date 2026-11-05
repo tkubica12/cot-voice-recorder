@@ -33,6 +33,9 @@ pub use recovery_store::{
 };
 
 #[cfg(windows)]
+mod capture_window;
+
+#[cfg(windows)]
 mod legacy_session;
 
 #[cfg(windows)]

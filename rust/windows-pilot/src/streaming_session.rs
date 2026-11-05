@@ -5,7 +5,7 @@ use std::future::Future;
 #[cfg(not(test))]
 use std::sync::MutexGuard;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio::sync::{Notify, watch};
@@ -14,13 +14,15 @@ use voiceprompt_client_protocol::dictation_stream::{
     DictationMessage, DictationReceiver, DictationSender,
 };
 use voiceprompt_client_protocol::dictation_text::{append_preserving_prefix, preview_tail};
-use voiceprompt_client_protocol::recovery::{
-    AudioCheckpoint, MAX_CAPTURED_BYTES, RecoveryManifest,
-};
+use voiceprompt_client_protocol::recovery::{AudioCheckpoint, RecoveryManifest};
 use voiceprompt_client_protocol::runtime::TokenPersistence;
 use voiceprompt_core::chunker::{OVERLAP_BYTES, PcmChunker};
 use voiceprompt_core::wav::to_wav;
 
+use crate::capture_window::{
+    AudioBuffer, CaptureSlot, CaptureWindow, PcmState, SealingAudio,
+    TRIGGER_BYTES as PCM_BUFFER_BYTES,
+};
 use crate::legacy_session::{BatchBackend, BoundBatchBackend, DictationProgress, SessionError};
 use crate::{NativeError, NativeRecoveryJournal};
 
@@ -91,13 +93,6 @@ impl<P: TokenPersistence> StreamingBackend for BoundBatchBackend<P> {
     }
 }
 
-struct AudioBuffer(Vec<u8>);
-impl Drop for AudioBuffer {
-    fn drop(&mut self) {
-        self.0.fill(0);
-    }
-}
-
 enum AudioRead {
     Memory(AudioBuffer),
     Pinned {
@@ -121,30 +116,6 @@ struct Hypothesis {
     partial: String,
 }
 
-const PCM_BUFFER_BYTES: usize = 64_000;
-const PCM_WINDOW_BYTES: usize = 128_000;
-
-struct PcmState {
-    captured: u64,
-    buffer_start: u64,
-    buffer: Vec<u8>,
-    sealing_bytes: usize,
-    reserved_bytes: usize,
-    seal_requested: bool,
-    closed: bool,
-}
-
-impl Drop for PcmState {
-    fn drop(&mut self) {
-        self.buffer.fill(0);
-    }
-}
-
-struct SealingAudio {
-    end: u64,
-    pcm: AudioBuffer,
-}
-
 struct State {
     manifest: RecoveryManifest,
     sealing: Option<SealingAudio>,
@@ -158,18 +129,13 @@ struct Inner<S: StreamingBackend> {
     service: Arc<S>,
     // Durable operations may acquire PCM briefly; PCM owners never wait for durable state.
     state: Mutex<State>,
-    pcm: Mutex<PcmState>,
-    room: Condvar,
-    seal: Notify,
-    captured: AtomicU64,
-    storage_failed: AtomicBool,
-    finishing: AtomicBool,
+    capture: Arc<CaptureWindow>,
     synchronous_waiters: AtomicUsize,
     #[cfg(test)]
     trace: Arc<crate::lock_trace::Lock>,
     progress: watch::Sender<DictationProgress>,
     cancel: watch::Sender<bool>,
-    wake: Notify,
+    wake: Arc<Notify>,
     recovery: bool,
 }
 
@@ -177,34 +143,6 @@ pub struct StreamingSession<S: StreamingBackend> {
     inner: Arc<Inner<S>>,
     pump: Option<tokio::task::JoinHandle<()>>,
     sealer: Option<tokio::task::JoinHandle<Result<(), SessionError>>>,
-}
-
-pub(crate) struct CaptureSlot<S: StreamingBackend> {
-    inner: Arc<Inner<S>>,
-    remaining: usize,
-}
-
-impl<S: StreamingBackend> CaptureSlot<S> {
-    pub(crate) fn append(&mut self, pcm: &[u8]) -> Result<(), SessionError> {
-        if pcm.len() > self.remaining {
-            return Err(SessionError::Storage(NativeError::Verification(
-                "Capture packet exceeds its reserved native frame.",
-            )));
-        }
-        self.inner.append(pcm, &mut self.remaining)
-    }
-}
-
-impl<S: StreamingBackend> Drop for CaptureSlot<S> {
-    fn drop(&mut self) {
-        let mut pcm = self
-            .inner
-            .pcm
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        pcm.reserved_bytes -= self.remaining;
-        self.inner.room.notify_all();
-    }
 }
 
 #[derive(Debug)]
@@ -217,7 +155,7 @@ enum Failure {
 async fn seal<S: StreamingBackend>(inner: Arc<Inner<S>>) -> Result<(), SessionError> {
     let mut cancel = inner.cancel.subscribe();
     loop {
-        if *cancel.borrow() || inner.storage_failed.load(Ordering::Acquire) {
+        if *cancel.borrow() || inner.capture.storage_failed.load(Ordering::Acquire) {
             return Ok(());
         }
         let requested = {
@@ -235,8 +173,8 @@ async fn seal<S: StreamingBackend>(inner: Arc<Inner<S>>) -> Result<(), SessionEr
                 };
                 if needed
                     && !*owner.cancel.borrow()
-                    && !owner.storage_failed.load(Ordering::Acquire)
-                    && !owner.finishing.load(Ordering::Acquire)
+                    && !owner.capture.storage_failed.load(Ordering::Acquire)
+                    && !owner.capture.finishing.load(Ordering::Acquire)
                 {
                     owner.checkpoint(&mut state, false)?;
                 }
@@ -247,7 +185,7 @@ async fn seal<S: StreamingBackend>(inner: Arc<Inner<S>>) -> Result<(), SessionEr
         }
         tokio::select! {
             _ = cancel.changed() => {},
-            _ = inner.seal.notified() => {},
+            _ = inner.capture.seal.notified() => {},
         }
     }
 }
@@ -290,15 +228,8 @@ impl<S: StreamingBackend> StreamingSession<S> {
         if !manifest.streaming {
             return Err(SessionError::Closed);
         }
-        let pcm = PcmState {
-            captured: manifest.captured_bytes,
-            buffer_start: manifest.captured_bytes,
-            buffer: Vec::with_capacity(PCM_WINDOW_BYTES),
-            sealing_bytes: 0,
-            reserved_bytes: 0,
-            seal_requested: false,
-            closed: manifest.capture_complete,
-        };
+        let captured = manifest.captured_bytes;
+        let complete = manifest.capture_complete;
         let state = State {
             manifest,
             sealing: None,
@@ -306,25 +237,31 @@ impl<S: StreamingBackend> StreamingSession<S> {
             hypotheses: Vec::new(),
             service_error: None,
         };
-        let (progress, _) = watch::channel(make_progress(&state, pcm.captured, false));
+        let (progress, _) = watch::channel(make_progress(&state, captured, false));
         let (cancel, _) = watch::channel(false);
-        let captured = AtomicU64::new(pcm.captured);
+        let wake = Arc::new(Notify::new());
+        #[cfg(test)]
+        let trace = crate::lock_trace::Lock::new("streaming-state");
+        let capture = CaptureWindow::new(
+            captured,
+            complete,
+            progress.clone(),
+            cancel.clone(),
+            wake.clone(),
+            #[cfg(test)]
+            trace.clone(),
+        );
         let inner = Arc::new(Inner {
             journal,
             service,
             state: Mutex::new(state),
-            pcm: Mutex::new(pcm),
-            room: Condvar::new(),
-            seal: Notify::new(),
-            captured,
-            storage_failed: AtomicBool::new(false),
-            finishing: AtomicBool::new(false),
+            capture,
             synchronous_waiters: AtomicUsize::new(0),
             #[cfg(test)]
-            trace: crate::lock_trace::Lock::new("streaming-state"),
+            trace,
             progress,
             cancel,
-            wake: Notify::new(),
+            wake,
             recovery,
         });
         let worker = inner.clone();
@@ -358,33 +295,21 @@ impl<S: StreamingBackend> StreamingSession<S> {
     pub(crate) fn reserve_capture(
         &self,
         discard: &AtomicBool,
-    ) -> Result<Option<CaptureSlot<S>>, SessionError> {
-        let mut pcm = self.inner.lock_pcm().map_err(session_failure)?;
-        loop {
-            if discard.load(Ordering::Acquire) {
-                return Ok(None);
-            }
-            self.inner.accepting(&pcm)?;
-            let room = PCM_WINDOW_BYTES - pcm.buffer.len() - pcm.sealing_bytes - pcm.reserved_bytes;
-            if room >= crate::microphone::BUFFER_BYTES {
-                pcm.reserved_bytes += crate::microphone::BUFFER_BYTES;
-                return Ok(Some(CaptureSlot {
-                    inner: self.inner.clone(),
-                    remaining: crate::microphone::BUFFER_BYTES,
-                }));
-            }
-            pcm = self.inner.wait_room(pcm).map_err(session_failure)?;
-        }
+    ) -> Result<Option<CaptureSlot>, SessionError> {
+        self.inner.capture.reserve(discard)
     }
 
     pub fn append(&self, pcm: &[u8]) -> Result<(), SessionError> {
-        self.inner.append(pcm, &mut 0)
+        if pcm.len() % 2 != 0 {
+            return Err(SessionError::Audio(
+                voiceprompt_core::chunker::ChunkerError::IncompleteSample,
+            ));
+        }
+        self.inner.capture.append(pcm)
     }
 
     pub fn finish_capture(&self) -> Result<(), SessionError> {
-        self.inner.finishing.store(true, Ordering::Release);
-        self.inner.room.notify_all();
-        self.inner.seal.notify_one();
+        self.inner.capture.finish_requested();
         let mut state = self.inner.lock().map_err(session_failure)?;
         if state.manifest.capture_complete {
             return Ok(());
@@ -466,98 +391,6 @@ impl<S: StreamingBackend> StreamingSession<S> {
     }
 }
 
-impl<S: StreamingBackend> Inner<S> {
-    fn accepting(&self, pcm: &PcmState) -> Result<(), SessionError> {
-        if self.storage_failed.load(Ordering::Acquire) {
-            return Err(SessionError::Storage(NativeError::Verification(
-                "Recovery storage failed.",
-            )));
-        }
-        if pcm.closed || self.finishing.load(Ordering::Acquire) || *self.cancel.borrow() {
-            return Err(SessionError::Closed);
-        }
-        Ok(())
-    }
-
-    fn wait_room<'a>(
-        &self,
-        pcm: std::sync::MutexGuard<'a, PcmState>,
-    ) -> Result<std::sync::MutexGuard<'a, PcmState>, Failure> {
-        self.room
-            .wait_timeout(pcm, Duration::from_millis(100))
-            .map(|(pcm, _)| pcm)
-            .map_err(|_| {
-                self.fail();
-                Failure::Storage(NativeError::Verification("Streaming PCM lock is poisoned."))
-            })
-    }
-
-    fn append(&self, mut pcm: &[u8], reserved: &mut usize) -> Result<(), SessionError> {
-        #[cfg(test)]
-        let mut phase = crate::mutation_trace::span("append");
-        #[cfg(test)]
-        if let Some(phase) = &mut phase {
-            phase.counts(1, 0, pcm.len() as u64);
-        }
-        if pcm.len() % 2 != 0 {
-            return Err(SessionError::Audio(
-                voiceprompt_core::chunker::ChunkerError::IncompleteSample,
-            ));
-        }
-        loop {
-            let (captured, request) = {
-                let mut state = self.lock_pcm().map_err(session_failure)?;
-                self.accepting(&state)?;
-                if state
-                    .captured
-                    .checked_add(pcm.len() as u64)
-                    .is_none_or(|end| end > MAX_CAPTURED_BYTES)
-                {
-                    return Err(SessionError::Storage(NativeError::Verification(
-                        "Recovery captured-byte limit exceeded.",
-                    )));
-                }
-                let room = PCM_WINDOW_BYTES
-                    - state.buffer.len()
-                    - state.sealing_bytes
-                    - state.reserved_bytes
-                    + *reserved;
-                if room == 0 && !pcm.is_empty() {
-                    drop(self.wait_room(state).map_err(session_failure)?);
-                    continue;
-                }
-                let count = room.min(pcm.len());
-                let credit = count.min(*reserved);
-                *reserved -= credit;
-                state.reserved_bytes -= credit;
-                state.buffer.extend_from_slice(&pcm[..count]);
-                state.captured += count as u64;
-                pcm = &pcm[count..];
-                self.captured.store(state.captured, Ordering::Release);
-                let request = state.buffer.len() >= PCM_BUFFER_BYTES;
-                state.seal_requested |= request;
-                (state.captured, request)
-            };
-            self.progress.send_modify(|progress| {
-                progress.captured_bytes = progress.captured_bytes.max(captured);
-                #[cfg(test)]
-                self.trace.progress(
-                    progress.captured_bytes,
-                    progress.saved_bytes,
-                    progress.transcribed_bytes,
-                );
-            });
-            self.wake.notify_one();
-            if request {
-                self.seal.notify_one();
-            }
-            if pcm.is_empty() {
-                return Ok(());
-            }
-        }
-    }
-}
-
 impl<S: StreamingBackend> Drop for StreamingSession<S> {
     fn drop(&mut self) {
         self.inner.cancel();
@@ -568,6 +401,13 @@ fn session_failure(failure: Failure) -> SessionError {
     match failure {
         Failure::Storage(error) => SessionError::Storage(error),
         _ => SessionError::Worker,
+    }
+}
+
+fn capture_failure(error: SessionError) -> Failure {
+    match error {
+        SessionError::Storage(error) => Failure::Storage(error),
+        _ => Failure::Worker,
     }
 }
 
@@ -599,26 +439,15 @@ fn make_progress(state: &State, captured: u64, storage_failed: bool) -> Dictatio
 
 impl<S: StreamingBackend> Inner<S> {
     fn cancel(&self) {
-        self.cancel.send_replace(true);
-        self.room.notify_all();
-        self.seal.notify_one();
-        self.wake.notify_one();
+        self.capture.cancel();
     }
 
     fn fail(&self) {
-        self.storage_failed.store(true, Ordering::Release);
-        self.progress
-            .send_modify(|progress| progress.storage_failed = true);
-        self.room.notify_all();
-        self.seal.notify_one();
-        self.wake.notify_one();
+        self.capture.fail();
     }
 
     fn lock_pcm(&self) -> Result<std::sync::MutexGuard<'_, PcmState>, Failure> {
-        self.pcm.lock().map_err(|_| {
-            self.fail();
-            Failure::Storage(NativeError::Verification("Streaming PCM lock is poisoned."))
-        })
+        self.capture.lock().map_err(capture_failure)
     }
 
     async fn async_lock(&self, operation: &'static str) -> Result<MutexGuard<'_, State>, Failure> {
@@ -706,53 +535,34 @@ impl<S: StreamingBackend> Inner<S> {
         let _mutation = crate::mutation_trace::span("cursor-progress-publication");
         #[cfg(test)]
         let _probe = self.journal.fixture_publish_progress();
-        let mut value = make_progress(
+        let value = make_progress(
             state,
-            self.captured.load(Ordering::Acquire),
-            self.storage_failed.load(Ordering::Acquire),
+            self.capture.captured.load(Ordering::Acquire),
+            self.capture.storage_failed.load(Ordering::Acquire),
         );
-        self.progress.send_modify(|progress| {
-            value.captured_bytes = value.captured_bytes.max(progress.captured_bytes);
-            #[cfg(test)]
-            self.trace.progress(
-                value.captured_bytes,
-                value.saved_bytes,
-                value.transcribed_bytes,
-            );
-            *progress = value;
-        });
+        self.capture.publish_progress(value);
     }
 
     fn checkpoint(&self, state: &mut State, complete: bool) -> Result<(), Failure> {
-        if self.storage_failed.load(Ordering::Acquire) {
+        if self.capture.storage_failed.load(Ordering::Acquire) {
             return Err(Failure::Storage(NativeError::Verification(
                 "Recovery storage failed.",
             )));
         }
-        let end = {
-            let mut pcm = self.lock_pcm()?;
-            if state.sealing.is_some() || pcm.buffer_start != state.manifest.captured_bytes {
-                self.fail();
-                return Err(Failure::Storage(NativeError::Verification(
-                    "Streaming PCM publication boundary is invalid.",
-                )));
-            }
-            pcm.closed |= complete;
-            pcm.seal_requested = false;
-            let end = pcm.captured;
-            if !pcm.buffer.is_empty() {
-                let bytes =
-                    std::mem::replace(&mut pcm.buffer, Vec::with_capacity(PCM_WINDOW_BYTES));
-                pcm.sealing_bytes = bytes.len();
-                state.sealing = Some(SealingAudio {
-                    end,
-                    pcm: AudioBuffer(bytes),
-                });
-                pcm.buffer_start = end;
-            }
-            self.room.notify_all();
-            end
-        };
+        if state.sealing.is_some() {
+            self.fail();
+            return Err(Failure::Storage(NativeError::Verification(
+                "Streaming PCM publication boundary is invalid.",
+            )));
+        }
+        let batch = self
+            .capture
+            .detach(state.manifest.captured_bytes, complete)
+            .map_err(capture_failure)?;
+        let end = batch.end;
+        if !batch.pcm.0.is_empty() {
+            state.sealing = Some(batch);
+        }
         let result = (|| {
             let audio = {
                 #[cfg(test)]
@@ -791,15 +601,7 @@ impl<S: StreamingBackend> Inner<S> {
                 let _mutation = crate::mutation_trace::span("manifest-cursor-update");
                 state.manifest = manifest;
                 state.sealing = None;
-                {
-                    let mut pcm = self.lock_pcm()?;
-                    pcm.sealing_bytes = 0;
-                    pcm.seal_requested = !pcm.closed && pcm.buffer.len() >= PCM_BUFFER_BYTES;
-                    if pcm.seal_requested {
-                        self.seal.notify_one();
-                    }
-                    self.room.notify_all();
-                }
+                self.capture.published(end).map_err(capture_failure)?;
                 self.publish(state);
                 Ok(())
             }
@@ -817,7 +619,7 @@ impl<S: StreamingBackend> Inner<S> {
         position: u64,
         maximum: usize,
     ) -> Result<AudioRead, Failure> {
-        if self.storage_failed.load(Ordering::Acquire) {
+        if self.capture.storage_failed.load(Ordering::Acquire) {
             return Err(Failure::Storage(NativeError::Verification(
                 "Recovery storage failed.",
             )));
@@ -1033,7 +835,7 @@ async fn send_audio<S: StreamingBackend>(
             let complete = {
                 let state = inner.async_lock("send-audio-complete").await?;
                 state.manifest.capture_complete
-                    && position == inner.captured.load(Ordering::Acquire)
+                    && position == inner.capture.captured.load(Ordering::Acquire)
             };
             if complete {
                 break;
@@ -1070,10 +872,10 @@ async fn checkpoint_for_send<S: StreamingBackend>(
         if *stop.borrow() {
             return Ok(false);
         }
-        if through > inner.captured.load(Ordering::Acquire) {
+        if through > inner.capture.captured.load(Ordering::Acquire) {
             return Err(Failure::Api(ApiErrorKind::Unexpected));
         }
-        if inner.storage_failed.load(Ordering::Acquire) {
+        if inner.capture.storage_failed.load(Ordering::Acquire) {
             return Err(Failure::Storage(NativeError::Verification(
                 "Recovery storage failed.",
             )));
@@ -1283,7 +1085,7 @@ async fn fallback<S: StreamingBackend>(
         (
             state.manifest.confirmed_bytes,
             AudioBuffer(state.manifest.tail.clone()),
-            inner.captured.load(Ordering::Acquire),
+            inner.capture.captured.load(Ordering::Acquire),
             state.manifest.language.clone(),
             state.manifest.context.clone(),
         )
@@ -1393,7 +1195,8 @@ async fn pump<S: StreamingBackend>(inner: Arc<Inner<S>>) {
             let done = match inner.async_lock("pump-verify").await {
                 Ok(state) => {
                     state.manifest.capture_complete
-                        && state.manifest.confirmed_bytes == inner.captured.load(Ordering::Acquire)
+                        && state.manifest.confirmed_bytes
+                            == inner.capture.captured.load(Ordering::Acquire)
                 }
                 Err(_) => false,
             };

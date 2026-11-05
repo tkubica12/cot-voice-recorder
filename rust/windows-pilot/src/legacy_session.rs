@@ -5,7 +5,7 @@ use std::fmt;
 use std::future::Future;
 #[cfg(not(test))]
 use std::sync::MutexGuard;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -17,6 +17,7 @@ use voiceprompt_client_protocol::recovery::{AudioCheckpoint, RecoveryManifest};
 use voiceprompt_client_protocol::runtime::TokenPersistence;
 use voiceprompt_core::chunker::{AudioChunk, ChunkerError, PcmChunker};
 
+use crate::capture_window::{AudioBuffer, CaptureSlot, CaptureWindow, SealingAudio, TRIGGER_BYTES};
 use crate::{NativeError, NativeRecoveryJournal};
 
 #[cfg(test)]
@@ -141,30 +142,36 @@ struct State {
     captured: u64,
     errors: BTreeMap<u32, Retry>,
     storage_failed: bool,
+    sealing: Option<SealingAudio>,
+    writing_chunks: Vec<AudioChunk>,
+    writing_tail: AudioBuffer,
+}
+
+impl Drop for State {
+    fn drop(&mut self) {
+        for chunk in &mut self.writing_chunks {
+            chunk.wav.fill(0);
+        }
+    }
 }
 
 struct Inner<S: BatchBackend> {
     journal: NativeRecoveryJournal,
     service: Arc<S>,
     state: Mutex<State>,
+    capture: Arc<CaptureWindow>,
     synchronous_waiters: AtomicUsize,
     #[cfg(test)]
     trace: Arc<crate::lock_trace::Lock>,
     progress: watch::Sender<DictationProgress>,
-    wake: Notify,
+    wake: Arc<Notify>,
     cancel: watch::Sender<bool>,
 }
 
 pub struct LegacySession<S: BatchBackend> {
     inner: Arc<Inner<S>>,
     pump: Option<tokio::task::JoinHandle<()>>,
-}
-
-struct AudioBuffer(Vec<u8>);
-impl Drop for AudioBuffer {
-    fn drop(&mut self) {
-        self.0.fill(0);
-    }
+    sealer: Option<tokio::task::JoinHandle<Result<(), SessionError>>>,
 }
 
 impl<S: BatchBackend> LegacySession<S> {
@@ -188,26 +195,45 @@ impl<S: BatchBackend> LegacySession<S> {
             chunker,
             errors: BTreeMap::new(),
             storage_failed: false,
+            sealing: None,
+            writing_chunks: Vec::new(),
+            writing_tail: AudioBuffer(Vec::new()),
         };
         let initial = progress(&state);
         let (sender, _) = watch::channel(initial);
         let (cancel, _) = watch::channel(false);
+        let wake = Arc::new(Notify::new());
+        #[cfg(test)]
+        let trace = crate::lock_trace::Lock::new("legacy-state");
+        let capture = CaptureWindow::new(
+            state.captured,
+            state.manifest.capture_complete,
+            sender.clone(),
+            cancel.clone(),
+            wake.clone(),
+            #[cfg(test)]
+            trace.clone(),
+        );
         let inner = Arc::new(Inner {
             journal,
             service,
             state: Mutex::new(state),
+            capture,
             synchronous_waiters: AtomicUsize::new(0),
             #[cfg(test)]
-            trace: crate::lock_trace::Lock::new("legacy-state"),
+            trace,
             progress: sender,
-            wake: Notify::new(),
+            wake,
             cancel,
         });
         let worker = inner.clone();
         let pump = tokio::spawn(async move { run(worker).await });
+        let worker = inner.clone();
+        let sealer = tokio::spawn(async move { seal(worker).await });
         Ok(Self {
             inner,
             pump: Some(pump),
+            sealer: Some(sealer),
         })
     }
 
@@ -223,28 +249,23 @@ impl<S: BatchBackend> LegacySession<S> {
     }
 
     pub fn append(&self, pcm: &[u8]) -> Result<(), SessionError> {
-        let mut state = self.inner.lock()?;
-        self.inner.ensure_open(&state)?;
-        state.captured = state
-            .captured
-            .checked_add(pcm.len() as u64)
-            .ok_or(SessionError::Audio(ChunkerError::CursorOverflow))?;
-        let chunks = state.chunker.append(pcm).map_err(SessionError::Audio)?;
-        if !chunks.is_empty() || state.captured - state.manifest.captured_bytes >= 64_000 {
-            self.inner.checkpoint(&mut state, chunks, false)?;
-        }
-        self.inner.publish(&state);
-        Ok(())
+        self.inner.capture.append(pcm)
+    }
+
+    pub(crate) fn reserve_capture(
+        &self,
+        discard: &AtomicBool,
+    ) -> Result<Option<CaptureSlot>, SessionError> {
+        self.inner.capture.reserve(discard)
     }
 
     pub fn finish_capture(&self) -> Result<(), SessionError> {
+        self.inner.capture.finish_requested();
         let mut state = self.inner.lock()?;
         if state.manifest.capture_complete {
             return Ok(());
         }
-        self.inner.ensure_open(&state)?;
-        let chunks = state.chunker.flush().map_err(SessionError::Audio)?;
-        self.inner.checkpoint(&mut state, chunks, true)
+        self.inner.checkpoint(&mut state, true)
     }
 
     pub fn snapshot(&self) -> Result<RecoveryManifest, SessionError> {
@@ -284,20 +305,85 @@ impl<S: BatchBackend> LegacySession<S> {
     }
 
     pub async fn shutdown(mut self) -> Result<(), SessionError> {
-        self.inner.cancel.send_replace(true);
-        self.inner.wake.notify_one();
-        if let Some(pump) = self.pump.take() {
-            pump.await.map_err(|_| SessionError::Worker)?;
-        }
-        Ok(())
+        self.inner.capture.cancel();
+        let pump = match self.pump.take() {
+            Some(pump) => pump.await.map_err(|_| SessionError::Worker),
+            None => Ok(()),
+        };
+        let sealer = match self.sealer.take() {
+            Some(sealer) => sealer
+                .await
+                .map_err(|_| SessionError::Worker)
+                .and_then(|result| result),
+            None => Ok(()),
+        };
+        pump.and(sealer)
     }
 }
 
 impl<S: BatchBackend> Drop for LegacySession<S> {
     fn drop(&mut self) {
-        self.inner.cancel.send_replace(true);
-        self.inner.wake.notify_one();
+        self.inner.capture.cancel();
     }
+}
+
+async fn seal<S: BatchBackend>(inner: Arc<Inner<S>>) -> Result<(), SessionError> {
+    let mut cancel = inner.cancel.subscribe();
+    loop {
+        if *cancel.borrow() || inner.capture.storage_failed.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        let requested = {
+            let pcm = inner.capture.lock()?;
+            !pcm.closed
+                && !inner.capture.finishing.load(Ordering::Acquire)
+                && !pcm.buffer.is_empty()
+        };
+        if requested {
+            let writer = inner.clone();
+            let job = tokio::task::spawn_blocking(move || {
+                let mut state = writer.lock()?;
+                let needed = {
+                    let mut pcm = writer.capture.lock()?;
+                    pcm.seal_requested = false;
+                    !pcm.closed && !pcm.buffer.is_empty()
+                };
+                if needed
+                    && !*writer.cancel.borrow()
+                    && !writer.capture.finishing.load(Ordering::Acquire)
+                    && !writer.capture.storage_failed.load(Ordering::Acquire)
+                {
+                    writer.checkpoint(&mut state, false)?;
+                }
+                Ok::<_, SessionError>(())
+            });
+            join_seal(&inner, job).await?;
+            continue;
+        }
+        tokio::select! {
+            _ = cancel.changed() => {},
+            _ = inner.capture.input.notified() => {},
+        }
+    }
+}
+
+async fn join_seal<S: BatchBackend>(
+    inner: &Inner<S>,
+    job: tokio::task::JoinHandle<Result<(), SessionError>>,
+) -> Result<(), SessionError> {
+    let result = match job.await {
+        Ok(result) => result,
+        Err(error) => {
+            eprintln!("Legacy capture sealer task failed: {error}");
+            Err(SessionError::Worker)
+        }
+    };
+    if let Err(error) = result {
+        inner.capture.fail();
+        eprintln!("Legacy capture sealer: {error}");
+        return Err(error);
+    }
+    Ok(())
 }
 
 impl<S: BatchBackend> Inner<S> {
@@ -322,6 +408,7 @@ impl<S: BatchBackend> Inner<S> {
                     return Ok(state);
                 }
                 Err(std::sync::TryLockError::Poisoned(_)) => {
+                    self.capture.fail();
                     return Err(SessionError::Storage(NativeError::Verification(
                         "Dictation state lock is poisoned.",
                     )));
@@ -342,6 +429,7 @@ impl<S: BatchBackend> Inner<S> {
         let result = self.state.lock();
         self.synchronous_waiters.fetch_sub(1, Ordering::AcqRel);
         let guard = result.map_err(|_| {
+            self.capture.fail();
             SessionError::Storage(NativeError::Verification(
                 "Dictation state lock is poisoned.",
             ))
@@ -352,86 +440,115 @@ impl<S: BatchBackend> Inner<S> {
         Ok(guard)
     }
 
-    fn ensure_open(&self, state: &State) -> Result<(), SessionError> {
-        if state.storage_failed {
+    fn publish(&self, state: &State) {
+        #[cfg(test)]
+        let _probe = self.journal.fixture_publish_progress();
+        self.capture.publish_progress(progress(state));
+    }
+
+    fn checkpoint(&self, state: &mut State, complete: bool) -> Result<(), SessionError> {
+        if state.storage_failed || self.capture.storage_failed.load(Ordering::Acquire) {
             return Err(SessionError::Storage(NativeError::Verification(
                 "Recovery storage failed.",
             )));
         }
-        if state.manifest.capture_complete || *self.cancel.borrow() {
-            return Err(SessionError::Closed);
-        }
-        Ok(())
-    }
-
-    fn publish(&self, state: &State) {
-        #[cfg(test)]
-        let _probe = self.journal.fixture_publish_progress();
-        let value = progress(state);
-        #[cfg(test)]
-        self.trace.progress(
-            value.captured_bytes,
-            value.saved_bytes,
-            value.transcribed_bytes,
-        );
-        self.progress.send_replace(value);
-    }
-
-    fn checkpoint(
-        &self,
-        state: &mut State,
-        mut chunks: Vec<AudioChunk>,
-        complete: bool,
-    ) -> Result<(), SessionError> {
-        let mut tail = if complete {
-            Vec::new()
-        } else {
-            match legacy_checkpoint::encode(&state.chunker.snapshot()) {
-                Ok(tail) => tail,
-                Err(error) => {
-                    for chunk in &mut chunks {
-                        chunk.wav.fill(0);
-                    }
-                    state.storage_failed = true;
-                    self.publish(state);
-                    return Err(SessionError::Storage(NativeError::Protocol(error)));
-                }
-            }
-        };
-        let views: Vec<_> = chunks
-            .iter()
-            .map(|chunk| AudioCheckpoint {
-                wav: &chunk.wav,
-                overlaps_previous: chunk.overlaps_previous,
-                end_byte: chunk.end_byte,
+        if !state.writing_chunks.is_empty()
+            || state.sealing.as_ref().is_some_and(|raw| {
+                raw.end != state.captured
+                    || raw.end.checked_sub(raw.pcm.0.len() as u64)
+                        != Some(state.manifest.captured_bytes)
             })
-            .collect();
-        let result = self
-            .journal
-            .checkpoint_snapshot(
-                &tail,
-                state.captured,
-                &views,
-                complete,
-                time::OffsetDateTime::now_utc(),
-            )
-            .and_then(|_| self.journal.published_snapshot());
-        tail.fill(0);
-        for chunk in &mut chunks {
-            chunk.wav.fill(0);
+        {
+            self.capture.fail();
+            return Err(SessionError::Storage(NativeError::Verification(
+                "Legacy unpublished working audio boundary is invalid.",
+            )));
         }
+        let fragment = self.capture.drain_fragment(state.captured, complete)?;
+        let end = fragment.end;
+        let old_length = state.sealing.as_ref().map_or(0, |raw| raw.pcm.0.len());
+        match &mut state.sealing {
+            Some(raw) => {
+                raw.pcm.0.extend_from_slice(&fragment.pcm.0);
+                raw.end = end;
+                drop(fragment);
+            }
+            None => state.sealing = Some(fragment),
+        }
+        let result = (|| {
+            let pcm = &state
+                .sealing
+                .as_ref()
+                .expect("Detached batch is owned.")
+                .pcm
+                .0[old_length..];
+            state.writing_chunks = state.chunker.append(pcm).map_err(SessionError::Audio)?;
+            state.captured = end;
+            if complete {
+                state
+                    .writing_chunks
+                    .extend(state.chunker.flush().map_err(SessionError::Audio)?);
+            }
+            if !complete
+                && state.writing_chunks.is_empty()
+                && state.captured - state.manifest.captured_bytes < TRIGGER_BYTES as u64
+            {
+                return Ok(None);
+            }
+            if !complete {
+                state.writing_tail = AudioBuffer(
+                    legacy_checkpoint::encode(&state.chunker.snapshot())
+                        .map_err(|error| SessionError::Storage(NativeError::Protocol(error)))?,
+                );
+            }
+            // At most an initial six-second chunk, two new two-second chunks and a final tail.
+            if state.writing_chunks.len() > 4 {
+                return Err(SessionError::Storage(NativeError::Verification(
+                    "Legacy checkpoint exceeded its bounded chunk work.",
+                )));
+            }
+            let views: Vec<_> = state
+                .writing_chunks
+                .iter()
+                .map(|chunk| AudioCheckpoint {
+                    wav: &chunk.wav,
+                    overlaps_previous: chunk.overlaps_previous,
+                    end_byte: chunk.end_byte,
+                })
+                .collect();
+            self.journal
+                .checkpoint_snapshot(
+                    &state.writing_tail.0,
+                    end,
+                    &views,
+                    complete,
+                    time::OffsetDateTime::now_utc(),
+                )
+                .and_then(|_| self.journal.published_snapshot())
+                .map(Some)
+                .map_err(SessionError::Storage)
+        })();
         match result {
-            Ok(manifest) => {
+            Ok(Some(manifest)) => {
                 state.manifest = manifest;
+                state.sealing = None;
+                state.writing_tail = AudioBuffer(Vec::new());
+                for chunk in &mut state.writing_chunks {
+                    chunk.wav.fill(0);
+                }
+                state.writing_chunks.clear();
+                self.capture.published(end)?;
                 self.publish(state);
                 self.wake.notify_one();
                 Ok(())
             }
+            Ok(None) => Ok(()),
             Err(error) => {
                 eprintln!("Legacy dictation checkpoint: {error}");
                 state.storage_failed = true;
+                self.capture.fail();
                 self.publish(state);
-                Err(SessionError::Storage(error))
+                Err(error)
             }
         }
     }
@@ -554,9 +671,7 @@ async fn run<S: BatchBackend>(inner: Arc<Inner<S>>) {
                 Ok(state) => state,
                 Err(error) => {
                     eprintln!("Legacy dictation pump: {error}");
-                    inner
-                        .progress
-                        .send_modify(|progress| progress.storage_failed = true);
+                    inner.capture.fail();
                     break;
                 }
             };
@@ -565,7 +680,10 @@ async fn run<S: BatchBackend>(inner: Arc<Inner<S>>) {
                     .next
                     .is_some_and(|next| next <= tokio::time::Instant::now())
             });
-            if !state.storage_failed && ready {
+            if !state.storage_failed
+                && !inner.capture.storage_failed.load(Ordering::Acquire)
+                && ready
+            {
                 for chunk in state
                     .manifest
                     .chunks
@@ -598,8 +716,8 @@ async fn run<S: BatchBackend>(inner: Arc<Inner<S>>) {
                                     let next = (kind == ApiErrorKind::Retryable).then(|| tokio::time::Instant::now() + Duration::from_secs(u64::from(attempts.saturating_mul(2).min(30))));
                                     state.errors.insert(index, Retry { kind, next, attempts });
                                 }
-                                JobError::Storage(error) => { eprintln!("Legacy dictation storage: {error}"); state.storage_failed = true; }
-                                JobError::Worker => { eprintln!("Legacy dictation worker failed."); state.storage_failed = true; }
+                                JobError::Storage(error) => { eprintln!("Legacy dictation storage: {error}"); state.storage_failed = true; inner.capture.fail(); }
+                                JobError::Worker => { eprintln!("Legacy dictation worker failed."); state.storage_failed = true; inner.capture.fail(); }
                                 JobError::Cancelled => {}
                             }
                             inner.publish(&state);
@@ -607,7 +725,7 @@ async fn run<S: BatchBackend>(inner: Arc<Inner<S>>) {
                     }
                     Err(error) => {
                         eprintln!("Legacy dictation task failed: {error}");
-                        inner.progress.send_modify(|progress| progress.storage_failed = true);
+                        inner.capture.fail();
                         break;
                     }
                 }
@@ -617,7 +735,7 @@ async fn run<S: BatchBackend>(inner: Arc<Inner<S>>) {
         }
     }
     // Network waits cancel cooperatively; already-started journal I/O must join before ownership is released.
-    inner.cancel.send_replace(true);
+    inner.capture.cancel();
     while let Some(result) = jobs.join_next().await {
         if let Err(error) = result {
             if !error.is_cancelled() {

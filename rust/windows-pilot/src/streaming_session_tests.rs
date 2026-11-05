@@ -373,7 +373,7 @@ async fn sender_and_capture_seals_use_one_real_persistence_worker_and_the_origin
             }
         }
         let full = tokio::time::timeout(Duration::from_secs(5), async {
-            while session.inner.captured.load(Ordering::Acquire) != pcm_end as u64 {
+            while session.inner.capture.captured.load(Ordering::Acquire) != pcm_end as u64 {
                 tokio::time::sleep(Duration::from_millis(1)).await;
             }
         })
@@ -617,7 +617,10 @@ async fn reserved_next_frame_cannot_be_stolen_by_another_append_or_hold_the_pcm_
     assert_eq!(session.inner.lock_pcm().unwrap().reserved_bytes, 1_280);
     slot.append(&[2; 1_280]).unwrap();
     drop(slot);
-    assert_eq!(session.inner.captured.load(Ordering::Acquire), 128_000);
+    assert_eq!(
+        session.inner.capture.captured.load(Ordering::Acquire),
+        128_000
+    );
     assert_eq!(session.inner.lock_pcm().unwrap().reserved_bytes, 0);
     drop(state);
     let session = Arc::try_unwrap(session).ok().unwrap();
@@ -641,7 +644,7 @@ async fn sealer_worker_panic_and_poison_are_visible_and_release_room_waiters_wit
         let owner = session.inner.clone();
         let job = tokio::task::spawn_blocking(move || {
             if poison {
-                let _guard = owner.pcm.lock().unwrap();
+                let _guard = owner.capture.pcm.lock().unwrap();
                 panic!("Controlled own PCM mutex poison.");
             }
             panic!("Controlled joined seal worker panic.");

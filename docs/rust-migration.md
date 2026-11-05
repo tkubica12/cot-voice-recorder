@@ -44,7 +44,7 @@ uz uzivatel nechce.
 | Mereni Windows klienta | NOVA vyslovne schvalena quiet-window current071/checkout86f3b0f full-runtime signed-out30+30/3paired301-point PASS: p95Rust257.948ms,meanprivate3.427MiB,observedpeak3.992MiB. Vsechnyrawvalues/pairedthresholds/cleanup nezavisleovereny;starsi7bPASS ia2d/3f4FAILEDINCOMPLETE zachovany,neprepisuji se na signed-in/physical scope |
 | Microphone readiness | Jeden actual240ms probe a samostatne schvalena30+30 paired serie prosly; first-PCM p95Rust80.75% C#baseline, bez audio souboru/uploadu |
 | Engine longevity | Actual3600s synthetic PCM/real50min rotation,115200000 exact bytes; worst idle growth1.645MiB<10MiB, engine-only PASS |
-| Current controller functionality/reliability | STREAMING actual3600.0017623s FUNCTIONALPASS/exact115200000PCM/90000packet-equivalent/realconfigured50minrotation starts[0,96000000]/normaloriginaljoinsACK. NativeAB98 unchanged, host463/CI41993726504ALL5PASS;24observedminute+36explicitGAP nejsou acceptancecounters. Legacyownsynccheckpoint je dalsi explicitne zadanyCODEkrok, nehour/fullGUI/physical/install/privateAzurePASS |
+| Current controller functionality/reliability | STREAMING AB98 actual3600.0017623s FUNCTIONALPASS/exact115200000PCM/rotation[0,96000000]/normaljoinsACK je ulozeny milnik. LEGACYownedsealer/sharedwindow: actualsingleworker192kRED->GREEN, EMITcadenceRED->GREEN/MAX4C#restore/working-vs-durableASRproof a odd64001RED->GREEN. Uzkyreview bezhighconfidencebug; final173native+7bin/189otherworkspace/5C#golden/7rollback/release/3s96000PASS. MatchingnewCI zbyva. AB98hour se NEPREZNACUJE na novyrefactor nebo legacy/fullGUI/physical/install/privateAzurePASS |
 | CI nativniho inkrementu | Exactab98d64/CI41977537100 Windows/Linux/MSRV1.85/container ALL5SUCCESS, Windows163nativePASS16ignored, samepacketguard/parity a3s NoPorts smoke PASS. NativeFS/fault integration je explicitneserialni; ostatniworkspaceparalelni. Old2f8/05/failedCI zustavaji revision-scoped, neni production cutover |
 | OAuth/token-store/PubSub klient | Native flow implementovany; samostatny live Google auth-only/local-signout a assisted manual clipboard probe PASS, full signed-in backend/controller dictation stale chybi; samostatny automatic DesktopGuard port viz dalsi radek |
 | Automatic DesktopGuard paste port | NOVYexactonephysicalpostfix5b test PASS:one4eventnativeCtrlV/exactownfieldmarker/normalclosed,no retry. Nejdenifullcontroller/hold-toggle/hour/realbackend acceptance;older50040BLOCKED/45788assisted zustavaji |
@@ -4842,7 +4842,7 @@ privateAzure/performance ani historickeho0x5actorPASS.
 | Surface | Implemented/verified | Specific remaining gate |
 | --- | --- | --- |
 | Streaming native capture/persistence | Joinedsealer, exact192kbound including in-hand reservation, actualfault/cancel/pin/replay/through proofs,163native+7bin/parity/MSRV/containerCI; actual600s a nyni3600s/realconfigured50minrotationPASS niz | StreamingNoPorts functionaldata gate uz overen; zadny dalsi hour/resourceprofil automaticky. Real-world/fullGUI a legacy jsou samostatne |
-| Legacy engine and fallback | Existing codec/chunker/ASR2requests/resultorder/recovery/controllerscopes aC#tail/v1-v4 parity remain passing | Vlastni synchronous capture checkpoint225-238 staleblokuje consumer; potrebuje minimalni ownedraw-window/sealer zmenu a actualsingleworkerRED/GREEN, ne novy performanceprofil |
+| Legacy engine and fallback | Novy legacyownedsealer s128kchargedRAWwindow/50queue, unchangedchunker/tail, actualOWNsealRED->GREEN192k/reference/error/cancel/resultIO/pin/regressions implementovany niz | Currentexactsourceparity/review/CI se dokoncji; zadny legacydlouhyrun zatim zadan/proveden. Nevracetperformanceprofily |
 | Native stop/error/recovery | Originalbudgets, incompletefeedback, originalbinding/durableprefix/cipher/orphans a History-before-handoff/outbox policy overeny | Pomalydisk neznamena losslessarchive; zadny zaruceny completionpriunwritable/nekonecnemstall. Historicky0x5actorUNKNOWN zachovan, ne automaticky nova corruptdurabledata |
 | Windows client surfaces | Auth/network/settings/history/recovery/polishing/paste controller a originalicon/theme jsou implementovane, drivejsi actualport a syntheticUI evidence zustava scoped | Uplny signed-in physicalhold/toggle/mic+backend/delivery flow a keyboard/screen-reader/DPI/monitor acceptance stale vyzaduji vlastni opravneny real-world test; ne nahrazovat600NoPorts |
 | Installer and rollback | Installer source a predchozi build, data/DPAPI/C#rollback compatibility existuji | Po finalcodefreeze obnovit installerartifact; skutecny install/upgrade/uninstall/rollback dosud neproveden a neni povolen timto NoPortsrunem |
@@ -4998,11 +4998,203 @@ boundedlegacyraw-window/ownedsealer z `legacy-checkpoint-assessment.txt`,
 targetedRED/GREEN/parity/cancellation/rootguards a uzkyOpusreview/CI.
 Zadny dalsistreaminghour ani legacydlouhyrun timto nevznika.
 
-**Legacy zbyvajici sourcegate:** `legacy_session.rs:225-238` stale drzi
-vlastni state pres chunkerappend a synchronni checkpoint; result-save
-uz je IO-before-short-state podle existujiciho priorartu, vlastni capture
-checkpoint vsak stale muze zablokovat singleconsumer. Nejmensi analogicka
-zmena potrebuje owned/joined checkpoint s ohranicenym PCM+chunker-tail
-snapshotem, monotoniccaptured/saved a originaloverlap/cancel/drain parity.
-Streamingsealer z tohoto nedela automaticky legacy/fullcapture PASS;
-legacy implementace se v teto omezene streamingoprave neprepisuje.
+### Legacy owned raw sealer: source repair and controlled same-consumer proof
+
+Po verifiedAB98hour/data/cleanup a doc-onlyledger `baaa711` se zahajil
+vyslovne zadany Bcodeinkrement. Neni to dalsi hodinovy nebo performancebeh.
+ControlledRED pred upravou legacy zablokoval actualsinglepersist_capture
+ve VLASTNIM64000checkpointu: completed62720, dalsi frame ceka na IO,
+puvodni50queue se naplni; barrier byl vzdy release a worker joined pred
+REDassertion. `legacy-owned-sealer-work/red-actual-own-legacy-seal.log`.
+
+Novy `capture_window.rs` pouze sdili boundedRAWownership/reservation/
+Condvar/signals/progress. Neobsahuje backend, generickyjobframework ani
+novoufrontu. Existingstreaming implementace deleguje na tuto stejnou
+memoryprimitive; jeji prvni targeted21PASS2ignored jsou samostatny
+regressionproof, NE novy actualhour. Engine-specific durable mutex a
+sealertask zustavaji ve svych sessionmodulech. D->shortP, neverPwaitD.
+
+Legacy append uz neprovadi chunker/diskIO ani nebereD. Stejny128000B
+filling+detached/inflight+reserved limit a1280B RAII slot PREDnative dequeue
+ponechavaji original50x1280queue:192000 UNIQUE_NEW_UNPUBLISHED_PCM.
+JEDENlegacysealer joinuje nejvyseJEDENblockingDjob. Coalescedinput signal
+pro kazdy packet drainuje pouze NEZPRACOVANYfragment do NEZMENENEHO
+PcmChunker; samotnydiskcheckpoint zustava pri EMIT nebo64000newrawsinceSaved
+nebo finish. Absoluteend/audiochunks/PascalCase legacycheckpoint se nemeni.
+Zpracovany ale UNPUBLISHEDraw zustava vJEDNOMakumulatoru charged<=128k,
+nextfragment se feeduje jenjednou(sliceoldlen..), nikoli znovucelybuffer.
+Dokudneuspeje
+skutecny durablepublish, rawcharge zustava; chyba latchujeStorage a
+ponecha raw, chunker, generatedchunks a encodedtail/oldmanifestcipher.
+Zadny blindretry/poisonreset/MoveFileExflagschange nebo schema/codecdelta.
+
+**Oddeleny memorymodel:**128k+64k bound se netyka celehoheapu.
+Puvodni chunker ma pevnou192000Baudio allocation,640Bframe,600msoverlap,
+silencepreroll a jizdurablecontext/tail. Jediny checkpointjob ma navic
+boundedrawbatch a nejvyse4generatedWAVchunks po existujicim192044Blimitu,
+serializedtail podle existingMAX_TAIL_BYTES a bounded codec/snapshot/
+encryptioncopies. Nejsou z toho dalsi queuedrawbatches. Toto jsou
+source-basedbounds/ownership, zadny novy RSS/idle benchmark.
+
+Legacybytefragments smi rozdelit sample jako dosud: rawmemoryprimitive
+je pouze byteownership; STREAMINGappend a NATIVESLOT stale vyzaduji evenPCM.
+Legacybackground checkpoint smi ulozit i oddcapturedend s jednim bajtem
+rozpracovaneho sample v JSONtailu, jako puvodni C#. Finalunpairedsample
+zustava explicitAudioerror/incomplete, ne tiche zahazovani nebo complete.
+Partial640byte frame/state.processed_bytes vs captured se zachovava i pres restore.
+Checkpointtrigger64000 se neposouva na vetsi burst kvuli rychlosti.
+
+Finishintent uzavre noveadmission, Ddrainuje rawtail a flushne unchanged
+chunker PREDcompletion. Shutdown joinuje ASRpump+sealer i jejich already
+startedblockingIO PREDdelete_idle; Drop jen cancel/notify/metadata.
+Original30slegacy/2sstream/5sfixture feedback se nemeni. Existing2ASRjobs,
+outoforderresults/retry/serviceerrors, boundidentity/pins a result-save
+pred shortDrefresh zustavaji; storagefail ted probudi rawroomwaiters.
+
+ActualGREEN stejnySINGLEpersist_capture/native1280slots: IOstalePAUSED,
+128000copied, dalsichpresne50slots64000queued, reserved0/full192000,
+nextpacketFull. Po release vsechny192000samples vporadi/podpuvodnimbindingem
+durable a workerjoined. Nejsou to DVAprimeappendcallery ani proxyfrom
+unit1PASS bez branch/data coverage.
+
+Regresni scenare zahrnuji:
+- voiced/quiet/mixed pre-roll,6semission/600msoverlap a2bytepartial640frame;
+  actualmidcapture tail equality sUNCHANGEDchunkerem, shutdown/reopenrestore,
+  finalWAV/chunkoverlap/absoluteend porovnani sreferencni wholeinput run;
+- actualownheldmanifestMoveFileExfailure: oldcipher/saved0,64krawinflight+
+ 64knewfilling aencoded64ktail retained, Storagewake/reservedclean/no retry;
+- cancel/fullroom, explicitfinaldrain a originalIOjoinbezpredcasnehodelete;
+ startedASRresultIO stalePAUSED, actualcapture30nativepackets38400 se
+ dokonci, combinedfinalchunk/cursors neztrati driveprijatouconfirmation;
+- workerpanic/durablemutexpoison, explicitStorage/nonormalfakeprogress,
+ in-flight raw retained, existing2ASR/outoforder/pinnedreadownership.
+
+Prvni fullsuite168PASS1FAIL16ignored odhalila TESTproxy: fresh-inspection
+scenario predExplicitDiscard pockal jen completedappend128k, ne actualsaved;
+spravneexplicitDiscard muze odhoditRAMbeforefinalseal a pinnedinspection
+pak nedovoli zbytekdelete. StrengthenedactualSAVED128k gate predcommandem
+overuje konkretni IOprogress pri staleBLOCKEDinspectoru; apppolicy/timeouty
+nebyly povolene. Nasledne169nativePASS16ignored+7bin-tests a zbytek
+workspaceparallelPASS, Clippyallnative targets PASS. RawFAIL se zachoval.
+
+Prvni stableproductiondiff byl freeze pro parent-ownedONEnarrowOpusreview:
+capture_window, legacy_session, streaming_session (mechanicalreuse),
+dictation a libmodulewiring. Jeho cadencefinding a nasledny retaineddelta-review
+jsou zaznamenany nize; zadny legacy600/hour/CDB/physical/install/Azure scope
+z tohoto unitproofu ani z puvodnihoAB98streaminghour nevznika.
+
+### Legacy review corrections: preserve emit cadence and separate working from durable state
+
+Prvni uzkyOpus5.5ExtraHigh review petistabilnichprodukcnichfiles nenasel
+highconfidenceconcurrencybug; necetl ovsem nove477testlines jako celek.
+Review spravne odhalil behavioralregression prvni64k-only varianty:
+chunker by se o speechcut dozvedel az po64kraw a preview/ASReligibility
+se mohly odlozit az o2s. Nejde o bytecorruption, ale nebylo by to
+pozadovane zachovani chovani. Tento threshold-only navrh neni finalni.
+
+Event-basedRED nad prvni variantou obnovil51.2kvoicedtail a dodal POUZE
+12.8ksilence: bez dalsich dat nenastal durable64kchunk aniASReligibility.
+Po korekci je stejny scenarGREEN; prodcaptureappend stale nedela RMS,
+nebereD ani nedelaIO. Zadny latencybenchmark nebo producerprediction.
+Sharedwindow pouze navic oznamuje input; streaming zachovava svuj64k
+sealtrigger a tento signal ignoruje. Legacy zpracovava jen nove rawfragments
+v jednom joinedDjobu, checkpointuje pri skutecnemEMIT/64knewraw/finish.
+
+Pracovni chunker/capturedend ted mohou legalne predchazet durablemanifestu.
+Musely se proto overit noveinvarianty, nejen obecnylockorder:
+ASRresultjournalmutation+durableviewrefresh NEPREPISUJI workingchunker,
+processedend, rawaccumulator nebo buffer_start na starydurablecursor,
+ani nepublikuji workingtail jako uzulozeny. New deterministicinterleaving
+drzi published192000/puvodni600msoverlaptail, working230400/38.4kchargedraw
+PREDI PO actualASRresultpublish. Nove12.8ksilence vyvolaEMIT243200
+(stale<64knewraw), finalWAV a reopen sedi s unchangedreference; zadny
+doublefeed nebo ztratafragmentu. Durabletail mezitimzustava jenpublishedprefix.
+
+**TesnyMAX4workproof:** restore191360voiced(6s-1frame), ONE128000rawbatch
+200x640frames:1voiced,2-51voiced,52-71silent,72-151voiced,152-171silent,
+172-200voiced. Actualdrain+finish publikuje presne4WAVs s endbytes
+[192000,236800,300800,319360] aoverlap[false,true,false,false].
+Pauseddurablewrite drzi128krawcharge aOLDsaved191360, az po release
+publish/reopen potvrdi319360. Stejne4endbytes/WAVs plati i pri200incremental
+drains a poslednimfinish. Cap4 se NEZVYSIL.
+
+Existujici `audio_contract chunk fragment restore-byte` a skutecny
+C#ReferenceAudio dostaly totozneinputy/restore191360 profragments
+640/1280/128000: binaryWAV/overlap/endbytes bylybyte-exact. Existing
+legacy-state C#JSON parity overuje i restoredprefix. Celkem5dictationgolden
+groupsPASS; actualsessiontest nezavisle porovnava vsechny4WAVs/metadata
+s timto nezmenenymchunkerem. Zadny novyfixtureCLI/framework.
+
+Nove16legacytargetcases, cele172nativePASS16ignored+7bin-tests,
+zbytekworkspaceparallel a Clippyalltargets PASS. PuvodnicadenceRED/Clippy
+constant-assert failure zustavaji vlogs; dynamickyassert kontroluje
+skutecny publishedend. Cadence-corrected release/parity/shortsmoke a
+retaineduzkydelta-review working-vs-published state se dokoncji predpush.
+Zadny legacydlouhyruntime ani historicalhour na novemsharedrefactorhashi
+se timto unitproofem neprohlasuje za provedeny.
+
+### Legacy cadence delta review and odd-fragment compatibility
+
+RetaineduzkyOpus5.5ExtraHigh cadencedelta-review nenasel highconfidencebug
+nad stabilnimi capture_window98822...CCE76/legacy7E147...03F2,
+dictationA4B5/streaming69E4/lib84D7, HEADbaaa711. Overil inputNotify
+coalescing/nejvyse1emptyloop/nolostwake, jedenjoinedIOjob, 128kcharge
+release az po uspechu, feedjennewrawslice, publishedmanifest-only ASRmerge,
+generation/finish/cancel/joinbeforedeleteidle a MAX4pattern/bound.
+Jde o cteni source; reviewer nespoustel testy a nereviewoval vsech740
+novychtestlines. Nepreznacuje se na review celehobudoucihodiffu.
+
+Review odhalil jeden lowriskAPIedge: legacypublicappend prijima oddfragment,
+ale sealerove zbytecne evenchecks odkladaly samotny64001checkpoint az
+na dalsiinput/finish. NativeMIC/RAII1280evenpacket nebyl postizen.
+Skutecny `RecoverableDictationSession.Append` checkpointuje i64001 a
+C#legacyRecoveryStore, RustlegacyManifest a nezmeneny PascalCasechunker
+snapshot takovy capturedend+onebyteframe podporuji; alignmentguard
+streamingmanifestu neni legacycontract.
+
+Deterministicky actualsessionRED na reviewcode neulozil64001 bez dalsiho
+inputu; worker byl predassertion shutdown/joined. Surgicalsourcecorrection
+odstranila POUZE oba legacy evenchecks (plusformatovani), nepridava novy
+unlockedparitycheck. Skutecny rawfragment se stale detachuje atomicky
+v checkpointu pod D->P. Native reserved<=1280/even guard i streamingguard
+zustavaji beze zmeny. GREEN overuje saved64001 bez novehoinputu,
+publishedframe[0x42]/processed64000, pak pairing+1->complete64002/exactWAV,
+nebo EOF->explicitIncompleteSample/storagefailure/oldpublishedtail retained,
+shutdown/reopen bez fakecomplete. Existing C#legacy-state golden rozsireny
+o64001. Celkem17legacytargettestsPASS. Finalcurrent-source serialnative
+173PASS16ignored+7bin-tests, ostatniworkspace189PASS1ignored paralelne,
+fmt a workspacealltargetallfeatureClippy-Dwarnings PASS. Puvodni ignores
+a jejich samostatne CIsteps zustavaji; zadne nove skip/timeout/budgetchange.
+Releaseproduct i releaselibtest build PASS; actualC#5dictationgoldengroups
+(vcetne64001/MAX4) a7recoveryv1-v4/DPAPI/rollback/pathgroups PASS.
+
+Finalrelease nativefixture SHA256
+`be03edda8dc9ecf522622649f2d0690ebc46f1e18542a75dbb203881a5beaf19`,
+PDB `4d452e66a9df2dcc7df1715a0296da429744f8740d861e0cf2e06212412ed4ba`,
+product `2c6f50619b1813d60d934afb90e252f9bcdf10b2fee559a812352ebf6c44590b`.
+Reviewedctyriproductionhashes jsou nezmenene; legacyhash se po odstraneni
+dvouevenchecks+formatovani zmenil na
+`2db7c6c7c7cf9bf55cd095d718a19370e4bc6faf5a46da9631030af3e96139d0`.
+Reviewscope zustava puvodnich5hashes plus tato surgicalcorrection,
+nikoli tvrzeni noveho fullreview celehozmenenehotestu.
+
+Existingcurrent3sNoPortsnormalcontroller smoke na finalfixture PASS:
+actual3.0136278s, presne96000produced/admitted/received/completed/saved/
+sent/confirmedPCM, cursors[64000,96000], normaljoinsACK/Historybeforehandoff/
+polisher, exportedpins/inspections/aliascapacity0. Sealerroom/reservation/
+jobcounts jsou UNEXPORTED, jen code/native lifetimeproof, ne external0.
+POEXIT12snapshotfilehashes/allworkingnative/helperhashes verified;
+native113252/collector124148 absent a pouzeownTemp odstranen AZpo
+preservation. Externalprecleanupcipher/counts NOT_OBSERVED; nativefinal
+assertions predACKdelete zustavaji autoritou. Proof
+`legacy-owned-sealer-work/final-short-smoke-independent.json`.
+
+Tento3sprofil je STREAMINGcontroller regression sharedprimitive, nikoli
+legacyhour. Predchozi pre-oddcorrectedfixtureabf43/3s3.0009627PASS zustava
+samostatny, neni pouzit jako finalhashproof. Commit/push a exactALL5CI
+se dokoncuji; zadny novylegacy600/hour, performance/CDB/physical/install/
+Azuretest ani preznaceni AB98/528a actualhour na newbinary.
+
+Historicka legacy sourcegate `legacy_session.rs:225-238` popisovala syncIO
+pred B; owned/joined rawwindow ji nyni sourceopravuje. StreamingAB98hour
+neoveroval tuto novoulegacyimplementaci ani current sharedrefactorbinary.

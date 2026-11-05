@@ -693,7 +693,7 @@ impl<P: DictationPorts> DictationHost<P> {
                             &capture_stopped,
                             || match &session {
                                 Session::Streaming(session) => session.reserve_capture(&discard),
-                                Session::Legacy(_) => Ok(None),
+                                Session::Legacy(session) => session.reserve_capture(&discard),
                             },
                             |pcm, reservation| {
                                 #[cfg(test)]
