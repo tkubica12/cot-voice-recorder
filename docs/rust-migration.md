@@ -44,7 +44,7 @@ uz uzivatel nechce.
 | Mereni Windows klienta | NOVA vyslovne schvalena quiet-window current071/checkout86f3b0f full-runtime signed-out30+30/3paired301-point PASS: p95Rust257.948ms,meanprivate3.427MiB,observedpeak3.992MiB. Vsechnyrawvalues/pairedthresholds/cleanup nezavisleovereny;starsi7bPASS ia2d/3f4FAILEDINCOMPLETE zachovany,neprepisuji se na signed-in/physical scope |
 | Microphone readiness | Jeden actual240ms probe a samostatne schvalena30+30 paired serie prosly; first-PCM p95Rust80.75% C#baseline, bez audio souboru/uploadu |
 | Engine longevity | Actual3600s synthetic PCM/real50min rotation,115200000 exact bytes; worst idle growth1.645MiB<10MiB, engine-only PASS |
-| Current controller functionality/reliability | Owned-sealer AB98+hostEB7 actual600sPASS/19200000PCM zachovan. Nasledny hour INTERRUPTEDbyHOST optionalprogress read2820s, ne observedsealerFAIL/anihourPASS; finalacceptedUNKNOWN/durable90240000. Nova celaown-control readaxis ma shareR/W/D a nonfatalexplicitprogressGAP,20guard+8hostcases localPASS; matchingharnessCI/replacementhour dosudpending. LegacyB stale nezahajen a podminen positivehourPASS |
+| Current controller functionality/reliability | STREAMING actual3600.0017623s FUNCTIONALPASS/exact115200000PCM/90000packet-equivalent/realconfigured50minrotation starts[0,96000000]/normaloriginaljoinsACK. NativeAB98 unchanged, host463/CI41993726504ALL5PASS;24observedminute+36explicitGAP nejsou acceptancecounters. Legacyownsynccheckpoint je dalsi explicitne zadanyCODEkrok, nehour/fullGUI/physical/install/privateAzurePASS |
 | CI nativniho inkrementu | Exactab98d64/CI41977537100 Windows/Linux/MSRV1.85/container ALL5SUCCESS, Windows163nativePASS16ignored, samepacketguard/parity a3s NoPorts smoke PASS. NativeFS/fault integration je explicitneserialni; ostatniworkspaceparalelni. Old2f8/05/failedCI zustavaji revision-scoped, neni production cutover |
 | OAuth/token-store/PubSub klient | Native flow implementovany; samostatny live Google auth-only/local-signout a assisted manual clipboard probe PASS, full signed-in backend/controller dictation stale chybi; samostatny automatic DesktopGuard port viz dalsi radek |
 | Automatic DesktopGuard paste port | NOVYexactonephysicalpostfix5b test PASS:one4eventnativeCtrlV/exactownfieldmarker/normalclosed,no retry. Nejdenifullcontroller/hold-toggle/hour/realbackend acceptance;older50040BLOCKED/45788assisted zustavaji |
@@ -4841,7 +4841,7 @@ privateAzure/performance ani historickeho0x5actorPASS.
 
 | Surface | Implemented/verified | Specific remaining gate |
 | --- | --- | --- |
-| Streaming native capture/persistence | Joinedsealer, exact192kbound including in-hand reservation, actualfault/cancel/pin/replay/through proofs,163native+7bin/parity/MSRV/containerCI a actual600sPASS | New nativeimage zatim nema actual3600s/real50minrotation acceptance; zadny novy hour automaticky |
+| Streaming native capture/persistence | Joinedsealer, exact192kbound including in-hand reservation, actualfault/cancel/pin/replay/through proofs,163native+7bin/parity/MSRV/containerCI; actual600s a nyni3600s/realconfigured50minrotationPASS niz | StreamingNoPorts functionaldata gate uz overen; zadny dalsi hour/resourceprofil automaticky. Real-world/fullGUI a legacy jsou samostatne |
 | Legacy engine and fallback | Existing codec/chunker/ASR2requests/resultorder/recovery/controllerscopes aC#tail/v1-v4 parity remain passing | Vlastni synchronous capture checkpoint225-238 staleblokuje consumer; potrebuje minimalni ownedraw-window/sealer zmenu a actualsingleworkerRED/GREEN, ne novy performanceprofil |
 | Native stop/error/recovery | Originalbudgets, incompletefeedback, originalbinding/durableprefix/cipher/orphans a History-before-handoff/outbox policy overeny | Pomalydisk neznamena losslessarchive; zadny zaruceny completionpriunwritable/nekonecnemstall. Historicky0x5actorUNKNOWN zachovan, ne automaticky nova corruptdurabledata |
 | Windows client surfaces | Auth/network/settings/history/recovery/polishing/paste controller a originalicon/theme jsou implementovane, drivejsi actualport a syntheticUI evidence zustava scoped | Uplny signed-in physicalhold/toggle/mic+backend/delivery flow a keyboard/screen-reader/DPI/monitor acceptance stale vyzaduji vlastni opravneny real-world test; ne nahrazovat600NoPorts |
@@ -4940,9 +4940,63 @@ vcetne actual3sessential-finalfailure (noPASS, snapshotbeforecleanup)
 a exactownedchildExit7+rawstreams bez diagnosticoverride. PS5separate
 streamcapture-Wait-PassThru zachovavaobservedexit. NativeRusttree3c92091f/
 compiledAB98/fixture528a jsou BEZEZMENY, legacyBzustavablokovany.
-MatchingharnessCI a praveONEreplacementSTREAMING3600 byly explicitnezadany;
-novy main se NEPROHLASUJE za pokracovani stareho47m nebo jehoPASS.
-Teprve replacementhourPASS+ledger/cleanup povoli zadanylegacyB.
+Host-only commit `463535e18c0ab4efa828c5ee8b05b30c08156c5c` ma matching
+CI41993726504 ALL5SUCCESS, vcetne Win20guard+8hostgroups/currentnative/
+3ssmoke/MSRV/container. PraveONEreplacementSTREAMING3600 byl nasledne
+explicitne povolen a probehl niz; nejde o pokracovani stareho47m nebo
+preznaceni jeho vysledku.
+
+### Replacement STREAMING functional3600: PASS, exact115200000 and confirmed-cursor rotation
+
+NativecompiledAB98/fixture528a0244e354a8f0ce312a6d44523d3770068e9a7253b7762097f6e5acb60aa6/
+Rusttree3c92091f BEZEZMENY, host463. MatchinghostCI41993726504 i puvodni
+nativeCI41977537100 ALL5SUCCESS,8frozeninputs a predchozi600/47mproofhashes
+proverenypredMAIN. FreshmarkedTempGUID, strictnonce/PID/binsha/readiness
+aplikovane; zadny sourceedit/build/testload/CDB/Procmon/resourcesampler
+behemrunu. Toto je praveONE nove explicitnezadanyreplacementMAIN.
+
+Actual **3600.0017623s**, exact **115200000 produced/admitted/received/
+completed-append/saved/sent/confirmed bytes**,90000native1280Bpacketequivalents.
+1800orderedconfirmedcursors64000..115200000. Actualstreamstarts
+**[0,96000000]**: druhy start je PRESNEdurableconfirmedcursor#1500;
+dalsiconfirmedcursor96064000. Native ordered-sample assertion a exactni
+115200000providerbytes potvrzuji kontinualniporadi bezopakovani jiz
+potvrzenehoaudia. Nativeconfigured50minrotationpath se skutecne provedl.
+96000000/32000=3000s je audioequivalent; presnyhostwallrotationtimestamp
+**NOT_EXPORTED**, neni domyslenym casem breakpointu/externim trace.
+
+Original2s/30s/5s normalcontroller/capture/writer/read/pump/sealer/outbox
+joins aACK, History-before-handoff, polisher a exportovane
+pins/inspections/aliascapacity0. Actualjob/room/reservationcounter
+UNEXPORTED: jejich shutdown/journaldelete lifetime je code+nativeassertion
+proof, nikoli inventedexternal0. NativeExit0 i collectorExit0 primo
+zaznamenane, native+hoststderr0, zadnyfirsterror/renamewitness.
+Authoritativni finalJSON je byte-data objektove shodny s nativeidle-ready,
+completion-read/exit-read identity reporty validni.
+
+**Diagnostika neni acceptancefallback:**60durablerows obsahuje24freshminute
+observations a36explicitGAP/NOT_OBSERVED (read/validation100ms budget
+vycerpany, casto bezIOerror). Tyto36minute nemaji countervalues a zustavaji
+nepozorovane; nevyplnuji se predchozimi hodnotami ani0. Job nebyl kvuli
+diagnostice ukoncen. FunctionalPASS vychazi pouze z actualfinaldata/
+nativeassertions/Exit0/identity/hashes, ne z completeprofileru/minuteserie.
+NoCPU-RSS/startup/hour10MiB threshold se netestoval.
+
+POEXIT372snapshotfilehashes,8frozeninputs, predchozidukazy a nezmeneny
+clean463/Rusttree overeny. Knownhelper78224/collector85436/native116076
+absent; pouze exactTemp82fc5c5d116944268a075027f7bd7439 odstranen
+AZpoverifiedsnapshot. Native precleanupfreshmanifest/sample/byte/order/
+cursorassertions probehly predACKdelete; **externaloriginalcipher/counts
+NOT_OBSERVED** a nelze je z prazdnehopostACKstavu zpetne rekonstruovat.
+Persistentproof `functional-controller-hour-ab98-controlfix/independent-verification.json`.
+
+Toto uzavira tento STREAMINGNoPorts hour/data gate, nikoli legacy, fullGUI/
+physical/auth/backenddelivery/installer/privateAzure nebo historickeho0x5
+actorcausality. Vsechny starsifailures vcetne47mHOSTinterruptu zustavaji.
+Po tomtopositivePASS+ledger/cleanup je vyslovne zadany dalsi CODEkrok:
+boundedlegacyraw-window/ownedsealer z `legacy-checkpoint-assessment.txt`,
+targetedRED/GREEN/parity/cancellation/rootguards a uzkyOpusreview/CI.
+Zadny dalsistreaminghour ani legacydlouhyrun timto nevznika.
 
 **Legacy zbyvajici sourcegate:** `legacy_session.rs:225-238` stale drzi
 vlastni state pres chunkerappend a synchronni checkpoint; result-save
