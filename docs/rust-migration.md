@@ -44,9 +44,9 @@ uz uzivatel nechce.
 | Mereni Windows klienta | NOVA vyslovne schvalena quiet-window current071/checkout86f3b0f full-runtime signed-out30+30/3paired301-point PASS: p95Rust257.948ms,meanprivate3.427MiB,observedpeak3.992MiB. Vsechnyrawvalues/pairedthresholds/cleanup nezavisleovereny;starsi7bPASS ia2d/3f4FAILEDINCOMPLETE zachovany,neprepisuji se na signed-in/physical scope |
 | Microphone readiness | Jeden actual240ms probe a samostatne schvalena30+30 paired serie prosly; first-PCM p95Rust80.75% C#baseline, bez audio souboru/uploadu |
 | Engine longevity | Actual3600s synthetic PCM/real50min rotation,115200000 exact bytes; worst idle growth1.645MiB<10MiB, engine-only PASS |
-| Current controller functionality/reliability | STREAMING AB98 actual3600.0017623s FUNCTIONALPASS/exact115200000PCM/rotation[0,96000000]/normaljoinsACK je ulozeny milnik. LEGACYownedsealer/sharedwindow: actualsingleworker192kRED->GREEN, EMITcadenceRED->GREEN/MAX4C#restore/working-vs-durableASRproof a odd64001RED->GREEN. Uzkyreview bezhighconfidencebug; final173native+7bin/189otherworkspace/5C#golden/7rollback/release/3s96000PASS. MatchingnewCI zbyva. AB98hour se NEPREZNACUJE na novyrefactor nebo legacy/fullGUI/physical/install/privateAzurePASS |
-| CI nativniho inkrementu | Legacycodeec6ad0c/CI42017380685 attempt2 ALL5SUCCESS; attempt1existingelapsedguardFAIL retained, no sampler/budgetpatch. Testprofileebea9a0/CI42029183984 ALL5SUCCESS vcetne Winlegacy+streamsmokes/6golden/20root+10host/MSRV/container. Nasledny fakeRefinerfix potrebuje NOVYmatchingCI, pending. NativeFS/fault integration serialni, ostatniworkspaceparalelni; neni production cutover |
-| Legacy functional profile | Actual600.0015811s NATIVE capture/storage/150C#WAV/ASRorder/deliveryjoinsPASS/raw19200000, ale collectorVERDICTFAIL kvuli42fakeRefinerprovenancewarnings, neoverallPASS. Minimaltest-onlyfakeRefiner RED->GREEN/current177native+7bin/189other/20root+10host/6C#golden/oba strictstderr0 3ssmokesPASS. ONEcorrectedactual120 zadany AZpo novemmatchingCI;600 se neopakuje |
+| Current controller functionality/reliability | WindowsNoPorts FUNCTIONALcapture/data/controller gates obouenginu uzavreny vpresnemscope: STREAMING AB98 actual3600.0017623/exact115200000/real50minrotation/joinsACK; LEGACY currentec6production source native600data+150C#WAV/joinsPASS a correctedtestfixture actual120.008364/fullnormalflow/strictstderr0/native0collector0PASS. Controlled192k/EMIT/MAX4/oddfragment/ASRworkingstate/faultproofy zachovany. Neni fullGUI/physical/install/privateAzure/wholemigrationPASS |
+| CI nativniho inkrementu | Currenta5f8081/CI42035902584 ALL5SUCCESS strictAPI+actualWinlog177native/20root+10host/6C#120600golden/both3smodes/MSRVWinLinux/container. Oldec6CI420173attempt2ALL5/attempt1guardFAIL aebeaCI420291ALL5 zustavaji scoped. NativeFS/fault integration serialni, ostatniworkspaceparalelni; neni production cutover |
+| Legacy functional profile | Actual600.0015811 NATIVEcapture/storage/150C#WAV/ASRorder/deliveryjoinsPASS/raw19200000, ale ORIGINALcollectorFAIL1/42fakeRefinerwarnings retained. Po minimaltest-onlyuniqueanchorfix actual120.008364/raw3840000/30C#WAV/provider4006400/polisher0fallback/deliveryACK+joineddelete/strictstderr0/native0collector0PASS. Stejne5productionhashes+product2c6f; zadny600repeat/legacyhour |
 | OAuth/token-store/PubSub klient | Native flow implementovany; samostatny live Google auth-only/local-signout a assisted manual clipboard probe PASS, full signed-in backend/controller dictation stale chybi; samostatny automatic DesktopGuard port viz dalsi radek |
 | Automatic DesktopGuard paste port | NOVYexactonephysicalpostfix5b test PASS:one4eventnativeCtrlV/exactownfieldmarker/normalclosed,no retry. Nejdenifullcontroller/hold-toggle/hour/realbackend acceptance;older50040BLOCKED/45788assisted zustavaji |
 | Diktovani/recovery UI | Native microphone/hotkeys/overlay/paste controller, oba enginy, journal, polishing a outbox implementovany; real-world a rozsahlejsi fault/E2E akceptace zbyva |
@@ -4838,7 +4838,7 @@ Puvodnifailedhost1/main0 zustava; toto je presneONEcorrectedlaunch/main1,
 ne opakovani jizbezel600produceru. Neni hour/real50minrotation/GUI/install/
 privateAzure/performance ani historickeho0x5actorPASS.
 
-### Functional completion ledger after owned-sealer600
+### Historical functional completion ledger after owned-sealer600
 
 | Surface | Implemented/verified | Specific remaining gate |
 | --- | --- | --- |
@@ -4850,7 +4850,7 @@ privateAzure/performance ani historickeho0x5actorPASS.
 | Rust cloud API/worker/cleanup | Implemented adapters/contracts, offline+RESTfixture/parity a unprivilegedcontainerCI, classicalACAarchitektura zachovana | ActualprivateAzureUAMI/IAM/PE/Speech/queue/KEDA/scheduledJob runtime a cutover nejsou overene. Zadny productiondeploy/resource/access mutation nebo placeny modelcall nebyl proveden |
 | Performance | Uzivatel prijal dosavadni revision-scoped evidence jako dostatecnou | Zadny dalsi CPU/RSS/startup/hour10MiB benchmark se nevraci; funkcni hour neni pametovamerka |
 
-Nejmensi zbyvajici CODEkrok je analogicka legacycapture isolation, nikoli
+Tehdejsi nejmensi zbyvajici CODEkrok byla analogicka legacycapture isolation, nikoli
 znovu CDB/performance/permissionloop. Read-onlyassessment nadab98 je ulozen
 v `owned-sealer-work/legacy-checkpoint-assessment.txt`: sdilet chargedRAW
 window/reservation, vlastni joinedlegacysealer pod D feeduje nezmeneny
@@ -5352,3 +5352,75 @@ stderr0/30oraclechunks/exactraw3840000, normal30slegacy5sfixture/delivery
 ACK/joineddelete a optionalGAPpolicy. Zadne120autoretry/600repeat/hour/
 performance/CDB/physical/install/Azure. Po strict120PASS nasleduje presny
 WindowsFUNCTIONALcompletionledger a oddelene real-world/releasecloudgates.
+
+### Corrected legacy120 full normal-flow acceptance
+
+Code/testfixture `a5f80810f26352e327b7626480697de966fd4346`,
+Rusttree `f11db385d67d11f321ec8d49f4c8eed7875be28e`, currentd42e/PDB2715.
+ExactCI42035902584 actualAPI ALL5jobs+vsechny requiredWinstepsSUCCESS,
+actualWinlog potvrzuje177native/20root+10host/6golden/both3smodes.
+Zadny oldCIgreenrelabel, zadny novyperformancebenchmark.
+
+Po VerifyOnlysource/remote/CI/helper/fixture/PDB/120C#oraclehash gate ONE
+actualLEGACY120/newTemp536e039156a44d5c9857867ce1b81a32:
+strictready8.3179476s/144attempts/15s, MAINBEGIN/PIDs/nonce/modehash verified.
+JednaMAIN+samostatnyexisting2swarmup/0extracapturekalibraci. Behemcapture
+zadnybuild/test/sourceedit/debug/perf/liveRecoverycontentobserver.
+
+**FUNCTIONAL_LEGACY120_CORRECTED_REFINER_FULL_NORMAL_FLOW_ONLY_PASS:**
+actual120.008364s, exactRAWproduced/admitted/received/completed/saved3840000.
+Vsech30WAVhash/length/endcursor/overlap presne podleC#oracle1deeb428,
+providerPCM4006400 (NEraw), lastWAV95404/end3840000/digest33fd2e70.
+Providerfirstcompletion[1,0], vsech30ASRresults v chronologicaloriginal
+Historytext; prehandoffHistoryfallback0 a polishedtext sourceassertsPASS.
+NativeExit0/collectorExit0/nativeSTDERR0/collectorSTDERR0, actualdeliveryACK,
+Historybeforehandoff, polisher, normalcapture/writer/sealer/ASRpump/readIO
+join-before-deleteidle; original30slegacy5sfixture. Legacyconfirmed0schema/
+auditupload0/outboxACKnullN/A zustava spravne, ne fakecloudACK.
+
+Finalactualraw3840000 se NENAHRAZUJE minutovymprogress: minute2fresh
+snapshot mel saved3809280/through3744000 pri capturetaildrain, zatimco
+typedauthoritativefinal/nativefreshmanifest kontrola potvrzuje3840000.
+Optionalminute1GAP a minute2fresh jsou presne1+1/2records, zadny false0
+nebo stale-as-current. Exportedpins/inspections/aliascapacity0; room/
+reservationjobcountsUNEXPORTED jsou jen code/native lifetimeproof.
+
+POEXIT24snapshotfilehashes/allfrozeninputs+old600proofhashes unchanged,
+104768/121552/129656 absent; pouzeexactTemp536e odstranen AZpo verified
+snapshot. Externalprecleanuporiginalcipher/counts NOT_OBSERVED, protoze
+nativeactualdeliveryACK uz spravne vyvolal joineddelete. Nebylo nove
+producerfailure/renamewitness/panic. Proof:
+`functional-controller-legacy120-a5f8081/independent-verification.json`.
+
+Tento strict120 uzavira opraveny refinement/handoff/fullharness gate pro
+STEJNYproductioncodeec6/5hashes/product2c6f. Puvodni600NATIVEcapture/
+durability/150chunkoracleproof zustava platny ve svemscope; jeho collector1/
+42warnings zustavaji OLD_FAKE_FIXTURE_FAIL, nikdy ne overall600PASS.
+Nebyl druhy600, legacyhour ani novystreaminghour.
+
+### Windows functional completion and remaining release gates
+
+**Uzavreno:** implementace WindowsRustsurfaces a ridene NoPortsfunctional/
+data/compatibility/controller gates vcetne OBOUenginu. Neni to tvrzeni
+univerzalniho physicalGUI nebo productioncloudreplacement. Dalsi
+performancebenchmarky ani genericky dalsihour nejsou potrebny/zadany.
+
+| Surface | Konkretni dokonceny dukaz | Co presne jeste NENI overeno nebo pripraveno |
+| --- | --- | --- |
+| Rust Windows implementace | Nativeauth/network/hotkeys/mic/controller/streaming+legacy/Settings/History/Recovery/polishing/outbox/guardedpaste/originalicon+theme implementovany; current177native+7bin/189otherworkspace, fmt/allfeatureClippy/release/ALL5CI | Implementace neni sama o sobe signed-in physicalE2E nebo releaseauthorization |
+| Streaming capture/data | AB98/528a actual3600.0017623/exact115200000orderedPCM/1800cursors/streamstarts[0,96000000]/confirmedcursor1500 realconfigured50minrotation/no replay/normaljoinsACK;24fresh+36optionalGAP | Hodina plati pro AB98source, NE automaticky novysharedwindowbinary. Currentmechanicalextraction ma controlledregressions/bothmodesCI/strict3ssmoke; zadna dalsihodina se nezada |
+| Legacy capture/data/fullflow | Ec6production: actual600.0015811 raw19200000+150C#WAV/ASRorder/joins nativePASS; a5ftest-onlyfix na stejne5productionhashes actual120.008364/raw3840000+30C#WAV/normalpolisher/History/deliveryACK/native0collector0stderr0PASS | Puvodni600collector1/42warnings retained; strict120 ho nesmaze. Neni to legacyhour, losslesspowerfailurearchive nebo physicalbackendASR |
+| Ownership/recovery/parity |128knewunpublished+64kqueue/RAII1280beforedequeue, OWNsealREDGREEN, EMITcadence/MAX4/ASRworking-vs-durable/odd64001pairedEOF/faultpoison/pins/cancel/StopDiscardAuth/generation/IOjoins; actualC#v1-v4/DPAPI/rollback and6goldengroups | Chunker192kcontext/tail/WAVcopies jsou oddeleny od192knewPCMbound. Pomalydisk nezarucuje neomezenystalltolerance; historicky0x5actorUNKNOWN zustava |
+| Google/microphone/clipboard realports | Drivejsi liveGoogleauth-only+localsignout, actualmicreadinessprobe+vyslovneschvalenapairedserie, exactone5bDesktopGuard4eventCtrlV/exactownmarker PASS | Neni overen celysigned-in hold/toggle actualmic->backendASR->focusguardedpaste/endtoendflow. Dalsifyzicky/login/inputtest vyzaduje konkretni opravneni, ne spoustet z NoPortsgrantu |
+| Original icon/live UI | Byte-exactoriginalICO/DPIresources, WPF-matchedreactiveoverlay15rasterpairs/noactivate900ms, actual144DPI main/History/Recovery/default/min/lazy presentation; indexedHistoryrow2/text, Recoveryselection/scroll, Settings10fields/disabledSave verified | CUIkeyboarddispatchcasec5d3117 zustava BLOCKED: commanddone neprokazal focus/selection/value. Human keyboard/screen-reader/realDPI+monitortransitions/fullphysicalUI nejsou PASS |
+| Installer/staging/rollback | Per-userinstaller/compatibleAppID+IPC/originalicon source a drivejsibuildartifact existuji, dataC#rollbackgoldensPASS; currentproductSHA2c6f je sestaven a unchanged | Obnovit BUILD-ONLYstaginginstaller po finalcodefreeze aulozitchecksum/currentbinarybinding. Skutecnyinstall/upgrade/uninstall/rollback/launchinstalledclient zatim neprobehly a nejsou toutorelaci automaticky povoleny |
+| Rust cloud API/worker/cleanup | Rustadapters/OIDC/UAMI/REST/relay/leases/replay/finalizer/cleanup/sourcewiring implementovany; localcontracts+HTTPSAzurite/Pythonparity a unprivilegedcontainerCI PASS | ActualprivateAzureUAMI/IAM/VNetPE/Storage/Speech/WebPubSub/KEDAqueue/hourlyJob runtime, modelcalls/distributedcutover a productiondeployment neovereny/neprovedeny. C#/Python zustavaji rollback, productiondefaults se neprepinaji |
+| Hosting a rozsah | KlasickaACA APImin1/queueworkerKEDAmin0/hourlycleanupJob/UAMI/privatePE zachovany; Androidnezmenen; historicalfailedruns/evidence retained | ZadnyACAExpress/Sandboxswitch/resource/access/scale/domainchange, release/merge/mainpush nebo paidmodelcall nebyl timto povolen |
+| Performance | Uzivatel prijal dosavadnirevision-scoped evidence jako dostatecnou | NoPorts120/600/3600 je FUNCTIONALproof, ne noveCPU/RSS/startup/hourmemorythresholdPASS. Dalsibenchmarky se nevraceji |
+
+Prakticky nasledujici release-engineeringkrok je novy BUILD-ONLYinstaller
+z currentproduct2c6f + checksum/stagingmanifest a zachovanyC#/Pythonrollback.
+To neinstaluje aplikaci ani nenasazujeAzure. Potom musi konkretni
+release/stagingrozhodnuti oddelit jeste neprovedene physicalUI/install/
+privatecloudacceptance; ne genericpermissionloop nebo dalsiruntimebenchmark.
+Cela migrace se proto NEoznacuje "nasazena/perfektneotestovana/vsehotovo".
