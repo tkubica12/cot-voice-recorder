@@ -2,16 +2,23 @@
 
 **Think out loud anywhere. Paste a clean prompt on your PC.**
 
-**Windows and cloud source now use Rust.** Android remains Kotlin. The current
+**Windows and the deployed cloud now use Rust.** Android remains Kotlin. The current
 native Windows preview is installed and has completed a real user dictation
 workflow; it does not require the .NET Desktop Runtime.
 
-**Deployment/release boundary:** the existing Azure services have not been
-cut over by this source migration. Classic ACA, private networking, managed
-identity, queue scaling and hourly cleanup remain unchanged. Production Rust
-cutover is a separate authorized operation. The existing public **1.6.0** release
+**Production cutover completed on November 5, 2026:** the existing API, worker
+and cleanup Job run the public GHCR image
+`sha256:143f87adcf1f115215e01f7258ec08fb97b3725e9221ef759b3b943a58f40e02`
+from source `fd746f8625d3f7bf845ea899bba8f66acbe7c3b6`. Actual API readiness,
+private Storage bootstrap and the next normal scheduled cleanup succeeded.
+Classic ACA, private networking, managed identity, URL, queue scaling and hourly
+cleanup remain unchanged; the original resource-group ReadOnly lock was restored.
+No new paid-model inference test was run, and an empty worker queue is not proof
+of real-job processing. The existing public **1.6.0** release
 still contains the historical Windows **1.5.1** managed installer and Android
 **1.3.0**; source cleanup does not replace those assets or publish a release.
+The old Standard ACR is still retained for rollback and can still incur charges;
+its removal is a separate destructive decision, not a completed saving.
 
 **Android 1.3.0:** reliable ten-second uploads feed one continuous cloud
 MAI session. Cloud audio is retained for full replay until completion; optional

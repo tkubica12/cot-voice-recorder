@@ -26,6 +26,59 @@ znovu v odpovidajicim scope.
 
 ## Aktualni progress
 
+**ACTUAL PRODUCTION CUTOVER DOKONCEN 5. listopadu 2026.** Nasledujici novejsi stav
+nahrazuje starsi source-only/neprovedene-deployment hranice v historickem ledgeru.
+Zdroj `fd746f8625d3f7bf845ea899bba8f66acbe7c3b6` ma vsechny current quality jobs
+SUCCESS: [Rust/MSRV/container/native](https://github.com/tkubica12/cot-voice-recorder/actions/runs/42093843786),
+[HTTP/SDK/worker/cleanup](https://github.com/tkubica12/cot-voice-recorder/actions/runs/42093843738),
+[native installer](https://github.com/tkubica12/cot-voice-recorder/actions/runs/42093844158).
+Samostatny [trusted-main publisher](https://github.com/tkubica12/cot-voice-recorder/actions/runs/42093843593)
+sestavil a publikoval ONE normalni Linux/amd64 Rust image z 93 povolenych
+immutable tracked source souboru, bez runtime konfigurace, osobnich dat,
+testovych fixture a build outputs. Pouzil pouze job-scoped GITHUB_TOKEN.
+Skutecny anonymni manifest+config HTTP200/SHA dukaz potvrdil PUBLIC image
+`ghcr.io/tkubica12/cot-voice-recorder@sha256:143f87adcf1f115215e01f7258ec08fb97b3725e9221ef759b3b943a58f40e02`,
+OCI source/revision, UID10001 a native entrypoint; neodvozovalo se z publicity repa.
+
+Po vyslovnem souhlasu probehl IMAGE-ONLY update existujicich `ca-api`,
+`ca-worker` a `caj-cleanup` na tento digest. API ready revision je
+`ca-api--0000011`, worker `ca-worker--0000008`, vsechny tri ARM provisioning
+Succeeded. Nebyly potreba nove registry credentials/PAT ani GHCR server entry.
+Selected non-image metadata se shoduji s baseline: UAMI/environment/URL,
+command/args, resource allocation, APImin1/workerMin0/azure-queueKEDA,
+cron `0 * * * *`, stare ACR registry entries, env names a secret references.
+Zadne env/secret hodnoty ani customer payloady nebyly exportovany.
+
+Skutecny API HTTPS live+ready HTTP200 nasleduje az po UAMI pristupu ke trem
+privatnim Blob containerum, Queue properties a trem Table metadata. Bez tokenu
+API vraci 401; neprobiha cteni transcriptu. Storage ma public networking
+Disabled/shared keys false, Speech public Disabled/local auth disabled,
+existujici Web PubSub publicni klientsky pristup s local auth disabled zustal.
+Presny group lock `nesahat` byl docasne odebran v povolenem scope a v finally
+obnoven: fresh exact ARM GET potvrdil ReadOnly/name/scope/notes/owners shodu.
+Predchozi bezpecne ukoncene CLI registry/PTY/read-timeout pripravne pokusy
+zustavaji zachovane; nejsou maskovany jako failed Rust runtime ani jako dalsi
+successful rollout. Zadny IAM/network/scale bypass nebyl pouzit.
+
+Normalni NEVYNUCENA scheduled execution `caj-cleanup-29898540` s NOVYM digestem
+probehla `2026-11-05T21:00:00Z` az `21:00:34Z`, Succeeded. Worker mel 0replicas,
+drive Queue properties ukazaly 0zprav: EMPTY_WAITING, nikoli dukaz realneho
+zpracovaneho jobu. Nova placena Speech/LLM/PubSub inference nebyla testovana
+a zadna synteticka recording/queue zprava ani ad-hoc cleanup nebyly vytvoreny.
+Toto omezeni je vyzadany scope, ne tvrzeni o perfektni empiricke vseobecne
+akceptaci kazdeho provider/device/fault scenare.
+
+Stary Standard ACR a digest `9054a0eb...` jsou zatim ponechany pro rollback:
+1repository/15tags15digests, 0current project image refs, ale 3registry entries,
+27inactive app revisions a AcrPull role zustavaji. Project-scoped metadata
+a exact-ACR image projection pro zname ARM container typy v explicitni
+subscription nasly 0aktivnich image consumers; AKS/external/jine subscription
+nejsou tim dokazany jako nepouzivane. ACR muze nadale uctovat poplatky.
+Jeho odstraneni a souvisejici ACR-only Bicep/registry wiring je samostatne
+destruktivni rozhodnuti, ktere dosud NEBYLO provedeno. Git historie, rollback
+images a soukroma Windows zaloha se v cutoveru nemazaly. Windows app/userdata,
+Android a backend URL zustaly beze zmeny.
+
 Dokonceno SOURCE cleanup + fast-forward merge/push do `main`: testovany source
 commit `420922815b29152c5e82235ac4847335eab4e4d4`. Vsechny tri workflow
 na refactor i po pushi main prosly, celkem 7/7 required jobs v kazdem behu:
@@ -38,8 +91,8 @@ envelope/digest/path, s deterministickymi zero/trailing-zero clock cases.
 Po overenem mergi bylo odstraneno presne sest puvodnich nezavedenych managed
 programovych souboru, ktere odpovidaly soukrome zaloze. Bezici Rust aplikace,
 nove prihlaseni/data, konfigurace, uninstaller a autostart nebyly zmeneny.
-Zbyva samostatne schvaleny Rust cloud image cutover na existujicich ACA
-prostredcich; merge nebyl produkcni Azure deploy a nic cloudoveho nesmazal.
+Tento starsi merge sam o sobe nebyl Azure deploy; nasledny samostatne
+schvaleny skutecny GHCR cloud cutover je popsan vyse.
 
 Nove uzivatelske rozhodnuti po lokalni instalaci: cisty stav nove varianty,
 odstraneni puvodnich C#/Python aplikacnich zdroju a nasledny merge. Puvodni
@@ -74,12 +127,11 @@ NEBYL spusten ani nainstalovan. Bezici drive schvaleny klient zustava
 `2c6f5061...`, nove prihlaseni/data se nemenily. Current CI teto cele source
 vymeny musi byt samostatne potvrzeno pred finalnim mergem.
 
-Merge do `main` nasleduje az po source cleanup a CI a po konkretnim finalnim
-pokynu koordinatora. Vsechny ctyri verzovane workflow vetve pouze buildi/testuji
-a ukladaji artefakty; neobsahuji Azure login, ACR publish, produkcni deploy ani
-release. Externi organizacni hooky tim nejsou overene. Azure Rust cutover je
-nadale samostatny neprovedeny krok s vlastnim schvalenim; existujici Python
-container v Azure nebyl zmenen ani odstranen.
+Merge do `main` nasledoval po source cleanup/CI a konkretnim finalnim pokynu.
+Current quality workflow pouze testuji/buildi; samostatny trusted-main workflow
+publikuje GHCR image, nikoli Azure deploy/release. Skutecny image-only Azure
+cutover probehl nasledne s oddelenymi souhlasy, jak dolozeno vyse. Externi
+organizacni hooky nejsou timto vyrokem overene.
 
 Aktualni uzivatelske rozhodnuti: dosavadni performance evidence mu staci;
 dalsi performance benchmarky,30+30/idle/RSS/latency/score-chasing serie a rucni
@@ -108,7 +160,7 @@ uz uzivatel nechce.
 | History cache | JSON/retence/200 entries, atomicka persistence, native list/text a manual copy latest/selected/original implementovany; C# file parity overena |
 | Settings a instalator | CURRENTnormal2c6f/Inno93de6c68 byl vyslovne schvalene per-user nainstalovan. Skutecne instalovane EXE a originalICO odpovidaji staging hashum; puvodni konkretni autostart volba zachovana. Private rollback zaloha zustava oddelena. Samostatne neexecutovane archive extraction stale neprovedeno, ale skutecny doruceny payload je overeny. NativePE0.1.0/setuptext1.5.1preview bez noveho release/versionbump |
 | Original icon a podobne zive popup UI | Original ICO embedded/byte-exact a DPI sizes overeny; WPF-matched reactive overlay15 raster pairs a noactivate/900ms proof, actual144DPI original-themed main/History/Recovery/default/min/lazy presentation overeny. Human keyboard/screen-reader/monitor/physical akceptace stale zbyva |
-| Rust cloud API, worker, cleanup | API/AI/PubSub/live relay, processors/finalization/queue loop, cleanup, bootstrap/CLI a source-only image wiring implementovany; image CI proslo, uplna akceptace zbyva |
+| Rust cloud API, worker, cleanup | ActualPUBLICGHCR143f/sourcefd746 nasazen na vsech3existujicichACA; APIready/UAMIprivateStoragebootstrap+non-AIauthgateovereny, normalcronnewdigestSucceeded. Workerqueueempty/realprocessingNOTOBSERVED; novainferenceNOTRUNzadavanim. UAMI/network/URL/KEDA/cron/ReadOnlylock zachovany; ACRretirementzvlaste |
 | Cloud adapter-matched performance | 33d04aa actual verified-HTTPS Azurite RustREST/PythonSDK30+30/3x100flows PASS po nezavislem prepocitani; neni actual Azure IAM/PE/ACA/model ani worker-latency acceptance |
 | Hosting | Klasicka ACA zustava: API, KEDA queue worker a hourly cleanup Job; Express byl uzivatelem zrusen |
 

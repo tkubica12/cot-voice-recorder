@@ -110,8 +110,9 @@ The script prints the API base URL and all resource outputs at the end.
 
 The source default is now Rust (`-BackendRuntime Rust` remains accepted).
 Executing this script is still a real infrastructure/RBAC/build/deployment
-operation, not an offline check. The source change itself has not cut over the
-existing Azure services. Independent Python SDK test tools use the approved
+operation, not an offline check. The November 5 production cutover used only
+existing-service image updates, not this full provisioning script.
+Independent Python SDK test tools use the approved
 Microsoft feed and `scripts/uv.lock`; no Python runtime is packaged in the image.
 
 ## Publishing and existing-service image updates
@@ -126,9 +127,43 @@ Existing deployments need only image/necessary entrypoint updates to `ca-api`,
 `ca-worker` and `caj-cleanup`, with original image/commands/args recorded for
 rollback. Preserve their UAMI, private network, URL, scaling and hourly schedule;
 do not rerun this full provisioning script for that update. An anonymous
-`ghcr.io` registry reference needs no PAT or new managed-identity role.
+public GHCR image needs no PAT or new managed-identity role. The actual rollout
+succeeded without adding a GHCR registry entry; the old ACR entry was retained.
 Keep the existing ACR and prior digest for rollback until separately authorized
 for retirement. Neither the publish workflow nor CI deploys Azure automatically.
+
+### Current verified deployment
+
+`ca-api`, `ca-worker` and `caj-cleanup` run the same immutable public image
+`ghcr.io/tkubica12/cot-voice-recorder@sha256:143f87adcf1f115215e01f7258ec08fb97b3725e9221ef759b3b943a58f40e02`,
+published by [the trusted-main workflow](https://github.com/tkubica12/cot-voice-recorder/actions/runs/42093843593)
+from `fd746f8625d3f7bf845ea899bba8f66acbe7c3b6`.
+Anonymous manifest/config reads verified its digest, source label, Linux/amd64
+architecture, native entrypoint and unprivileged user before rollout.
+
+Actual API liveness/readiness returned 200; an unauthenticated transcript request
+returned 401 without reading data. Readiness follows successful managed-identity
+checks of the three private Blob containers, work queue metadata and three Tables.
+Storage public networking/shared keys remain disabled; Speech remains private
+with local authentication disabled. Existing public client-facing Web PubSub
+access remains unchanged and still has local authentication disabled.
+Identity, launch arguments, registry references, environment names/secret
+references, ingress URL, scaling and hourly cron matched the pre-update snapshots.
+The resource-group `nesahat` lock was restored to its original ReadOnly level,
+scope, notes and owners. Worker replicas were zero with an earlier empty-queue
+observation; no synthetic work or new model inference was issued.
+
+The next natural cleanup execution, `caj-cleanup-29898540`, ran the new digest
+at `2026-11-05T21:00:00Z` and succeeded at `21:00:34Z`. No ad-hoc cleanup was
+triggered. Existing data retention policy was not changed.
+
+The Standard registry `crcotvrspddxkti` still exists with one repository and
+15 tagged image digests, including the original Python rollback image. No
+current project service image references it, but its three registry entries,
+27 inactive application revisions and AcrPull assignment remain. Deleting it
+would lose direct rollback to those image versions. Current Bicep also still
+declares that registry and its ACR-only wiring, so retirement must address both
+the exact resource and those source references under separate approval.
 
 ### Parameters and secrets
 
