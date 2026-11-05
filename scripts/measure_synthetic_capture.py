@@ -6,7 +6,9 @@ import argparse
 import errno
 import hashlib
 import json
+import math
 import os
+import re
 import statistics
 import subprocess
 import tempfile
@@ -54,48 +56,84 @@ def wait(path: Path, process: subprocess.Popen, seconds: int) -> dict:
     return json.loads(path.read_bytes())
 
 
-class ReadinessError(RuntimeError):
+class ControlReadError(RuntimeError):
     def __init__(self, report: dict):
         self.report = report
-        super().__init__("Owned ready control failed: " + json.dumps(report))
+        super().__init__("Owned control read failed: " + json.dumps(report))
 
 
-def wait_ready(
-    owned: FixtureRoot, process: subprocess.Popen, binary: Path, digest: str, seconds: float
-) -> dict:
-    path = owned.path / "ready.json"
-    expected = {
-        "scope": CONTROLLER_SCOPE, "pid": process.pid, "physical_ports": False,
-        "network_or_auth": False, "full_client_profile": False,
-        "current_controller": True, "renderer": False, "main_ui_or_tray": False,
-        "real_auth_or_pubsub": False, "polisher_and_outbox": True,
-    }
+ReadinessError = ControlReadError
+
+
+def read_control_bytes(path: Path, limit: int) -> bytes:
+    if os.name != "nt":
+        with path.open("rb") as source:
+            return source.read(limit + 1)
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                                  ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    kernel.CreateFileW.restype = wintypes.HANDLE
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.CloseHandle.restype = wintypes.BOOL
+    # Read only; share read/write/delete with the native atomic-publication handle.
+    handle = kernel.CreateFileW(str(path), 0x80000000, 7, None, 3, 0x200080, None)
+    if handle == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        descriptor = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY | os.O_NOINHERIT)
+    except OSError:
+        kernel.CloseHandle(handle)
+        raise
+    with os.fdopen(descriptor, "rb") as source:
+        return source.read(limit + 1)
+
+
+def read_control(
+    owned: FixtureRoot, process: subprocess.Popen, binary: Path, digest: str,
+    name: str, seconds: float, *, wall_deadline: float | None = None,
+    allow_exit: bool = False,
+) -> tuple[dict, dict]:
+    if name not in ("ready.json", "idle-ready.json", "normal-exit.json") and not re.fullmatch(
+        r"progress-[0-9]{4}\.json", name
+    ):
+        raise ValueError("Only explicit owned functional control JSON may be read.")
+    path = owned.path / name
     started = time.monotonic()
-    deadline = started + seconds
+    deadline = min(started + seconds, wall_deadline) if wall_deadline is not None else started + seconds
     attempts = 0
     first = last = None
 
-    def fail(reason: str) -> None:
-        raise ReadinessError({
-            "control_file": path.name, "reason": reason, "attempts": attempts,
+    def report() -> dict:
+        return {
+            "control_file": name, "control_path": str(path), "attempts": attempts,
             "elapsed_seconds": time.monotonic() - started,
             "deadline_seconds": seconds, "native_pid": process.pid,
             "native_exit_code": process.poll(), "first_error": first, "last_error": last,
-        })
+        }
 
+    def fail(reason: str, kind: str) -> None:
+        raise ControlReadError({**report(), "status": "failed", "reason": reason, "kind": kind})
+
+    owned.owned()
+    if hashlib.sha256(binary.read_bytes()).hexdigest() != digest:
+        fail("owned native binary hash changed", "identity")
     while True:
         owned.owned()
-        if process.poll() is not None:
-            fail("owned native exited before validated readiness")
+        exit_code = process.poll()
+        if exit_code is not None and not (allow_exit and exit_code == 0):
+            fail("owned native exited before control observation", "native_exit")
         if time.monotonic() >= deadline:
-            fail("original ready deadline expired")
+            fail("original control read deadline expired", "read_timeout")
         attempts += 1
         try:
             guard(path)
-            with path.open("rb") as source:
-                data = source.read(4097)
-            if len(data) > 4096:
-                fail("ready control exceeds 4096 bytes")
+            limit = 4096 if name == "ready.json" else 2 * 1024 * 1024
+            data = read_control_bytes(path, limit)
+            if len(data) > limit:
+                fail("control JSON exceeds its bound", "invalid")
         except OSError as error:
             item = {
                 "type": type(error).__name__, "errno": error.errno,
@@ -110,32 +148,138 @@ def wait_ready(
                 winerror in (2, 3, 5, 32, 33)
                 or (winerror is None and error.errno in (errno.ENOENT, errno.EACCES))
             ):
-                fail("non-transient control read error")
+                fail("non-transient control read error", "read_error")
             time.sleep(min(0.01, max(0, deadline - time.monotonic())))
             continue
         try:
-            ready = json.loads(data)
+            value = json.loads(data)
         except (json.JSONDecodeError, UnicodeDecodeError) as error:
-            fail(f"invalid complete ready JSON: {type(error).__name__}")
-        if (
-            type(ready) is not dict or ready.keys() != expected.keys()
-            or any(type(ready[key]) is not type(value) or ready[key] != value
-                   for key, value in expected.items())
-        ):
-            fail("ready scope/PID/fields do not match the owned native")
+            fail(f"invalid complete control JSON: {type(error).__name__}", "invalid")
+        if type(value) is not dict:
+            fail("control JSON is not an object", "invalid")
+        guard(path)
         owned.owned()
         if hashlib.sha256(binary.read_bytes()).hexdigest() != digest:
-            fail("owned native binary hash changed")
-        if process.poll() is not None or time.monotonic() >= deadline:
-            fail("native exit or deadline during ready validation")
-        create(owned.evidence / "readiness-read.json", json.dumps({
-            "status": "validated", "attempts": attempts,
-            "elapsed_seconds": time.monotonic() - started,
-            "deadline_seconds": seconds, "first_error": first, "last_error": last,
-            "native_pid": process.pid, "binary_sha256": digest,
+            fail("owned native binary hash changed", "identity")
+        exit_code = process.poll()
+        if exit_code is not None and not (allow_exit and exit_code == 0):
+            fail("native exit during control validation", "native_exit")
+        if time.monotonic() >= deadline:
+            fail("original control read deadline expired", "read_timeout")
+        return value, {
+            **report(), "status": "validated", "binary_sha256": digest,
             "root_marker_and_directory_identity_verified": True,
-        }).encode())
-        return ready
+        }
+
+
+def wait_ready(
+    owned: FixtureRoot, process: subprocess.Popen, binary: Path, digest: str, seconds: float
+) -> dict:
+    ready, report = read_control(owned, process, binary, digest, "ready.json", seconds)
+    expected = {
+        "scope": CONTROLLER_SCOPE, "pid": process.pid, "physical_ports": False,
+        "network_or_auth": False, "full_client_profile": False,
+        "current_controller": True, "renderer": False, "main_ui_or_tray": False,
+        "real_auth_or_pubsub": False, "polisher_and_outbox": True,
+    }
+    if ready.keys() != expected.keys() or any(
+        type(ready[key]) is not type(value) or ready[key] != value
+        for key, value in expected.items()
+    ):
+        raise ControlReadError({**report, "status": "failed",
+                               "reason": "ready scope/PID/fields mismatch", "kind": "identity"})
+    create(owned.evidence / "readiness-read.json", json.dumps(report).encode())
+    return ready
+
+
+def observe_progress(
+    owned: FixtureRoot, process: subprocess.Popen, binary: Path, digest: str,
+    minute: int, wall_deadline: float,
+) -> dict:
+    try:
+        item, report = read_control(
+            owned, process, binary, digest, f"progress-{minute:04}.json", 0.1,
+            wall_deadline=wall_deadline,
+        )
+    except ControlReadError as error:
+        if error.report["kind"] == "read_timeout" or (
+            error.report["kind"] == "native_exit" and error.report["native_exit_code"] == 0
+        ):
+            return {"minute": minute // 60, "status": "progress_gap",
+                    "observation": "NOT_OBSERVED", "control_read": error.report}
+        raise
+    keys = ["accepted_bytes", "writer_received_bytes", "writer_completed_bytes",
+            "saved_bytes", "confirmed_bytes"]
+    if item.get("phase") != "capturing" or any(
+        type(item.get(key)) is not int or item[key] < 0 for key in keys
+    ) or type(item.get("elapsed_seconds")) not in (int, float) or not math.isfinite(item["elapsed_seconds"]) or item["elapsed_seconds"] < 0:
+        raise ValueError("Owned progress control schema is invalid.")
+    row = {"minute": minute // 60, "elapsed_seconds": item["elapsed_seconds"],
+           **{key: item[key] for key in keys}}
+    if report["first_error"] is not None:
+        row["control_read"] = report
+    return row
+
+
+def log_progress(directory: Path, row: dict) -> dict | None:
+    try:
+        with (directory / "functional-progress.jsonl").open("ab") as progress:
+            progress.write(json.dumps(row).encode() + b"\n")
+            progress.flush()
+            os.fsync(progress.fileno())
+        print(json.dumps(row), flush=True)
+    except OSError as error:
+        return {
+            "minute": row["minute"], "errno": error.errno,
+            "winerror": getattr(error, "winerror", None),
+            "message": str(error.strerror or type(error).__name__)[:256],
+        }
+    return None
+
+
+def validate_completed(completed: dict, audio_seconds: int) -> None:
+    expected = audio_seconds * 32000
+    for key in ["captured_bytes", "confirmed_bytes", "verified_provider_bytes",
+                "accepted_bytes", "writer_received_bytes", "writer_completed_bytes"]:
+        if type(completed.get(key)) is not int or completed[key] != expected:
+            raise RuntimeError(f"Exact functional PCM proof failed: {key}")
+    if (
+        completed.get("scope") != CONTROLLER_SCOPE
+        or type(completed.get("audio_seconds")) is not int
+        or completed["audio_seconds"] != audio_seconds
+        or completed.get("current_controller") is not True
+        or completed.get("renderer") is not False
+        or completed["engine_lock"]["saved_bytes"] != expected
+        or completed["engine_lock"]["confirmed_bytes"] != expected
+        or completed.get("capture_frame_bytes") != 1280
+        or completed.get("capture_frame_interval_ms") != 40
+    ):
+        raise RuntimeError("Durable cursor, identity or original native frame contract mismatch.")
+    cursors = completed.get("confirmed_cursors", [])
+    starts = completed.get("stream_starts", [])
+    if type(cursors) is not list or type(starts) is not list or any(
+        type(cursor) is not int for cursor in cursors
+    ):
+        raise RuntimeError("Functional cursor lists are invalid.")
+    committed = set(cursors)
+    if (
+        type(completed.get("actual_capture_seconds")) not in (int, float)
+        or not math.isfinite(completed["actual_capture_seconds"])
+        or completed["actual_capture_seconds"] < audio_seconds
+        or any(completed.get(key) is not True for key in [
+            "capture_joined", "outbox_acknowledged", "history_saved_before_handoff", "polisher_exercised"
+        ])
+        or not cursors or cursors[-1] != expected
+        or any(left >= right for left, right in zip(cursors, cursors[1:]))
+        or not starts or starts[0] != 0
+        or any(type(start) is not int or (start != 0 and start not in committed) for start in starts)
+        or (audio_seconds > 3000 and len(starts) < 2)
+    ):
+        raise RuntimeError("Duration/order/rotation/stop-join/outbox proof failed.")
+    if any(type(completed["recovery_io"][key]) is not int or completed["recovery_io"][key] != 0 for key in [
+        "active_pinned_reads", "active_manifest_inspections", "retained_manifest_capacity_bytes",
+    ]):
+        raise RuntimeError("Joined functional capture still has pinned/alias ownership.")
 
 
 def start_readers(process: subprocess.Popen, readers: list[threading.Thread]) -> None:
@@ -637,6 +781,22 @@ def run_functional(
                 raise RuntimeError("Native log preservation failed: " + "; ".join(log_errors))
             return tuple((directory / name).read_text(errors="replace") for name in ["stdout.txt", "stderr.txt"])
 
+        observations: list[dict] = []
+        diagnostic_log_errors: list[dict] = []
+        last_essential_control = None
+
+        def progress_summary() -> dict:
+            unrecorded = {error["minute"] for error in diagnostic_log_errors}
+            observed = [row["minute"] for row in observations
+                        if row.get("status") != "progress_gap" and row["minute"] not in unrecorded]
+            return {
+                "observed_minutes": observed,
+                "unobserved_minutes": sorted(set(range(1, audio_seconds // 60 + 1)) - set(observed)),
+                "gaps": [row for row in observations if row.get("status") == "progress_gap"],
+                "diagnostic_log_errors": diagnostic_log_errors,
+                "optional_diagnostics_not_capture_counters": True,
+            }
+
         try:
             create(directory / "native-owner.json", json.dumps({
                 "collector_pid": os.getpid(), "native_pid": process.pid,
@@ -651,63 +811,45 @@ def run_functional(
             if process.poll() is not None:
                 raise RuntimeError("Owned native exited before main begin.")
             create(control / "begin", nonce.encode())
-            deadline = time.monotonic() + audio_seconds + 60
+            began = time.monotonic()
+            deadline = began + audio_seconds + 60
             minute = 60
-            with (directory / "functional-progress.jsonl").open("xb") as progress:
-                while not (control / "idle-ready.json").exists():
-                    if process.poll() is not None:
-                        raise RuntimeError(f"Native functional controller exited: {process.returncode}")
-                    if time.monotonic() > deadline:
-                        raise TimeoutError("Functional capture/completion wall budget expired.")
-                    point = control / f"progress-{minute:04}.json"
-                    if point.exists():
-                        item = json.loads(point.read_bytes())
-                        row = {"minute": minute // 60, **{
-                            key: item[key] for key in ["elapsed_seconds", "accepted_bytes",
-                            "writer_received_bytes", "writer_completed_bytes", "saved_bytes", "confirmed_bytes"]
-                        }}
-                        progress.write(json.dumps(row).encode() + b"\n")
-                        progress.flush()
-                        os.fsync(progress.fileno())
-                        print(json.dumps(row), flush=True)
-                        minute += 60
-                    time.sleep(0.1)
-            completed = json.loads((control / "idle-ready.json").read_bytes())
-            expected = audio_seconds * 32000
-            for key in ["captured_bytes", "confirmed_bytes", "verified_provider_bytes",
-                        "accepted_bytes", "writer_received_bytes", "writer_completed_bytes"]:
-                if completed.get(key) != expected:
-                    raise RuntimeError(f"Exact functional PCM proof failed: {key}")
-            if (
-                completed["engine_lock"]["saved_bytes"] != expected
-                or completed["engine_lock"]["confirmed_bytes"] != expected
-                or completed.get("capture_frame_bytes") != 1280
-                or completed.get("capture_frame_interval_ms") != 40
-            ):
-                raise RuntimeError("Durable cursor or original native frame contract mismatch.")
-            cursors = completed.get("confirmed_cursors", [])
-            if (
-                completed["actual_capture_seconds"] < audio_seconds
-                or not completed.get("capture_joined") or not completed.get("outbox_acknowledged")
-                or not completed.get("history_saved_before_handoff") or not completed.get("polisher_exercised")
-                or not cursors or cursors[-1] != expected
-                or any(left >= right for left, right in zip(cursors, cursors[1:]))
-                or completed["stream_starts"][0] != 0
-                or (audio_seconds > 3000 and len(completed["stream_starts"]) < 2)
-            ):
-                raise RuntimeError("Duration/order/rotation/stop-join/outbox proof failed.")
-            if any(completed["recovery_io"][key] != 0 for key in [
-                "active_pinned_reads", "active_manifest_inspections", "retained_manifest_capacity_bytes",
-            ]):
-                raise RuntimeError("Joined functional capture still has pinned/alias ownership.")
+            while not (control / "idle-ready.json").exists():
+                if process.poll() is not None:
+                    raise RuntimeError(f"Native functional controller exited: {process.returncode}")
+                if time.monotonic() > deadline:
+                    raise TimeoutError("Functional capture/completion wall budget expired.")
+                if minute <= audio_seconds and time.monotonic() >= began + minute:
+                    row = observe_progress(owned, process, binary, digest, minute, deadline)
+                    observations.append(row)
+                    warning = log_progress(directory, row)
+                    if warning is not None:
+                        diagnostic_log_errors.append(warning)
+                    minute += 60
+                time.sleep(0.1)
+            completed, last_essential_control = read_control(
+                owned, process, binary, digest, "idle-ready.json", 15,
+                wall_deadline=deadline, allow_exit=True,
+            )
+            validate_completed(completed, audio_seconds)
+            create(directory / "completion-read.json", json.dumps(last_essential_control).encode())
             create(control / "finish", nonce.encode())
+            exit_deadline = time.monotonic() + 15
             process.wait(timeout=15)
             out, error = joined_logs()
             if process.returncode or error or "test result: ok. 1 passed;" not in out:
                 raise RuntimeError(f"Native functional fixture failed: {process.returncode}; {error}")
-            exit_proof = json.loads((control / "normal-exit.json").read_bytes())
-            if not exit_proof.get("current_controller") or exit_proof.get("physical_ports") is not False:
+            exit_proof, last_essential_control = read_control(
+                owned, process, binary, digest, "normal-exit.json", 15,
+                wall_deadline=exit_deadline, allow_exit=True,
+            )
+            expected_exit = {"phase": "normal-exit", "current_controller": True, "physical_ports": False}
+            if exit_proof.keys() != expected_exit.keys() or any(
+                type(exit_proof[key]) is not type(value) or exit_proof[key] != value
+                for key, value in expected_exit.items()
+            ):
                 raise RuntimeError("Normal functional controller shutdown was not proved.")
+            create(directory / "exit-read.json", json.dumps(last_essential_control).encode())
             if hashlib.sha256(binary.read_bytes()).hexdigest() != digest:
                 raise RuntimeError("Frozen native fixture changed during the functional run.")
             result = {
@@ -715,11 +857,14 @@ def run_functional(
                 "native_source_revision": native_revision or revision, "binary_sha256": digest,
                 "pid": process.pid, "audio_seconds": audio_seconds, "actual_capture": completed,
                 "functional_only": True, "resource_sampling": False, "whole_migration_acceptance": False,
+                "progress_observations": progress_summary(),
                 "precleanup_external_counts_cipher": "NOT_OBSERVED_EXTERNALLY; native final assertions precede ACK cleanup",
             }
             owned.preserve(process, failed=False)
         except BaseException as error:
-            if process.poll() is None:
+            native_exit_before_cleanup = process.poll()
+            kill_requested = native_exit_before_cleanup is None
+            if kill_requested:
                 process.kill()
             process.wait(timeout=10)
             out, failure = joined_logs()
@@ -727,7 +872,12 @@ def run_functional(
                 "status": "failed", "scope": CONTROLLER_SCOPE, "functional_only": True,
                 "source_revision": revision, "native_source_revision": native_revision or revision,
                 "binary_sha256": digest, "pid": process.pid, "error": str(error),
-                "readiness_read": error.report if isinstance(error, ReadinessError) else None,
+                "control_read": error.report if isinstance(error, ControlReadError) else None,
+                "last_essential_control": last_essential_control,
+                "native_exit_before_cleanup": native_exit_before_cleanup,
+                "native_kill_requested_by_collector": kill_requested,
+                "native_exit_after_cleanup": process.returncode,
+                "progress_observations": progress_summary(),
                 "stdout": out, "stderr": failure, "whole_migration_acceptance": False,
             }, indent=2).encode())
             owned.preserve(process, failed=True)

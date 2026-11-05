@@ -44,7 +44,7 @@ uz uzivatel nechce.
 | Mereni Windows klienta | NOVA vyslovne schvalena quiet-window current071/checkout86f3b0f full-runtime signed-out30+30/3paired301-point PASS: p95Rust257.948ms,meanprivate3.427MiB,observedpeak3.992MiB. Vsechnyrawvalues/pairedthresholds/cleanup nezavisleovereny;starsi7bPASS ia2d/3f4FAILEDINCOMPLETE zachovany,neprepisuji se na signed-in/physical scope |
 | Microphone readiness | Jeden actual240ms probe a samostatne schvalena30+30 paired serie prosly; first-PCM p95Rust80.75% C#baseline, bez audio souboru/uploadu |
 | Engine longevity | Actual3600s synthetic PCM/real50min rotation,115200000 exact bytes; worst idle growth1.645MiB<10MiB, engine-only PASS |
-| Current controller functionality/reliability | Owned-sealer ab98d64/CI41977537100ALL5SUCCESS; hostguardEB7/CI41980420636ALL5SUCCESS. ONEcorrectedFUNCTIONAL600_ONLYPASS actual600.0020259s/exact19200000PCM/normaljoinsACK. Puvodnihostlaunch1/main0a2f8hourFAIL1604s zachovany. Newhour/50minrotation nadab98 stale chybi; legacyownsynccheckpoint potrebujeanalogickoucodeopravu |
+| Current controller functionality/reliability | Owned-sealer AB98+hostEB7 actual600sPASS/19200000PCM zachovan. Nasledny hour INTERRUPTEDbyHOST optionalprogress read2820s, ne observedsealerFAIL/anihourPASS; finalacceptedUNKNOWN/durable90240000. Nova celaown-control readaxis ma shareR/W/D a nonfatalexplicitprogressGAP,20guard+8hostcases localPASS; matchingharnessCI/replacementhour dosudpending. LegacyB stale nezahajen a podminen positivehourPASS |
 | CI nativniho inkrementu | Exactab98d64/CI41977537100 Windows/Linux/MSRV1.85/container ALL5SUCCESS, Windows163nativePASS16ignored, samepacketguard/parity a3s NoPorts smoke PASS. NativeFS/fault integration je explicitneserialni; ostatniworkspaceparalelni. Old2f8/05/failedCI zustavaji revision-scoped, neni production cutover |
 | OAuth/token-store/PubSub klient | Native flow implementovany; samostatny live Google auth-only/local-signout a assisted manual clipboard probe PASS, full signed-in backend/controller dictation stale chybi; samostatny automatic DesktopGuard port viz dalsi radek |
 | Automatic DesktopGuard paste port | NOVYexactonephysicalpostfix5b test PASS:one4eventnativeCtrlV/exactownfieldmarker/normalclosed,no retry. Nejdenifullcontroller/hold-toggle/hour/realbackend acceptance;older50040BLOCKED/45788assisted zustavaji |
@@ -4857,6 +4857,92 @@ PcmChunker a uklada explicitend+tail/chunks; nove128kRAM-not-durable jsou
 oddelene od existujiciho192kchunker allocation/durablecontext/600msoverlap
 a encodedtail/copies. Finishdrain/flush/ASR2/result-order/rollback ziskaji
 vlastni controlledproof. Legacycode se pri tomto600runu nemenil.
+
+### AB98 streaming hour interrupted by optional host telemetry at minute47
+
+Stejne AB98/528a nativeimage, EB7host, bothmatchingALL5CI a doc-onlyHEAD
+e3621e3,8frozeninputs/600proofhash/strictreadiness predMAIN; NoPorts/noresource
+profil/build/test/sourceedit behemrunu. Hostulozil46minuteobservations,
+pak jeho `progress-2820.json.read_bytes()` vyhodil PermissionErrorErrno13.
+LauncherobservedExit1 a plne streamhashes jsou ulozeny. Nativnisterr0,
+zadny observedOverflow/NativeError/first-rename witness, zadny normalexit.
+Toto je **HOST_INTERRUPTED/verificationINCOMPLETE**, ne prokazana regrese
+sealeru ani hodinovyPASS. Blegacy se NEZAHAJIL.
+
+Posledni nativni report je poexitcitelnypoint2820.0147129s:
+accepted=received=completed90241280, provider90240000,
+saved=confirmed90176000, observedqueuepeak7. RootIOatomic-write10.9677ms
+je user-mode age v tomtocontrolsample, ownertraceoff=>UNOBSERVED.
+Finaladmission neni exportovan/immutable po hostinterruptu:
+**UNKNOWN**, nikoli90241280 nebo saved. Oldcollector nezaznamenal ani
+skutecny executedkillbranch/nativeexitcode; source handlerkill-if-alive
+neni exactobservedNative101/normalstopjoin.50minrotation nebyl dosazen.
+
+POEXITstdinDPAPI/WAV/digest/order/binding/cipher proof: **durablesaved90240000,
+confirmed90176000/pending64000**, EOFfalse,1410entries/1referencedpendingfile,
+0publishedorphans/0stagingtmp/0confirmedleftovers/overlap0. Lastobserved
+admission minusdurable dava pouze **>=1280B RAM-not-durable lowerbound**;
+exactgap a allAcceptedSaved zustavajiUNKNOWN. History[]/zadnehandoff.
+290snapshotfilehashes a8inputs/source nezmenene, knownhelper89480/
+collector26992/native106680 absent; exactTempe662096d2a3c453787e45edcc92fb71d
+odstranen pouze po verifiedsnapshot. Proofy v
+`functional-controller-hour-ab98d64/{independent-verification,postexit-prefix,
+postexit-file-metadata}.json`; zadny silent rerun nebo legacyedit.
+
+### Whole functional host-control read axis, optional diagnostics cannot kill capture
+
+Host-only nasledna oprava audituje VSECHNY obsahove livecontrolreads
+functionalwrapperu: ready, minuteprogress, idle/final result a normalexit.
+Jediny maly reader prijima pouze tyto vlastni control filenames pod
+overenym markerem/nonce/directoryidentity, no-reparse, aliveownedPID/
+frozenbinSHA a strictboundedJSON. Progress phasefiles se behemcapture
+neoteviraji; native je jen uklada a host je kopiruje POEXIT. Capturemanifest/
+audio se livehostem NECTOU. Stare resourceprofiling entrypointy se nepoustely.
+
+Windowscontrolreader pouziva GENERIC_READ, shareREAD|WRITE|DELETE,
+OPEN_EXISTING+OPEN_REPARSE_POINT a noninheritablefd, ne jineACL/OS/
+produkcniIOflags. Primarycontract
+[CreateFileW dwShareMode](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew)
+vyzaduje kompatibilitu i s EXISTUJICIMdelete-accesshandle; rename je delete
+access. [Python msvcrt.open_osfhandle](https://docs.python.org/3/library/msvcrt.html#msvcrt.open_osfhandle)
+predava handle fd/fileobjectu a O_NOINHERIT omezi inheritance.
+ControlledownDELETE-accesshandle skutecne zpusobi deny stareho
+Path.read_bytes(), zatimco novy reader pri STEJNEMhandle uspesne precte
+strictready. To je konkretni interoperabilityproof, ne atribuce aktora
+historicke47m chyby nebo produkcniMoveFileEx0x5.
+
+**Policy rootfix:** minuteprogress je diagnostika, nikoli acceptance data.
+Bounded100ms readwindow navazuje na existing100ms hostpoll; po unresolved
+readtimeout/missing/sharing/access nastane explicitni durable
+`progress_gap/NOT_OBSERVED` sFIRST/LASTerror/path/attempts/duration/processstate.
+Stara data ani counter0 se nepouziji jako aktualni. Stejny zdravy ownedjob
+bezi dal do sveho puvodniho completion/wall budgetu. Chyby zapisudiagnostiky
+jsou take explicitne zaznamenane a jejich minute nelze vydavat za durably
+observed. Resolved transienterrors se nezahazuji. Unobservedminutes/gaps
+jsou soucastifinalreportu; mohou zustat chybejici i pri functionPASS.
+
+Ready15s a essentialfinal/originalwall/exitbudget se NEPRODLUZUJI.
+Nativeexitfailure/hang/invalidJSON/nonce/pid/binsha/rootreparse zmena
+zustava explicitnifailure, ne ordinaryprogressgap. Uspesny nativeExit0,
+jeho finalfunctionalassertions a NOVYstrictfinalstructuredresult mohou
+overitfunkcnost bez perfectminuteproof; necitelny essentialfinal je
+HOST_VERIFICATION_INCOMPLETE, zadny cachedprogressfallback.
+Finalexactbytes/time/frame/cursors/rotation-start-at-confirmed/joinsACK/
+identity se overuji nezavisle na diagnostickychcounterech.
+Nativeexitbeforecleanup/killrequested/exitaftercleanup se nove exportuji,
+aby hostfirsterror nezamaskoval puvodni nativedata/stdio/exit provenance.
+
+20localhostguards PASS: realownexclusiveprogress denied->GAP->STEJNYPIDalive/
+release-read; permanentdiagnosticdeny bezkill, finalessentialunreadable/
+invalididentity/nativefailure/invalidJSON jsouFAIL. Permanentdeadlines
+testuji controlledclock bez zmeny appbudgets.8nativehost/logguards PASS,
+vcetne actual3sessential-finalfailure (noPASS, snapshotbeforecleanup)
+a exactownedchildExit7+rawstreams bez diagnosticoverride. PS5separate
+streamcapture-Wait-PassThru zachovavaobservedexit. NativeRusttree3c92091f/
+compiledAB98/fixture528a jsou BEZEZMENY, legacyBzustavablokovany.
+MatchingharnessCI a praveONEreplacementSTREAMING3600 byly explicitnezadany;
+novy main se NEPROHLASUJE za pokracovani stareho47m nebo jehoPASS.
+Teprve replacementhourPASS+ledger/cleanup povoli zadanylegacyB.
 
 **Legacy zbyvajici sourcegate:** `legacy_session.rs:225-238` stale drzi
 vlastni state pres chunkerappend a synchronni checkpoint; result-save

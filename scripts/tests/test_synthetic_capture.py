@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import shutil
 import subprocess
@@ -19,6 +20,62 @@ ORACLE: Path
 
 
 class SyntheticCaptureTests(unittest.TestCase):
+    def test_functional_required_result_denial_is_host_incomplete_not_a_cached_progress_pass(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="VoicePrompt-final-read-") as directory:
+            root = Path(directory)
+            oracle = root / "VoicePromptNativeControllerFixture.exe"
+            shutil.copyfile(ORACLE, oracle)
+            evidence = root / "evidence"
+            evidence.mkdir()
+            read = capture.read_control
+            read_bytes = capture.read_control_bytes
+            def unavailable(path, limit):
+                if path.name == "idle-ready.json":
+                    raise PermissionError(errno.EACCES, "controlled essential result denial")
+                return read_bytes(path, limit)
+            def bounded(owned, process, binary, digest, name, seconds, **kwargs):
+                return read(owned, process, binary, digest, name,
+                            0.02 if name == "idle-ready.json" else seconds, **kwargs)
+            with (
+                patch.object(capture, "read_control", side_effect=bounded),
+                patch.object(capture, "read_control_bytes", side_effect=unavailable),
+                self.assertRaises(capture.ControlReadError),
+            ):
+                capture.run_functional(oracle, evidence, "essential-result-guard", 3)
+            failure = json.loads((evidence / "failure.json").read_bytes())
+            self.assertEqual(failure["control_read"]["control_file"], "idle-ready.json")
+            self.assertEqual(failure["control_read"]["kind"], "read_timeout")
+            self.assertIsNone(failure["native_exit_before_cleanup"])
+            self.assertTrue(failure["native_kill_requested_by_collector"])
+            self.assertIsNotNone(failure["native_exit_after_cleanup"])
+            self.assertEqual(failure["stderr"], "")
+            self.assertFalse((evidence / "functional-controller.json").exists())
+            self.assertTrue((evidence / "state-hashes.json").exists())
+            self.assertTrue(json.loads((evidence / "data-cleanup.json").read_bytes())["removed"])
+
+    def test_functional_owned_child_failure_preserves_exit_and_streams_without_diagnostic_override(self) -> None:
+        original = subprocess.Popen
+        def failed_child(arguments, **kwargs):
+            return original([sys.executable, "-c",
+                             "import sys; print('owned-host-out'); "
+                             "print('owned-child-failure',file=sys.stderr); sys.exit(7)"], **kwargs)
+        with tempfile.TemporaryDirectory(prefix="VoicePrompt-child-exit-") as directory:
+            root = Path(directory)
+            oracle = root / "VoicePromptNativeControllerFixture.exe"
+            shutil.copyfile(ORACLE, oracle)
+            evidence = root / "evidence"
+            evidence.mkdir()
+            with patch.object(capture.subprocess, "Popen", side_effect=failed_child), self.assertRaises(capture.ControlReadError):
+                capture.run_functional(oracle, evidence, "owned-child-failure", 3)
+            failure = json.loads((evidence / "failure.json").read_bytes())
+            self.assertEqual(failure["native_exit_before_cleanup"], 7)
+            self.assertFalse(failure["native_kill_requested_by_collector"])
+            self.assertEqual(failure["native_exit_after_cleanup"], 7)
+            self.assertIn("owned-host-out", failure["stdout"])
+            self.assertIn("owned-child-failure", failure["stderr"])
+            self.assertFalse((evidence / "functional-controller.json").exists())
+            self.assertTrue(json.loads((evidence / "data-cleanup.json").read_bytes())["removed"])
+
     def test_functional_controller_has_no_sampler_and_exact_owned_cleanup(self) -> None:
         with tempfile.TemporaryDirectory(prefix="VoicePrompt-functional-smoke-") as directory:
             root = Path(directory)
