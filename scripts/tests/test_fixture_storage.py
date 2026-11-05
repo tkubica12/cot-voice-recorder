@@ -78,6 +78,7 @@ class FixtureStorageTests(unittest.TestCase):
         process.poll.return_value = None
         ready = {
             "scope": capture.CONTROLLER_SCOPE, "pid": process.pid, "physical_ports": False,
+            "engine": "streaming", "pattern": capture.PATTERNS["streaming"],
             "network_or_auth": False, "full_client_profile": False,
             "current_controller": True, "renderer": False, "main_ui_or_tray": False,
             "real_auth_or_pubsub": False, "polisher_and_outbox": True,
@@ -144,7 +145,7 @@ class FixtureStorageTests(unittest.TestCase):
             self.assertFalse((owned.path / "begin").exists())
 
     def test_ready_invalid_json_pid_bool_shape_hash_and_nonce_fail_without_cached_success(self):
-        for case in ["json", "pid", "shape", "bool", "hash", "nonce"]:
+        for case in ["json", "pid", "shape", "bool", "hash", "nonce", "engine", "pattern"]:
             owned, binary, digest, process, ready = self.ready_case(case)
             if case == "pid":
                 ready["pid"] += 1
@@ -158,6 +159,10 @@ class FixtureStorageTests(unittest.TestCase):
                 (owned.path / "migration-fixture.json").write_text(json.dumps({
                     "scope": storage.SCOPE, "instance_key": "wrong",
                 }))
+            elif case == "engine":
+                ready["engine"] = "legacy"
+            elif case == "pattern":
+                ready["pattern"] = capture.PATTERNS["legacy"]
             (owned.path / "ready.json").write_bytes(
                 b"{" if case == "json" else json.dumps(ready).encode())
             with self.assertRaises(ValueError if case == "nonce" else capture.ReadinessError):
@@ -196,7 +201,8 @@ class FixtureStorageTests(unittest.TestCase):
         process = subprocess.Popen([str(binary), "-c", "import time; time.sleep(20)"],
                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         path = owned.path / "progress-0060.json"
-        point = {"phase": "capturing", "elapsed_seconds": 60.0, "accepted_bytes": 1_920_000,
+        point = {"phase": "capturing", "engine": "streaming", "pattern": capture.PATTERNS["streaming"],
+                 "elapsed_seconds": 60.0, "accepted_bytes": 1_920_000,
                  "writer_received_bytes": 1_920_000, "writer_completed_bytes": 1_920_000,
                  "saved_bytes": 1_856_000, "confirmed_bytes": 1_856_000}
         path.write_bytes(json.dumps(point).encode())

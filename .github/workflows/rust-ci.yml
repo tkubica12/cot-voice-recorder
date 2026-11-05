@@ -264,7 +264,7 @@ jobs:
         shell: pwsh
         run: python scripts\tests\test_microphone_measurement.py
 
-      - name: Bounded NoPorts controller functional smoke, without resource sampling
+      - name: Bounded NoPorts streaming and legacy controller smokes, without resource sampling
         if: runner.os == 'Windows'
         working-directory: .
         shell: pwsh
@@ -275,13 +275,18 @@ jobs:
           if (@($binary).Count -ne 1) { throw 'Expected exactly one native libtest fixture.' }
           $frozen = Join-Path $env:RUNNER_TEMP 'native-capture-fixture'
           $output = Join-Path $env:RUNNER_TEMP 'native-capture-smoke'
-          New-Item -ItemType Directory -Path $frozen,$output -ErrorAction Stop | Out-Null
+          $legacy = Join-Path $env:RUNNER_TEMP 'native-legacy-smoke'
+          New-Item -ItemType Directory -Path $frozen,$output,$legacy -ErrorAction Stop | Out-Null
           Copy-Item -LiteralPath $binary -Destination (Join-Path $frozen 'VoicePromptNativeCaptureFixture.exe')
           Copy-Item -LiteralPath $binary -Destination (Join-Path $frozen 'VoicePromptNativeControllerFixture.exe')
           python scripts\measure_synthetic_capture.py --functional-only --controller --oracle (Join-Path $frozen 'VoicePromptNativeControllerFixture.exe') --output-directory $output --source-revision $env:GITHUB_SHA --audio-seconds 3
           if ($LASTEXITCODE -ne 0) { throw 'Synthetic collector smoke failed.' }
           $report = Get-Content -Raw (Join-Path $output 'functional-controller.json') | ConvertFrom-Json
           if (-not $report.functional_only -or $report.resource_sampling -or $report.whole_migration_acceptance) { throw 'Functional smoke must not claim resource/whole-client acceptance.' }
+          python scripts\measure_synthetic_capture.py --functional-only --controller --engine legacy --pattern voiced-pause-overlap-v1 --oracle (Join-Path $frozen 'VoicePromptNativeControllerFixture.exe') --output-directory $legacy --source-revision $env:GITHUB_SHA --audio-seconds 3
+          if ($LASTEXITCODE -ne 0) { throw 'Legacy functional collector smoke failed.' }
+          $legacyReport = Get-Content -Raw (Join-Path $legacy 'functional-controller.json') | ConvertFrom-Json
+          if ($legacyReport.actual_capture.engine -ne 'legacy' -or $legacyReport.actual_capture.confirmed_bytes -ne 0 -or $legacyReport.actual_capture.audit_uploads -ne 0 -or $null -ne $legacyReport.actual_capture.outbox_acknowledged -or -not $legacyReport.actual_capture.delivery_acknowledged) { throw 'Legacy smoke must prove delivery ACK, not a streaming audit.' }
           python scripts\tests\test_synthetic_capture.py --oracle (Join-Path $frozen 'VoicePromptNativeCaptureFixture.exe')
           if ($LASTEXITCODE -ne 0) { throw 'Synthetic failure/pipe evidence guards failed.' }
           & (Join-Path $frozen 'VoicePromptNativeCaptureFixture.exe') streaming_session::longevity_tests::accelerated_hour_sample_volume --exact --ignored --nocapture --test-threads=1

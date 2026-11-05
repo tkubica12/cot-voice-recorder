@@ -19,6 +19,148 @@ const URL: &str = "https://fixture.example.invalid";
 const EMAIL: &str = "synthetic@example.invalid";
 const RAW: &str = "synthetic controller transcript keeps every recorded sample and completes only after a confirmed stop";
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CaptureProfile {
+    Streaming,
+    Legacy,
+}
+
+impl CaptureProfile {
+    fn parse(engine: &str, pattern: &str) -> Result<Self, &'static str> {
+        match (engine, pattern) {
+            ("streaming", "ordered-quiet-v1") => Ok(Self::Streaming),
+            ("legacy", "voiced-pause-overlap-v1") => Ok(Self::Legacy),
+            _ => Err("Unknown or mismatched controller engine/pattern."),
+        }
+    }
+
+    fn engine(self) -> &'static str {
+        match self {
+            Self::Streaming => "streaming",
+            Self::Legacy => "legacy",
+        }
+    }
+
+    fn pattern(self) -> &'static str {
+        match self {
+            Self::Streaming => "ordered-quiet-v1",
+            Self::Legacy => "voiced-pause-overlap-v1",
+        }
+    }
+
+    fn sample(self, index: u64) -> i16 {
+        if self == Self::Legacy {
+            let position = index % (12 * 16_000);
+            if (9_600..137_600).contains(&position) || position >= 147_200 {
+                return 1_200 + (index % 257) as i16 - 128;
+            }
+        }
+        (index % 97) as i16 - 48
+    }
+}
+
+struct LegacyExpectedChunk {
+    digest: String,
+    wav_bytes: usize,
+    end_byte: u64,
+    overlaps_previous: bool,
+    text: String,
+}
+
+fn legacy_wav_digest(wav: &[u8]) -> String {
+    // Reuse the canonical recovery codec's WAV digest without another test dependency.
+    let manifest = voiceprompt_client_protocol::recovery::RecoveryManifest::create(
+        "cs".into(),
+        String::new(),
+        false,
+        0,
+    )
+    .unwrap()
+    .checkpoint(
+        &[],
+        (wav.len() - 44) as u64,
+        &[AudioCheckpoint {
+            wav,
+            overlaps_previous: false,
+            end_byte: 0,
+        }],
+        false,
+        0,
+    )
+    .unwrap();
+    manifest.chunks[0]
+        .digest
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+struct LegacyOracle {
+    chunks: Vec<LegacyExpectedChunk>,
+    seen: Vec<bool>,
+    completions: Vec<usize>,
+    final_tail_audio_bytes: usize,
+}
+
+impl LegacyOracle {
+    fn new(seconds: u64) -> Self {
+        let mut chunker = voiceprompt_core::chunker::PcmChunker::new(120.0).unwrap();
+        let mut chunks = Vec::new();
+        let mut frame = [0; crate::microphone::BUFFER_BYTES];
+        let mut record = |emitted: Vec<voiceprompt_core::chunker::AudioChunk>| {
+            for chunk in emitted {
+                let index = chunks.len();
+                chunks.push(LegacyExpectedChunk {
+                    digest: legacy_wav_digest(&chunk.wav),
+                    wav_bytes: chunk.wav.len(),
+                    end_byte: chunk.end_byte,
+                    overlaps_previous: chunk.overlaps_previous,
+                    text: format!("legacychunk{index:04} {RAW}"),
+                });
+            }
+        };
+        for index in 0..seconds * 25 {
+            for (offset, bytes) in frame.chunks_exact_mut(2).enumerate() {
+                bytes.copy_from_slice(
+                    &CaptureProfile::Legacy
+                        .sample(index * 640 + offset as u64)
+                        .to_le_bytes(),
+                );
+            }
+            record(chunker.append(&frame).unwrap());
+        }
+        let tail = chunker.snapshot();
+        assert_eq!(tail.processed_bytes, seconds * 32_000);
+        assert!(tail.frame.is_empty());
+        let final_tail_audio_bytes = tail.audio.len();
+        record(chunker.flush().unwrap());
+        assert!(!chunks.is_empty());
+        if seconds >= 12 {
+            assert!(chunks.iter().any(|chunk| chunk.wav_bytes == 192_044));
+            assert!(chunks.iter().any(|chunk| chunk.overlaps_previous));
+            assert!(
+                chunks
+                    .iter()
+                    .any(|chunk| chunk.end_byte < seconds * 32_000 && chunk.wav_bytes < 192_044)
+            );
+        }
+        let mut digests: Vec<_> = chunks.iter().map(|chunk| &chunk.digest).collect();
+        digests.sort();
+        digests.dedup();
+        assert_eq!(
+            digests.len(),
+            chunks.len(),
+            "Each source-oracle WAV must identify exactly one chunk."
+        );
+        Self {
+            seen: vec![false; chunks.len()],
+            chunks,
+            completions: Vec::new(),
+            final_tail_audio_bytes,
+        }
+    }
+}
+
 fn failure() -> ApiError {
     ApiError {
         kind: ApiErrorKind::Forbidden,
@@ -121,6 +263,8 @@ struct BackendState {
     confirmed_to: AtomicU64,
     ordered_samples: AtomicBool,
     confirmed_cursors: Mutex<Vec<u64>>,
+    legacy: Mutex<Option<LegacyOracle>>,
+    legacy_second_completed: Notify,
     changed: Notify,
 }
 
@@ -141,11 +285,51 @@ impl BatchBackend for Backend {
         language: &str,
         context: &str,
     ) -> Result<String, ApiError> {
-        self.0.active.fetch_add(1, Ordering::AcqRel);
+        let active = self.0.active.fetch_add(1, Ordering::AcqRel) + 1;
         let _active = Active(&self.0.active);
         assert_eq!(&wav[..4], b"RIFF");
         assert_eq!(language, "cs");
         assert_eq!(context, format!("{URL}\n{EMAIL}"));
+        let legacy = {
+            let mut configured = self.0.legacy.lock().unwrap();
+            configured.as_mut().map(|oracle| {
+                assert!(
+                    active <= 2,
+                    "Legacy exceeded its existing two-request limit."
+                );
+                let digest = legacy_wav_digest(wav);
+                let index = oracle
+                    .chunks
+                    .iter()
+                    .position(|chunk| chunk.digest == digest)
+                    .expect("Unexpected legacy WAV; source order/content/overlap changed.");
+                assert!(!oracle.seen[index], "A legacy chunk was sent twice.");
+                assert_eq!(oracle.chunks[index].wav_bytes, wav.len());
+                oracle.seen[index] = true;
+                (
+                    index,
+                    oracle.chunks.len() >= 2,
+                    oracle.chunks[index].text.clone(),
+                )
+            })
+        };
+        if let Some((index, pair, text)) = legacy {
+            if index == 0 && pair {
+                self.0.legacy_second_completed.notified().await;
+            }
+            self.0
+                .legacy
+                .lock()
+                .unwrap()
+                .as_mut()
+                .unwrap()
+                .completions
+                .push(index);
+            if index == 1 {
+                self.0.legacy_second_completed.notify_one();
+            }
+            return Ok(text);
+        }
         self.0.batches.lock().unwrap().push(wav.to_vec());
         self.0.changed.notify_waiters();
         while self.0.batch_blocked.load(Ordering::Acquire)
@@ -843,6 +1027,7 @@ impl CaptureMonitor {
         probe: &Probe,
         recovery: &NativeRecoveryStore,
         started: Instant,
+        profile: CaptureProfile,
     ) -> serde_json::Value {
         let engine = probe
             .capture_trace
@@ -852,11 +1037,12 @@ impl CaptureMonitor {
         let accepted = probe.accepted_bytes.load(Ordering::Acquire);
         let received = probe.writer_received_bytes.load(Ordering::Acquire);
         serde_json::json!({
-            "phase":"capturing","elapsed_seconds":started.elapsed().as_secs_f64(),
+            "phase":"capturing","engine":profile.engine(),"pattern":profile.pattern(),
+            "elapsed_seconds":started.elapsed().as_secs_f64(),
             "captured_bytes":accepted,"accepted_bytes":accepted,"writer_received_bytes":received,
             "writer_completed_bytes":probe.writer_completed_bytes.load(Ordering::Acquire),
             "saved_bytes":engine["saved_bytes"],"confirmed_bytes":engine["confirmed_bytes"],
-            "provider_bytes":probe.backend.0.stream_bytes.load(Ordering::Acquire),
+            "provider_bytes":if profile == CaptureProfile::Streaming { Some(probe.backend.0.stream_bytes.load(Ordering::Acquire)) } else { None },
             "observed_max_queue_slots":probe.observed_queue_slots.load(Ordering::Acquire),
             "observed_queued_bytes":accepted.saturating_sub(received),
             "engine_lock":engine,"recovery_io":recovery.fixture_io_progress(),
@@ -864,7 +1050,13 @@ impl CaptureMonitor {
         })
     }
 
-    fn start(harness: &Harness, seconds: u64, root: &std::path::Path, started: Instant) -> Self {
+    fn start(
+        harness: &Harness,
+        seconds: u64,
+        root: &std::path::Path,
+        started: Instant,
+        profile: CaptureProfile,
+    ) -> Self {
         let root = root.to_path_buf();
         let probe = harness.ports.0.clone();
         let recovery = harness.recovery.clone();
@@ -887,7 +1079,7 @@ impl CaptureMonitor {
                     hour_publish(
                         &root,
                         &format!("progress-{point:04}.json"),
-                        Self::sample(&probe, &recovery, started),
+                        Self::sample(&probe, &recovery, started, profile),
                     );
                 }
             })
@@ -909,7 +1101,11 @@ async fn run_controller_capture(
     harness: &mut Harness,
     seconds: u64,
     diagnostics: Option<&std::path::Path>,
+    profile: CaptureProfile,
 ) -> serde_json::Value {
+    if profile == CaptureProfile::Legacy {
+        *harness.ports.0.backend.0.legacy.lock().unwrap() = Some(LegacyOracle::new(seconds));
+    }
     let own_io = harness.recovery.fixture_own_io();
     let probe = Arc::downgrade(&harness.ports.0);
     own_io.set_admission(move || {
@@ -947,8 +1143,8 @@ async fn run_controller_capture(
         .store(true, Ordering::Release);
     harness.begin(DictationMode::Toggle).await;
     let started = tokio::time::Instant::now();
-    let monitor =
-        diagnostics.map(|root| CaptureMonitor::start(harness, seconds, root, started.into_std()));
+    let monitor = diagnostics
+        .map(|root| CaptureMonitor::start(harness, seconds, root, started.into_std(), profile));
     const FRAME_BYTES: usize = crate::microphone::BUFFER_BYTES;
     const FRAME_MILLISECONDS: u64 = FRAME_BYTES as u64 * 1000 / 32000;
     const FRAMES_PER_SECOND: u64 = 1000 / FRAME_MILLISECONDS;
@@ -962,7 +1158,7 @@ async fn run_controller_capture(
         maximum_lateness =
             maximum_lateness.max(tokio::time::Instant::now().saturating_duration_since(due));
         for (offset, bytes) in frame.chunks_exact_mut(2).enumerate() {
-            let sample = ((index * (FRAME_BYTES / 2) as u64 + offset as u64) % 97) as i16 - 48;
+            let sample = profile.sample(index * (FRAME_BYTES / 2) as u64 + offset as u64);
             bytes.copy_from_slice(&sample.to_le_bytes());
         }
         if let Err(error) = harness.ports.try_feed(&frame) {
@@ -1028,18 +1224,7 @@ async fn run_controller_capture(
     let state = harness.recovery.fixture_snapshot(&rows[0].id).unwrap();
     let expected = seconds * 32000;
     assert_eq!(state.captured_bytes, expected);
-    assert_eq!(state.confirmed_bytes, expected);
-    assert!(state.capture_complete && state.audit.is_some());
-    assert_eq!(
-        harness
-            .ports
-            .0
-            .backend
-            .0
-            .stream_bytes
-            .load(Ordering::Acquire),
-        expected
-    );
+    assert!(state.capture_complete);
     assert!(harness.ports.0.backend.0.batches.lock().unwrap().is_empty());
     let starts = harness.ports.0.backend.0.starts.lock().unwrap().clone();
     let cursors = harness
@@ -1051,15 +1236,106 @@ async fn run_controller_capture(
         .lock()
         .unwrap()
         .clone();
-    assert_eq!(starts[0], 0);
-    assert!(cursors.windows(2).all(|pair| pair[0] < pair[1]));
-    assert_eq!(cursors.last().copied(), Some(expected));
-    if seconds > 3000 {
-        assert!(
-            starts.len() >= 2,
-            "Current orchestration never exercised real50min rotation."
+    let mut legacy_result = None;
+    let provider_bytes = if profile == CaptureProfile::Streaming {
+        assert_eq!(state.confirmed_bytes, expected);
+        assert!(state.audit.is_some());
+        assert_eq!(
+            harness
+                .ports
+                .0
+                .backend
+                .0
+                .stream_bytes
+                .load(Ordering::Acquire),
+            expected
         );
-    }
+        assert_eq!(starts[0], 0);
+        assert!(cursors.windows(2).all(|pair| pair[0] < pair[1]));
+        assert_eq!(cursors.last().copied(), Some(expected));
+        if seconds > 3000 {
+            assert!(
+                starts.len() >= 2,
+                "Current orchestration never exercised real50min rotation."
+            );
+        }
+        expected
+    } else {
+        assert!(!state.streaming && state.audit.is_none() && state.tail.is_empty());
+        assert_eq!(state.confirmed_bytes, 0);
+        assert!(starts.is_empty() && cursors.is_empty());
+        assert_eq!(
+            harness
+                .ports
+                .0
+                .backend
+                .0
+                .stream_bytes
+                .load(Ordering::Acquire),
+            0
+        );
+        let configured = harness.ports.0.backend.0.legacy.lock().unwrap();
+        let oracle = configured.as_ref().unwrap();
+        assert!(oracle.seen.iter().all(|seen| *seen));
+        assert_eq!(state.chunks.len(), oracle.chunks.len());
+        for (actual, expected) in state.chunks.iter().zip(&oracle.chunks) {
+            assert_eq!(
+                actual
+                    .digest
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>(),
+                expected.digest
+            );
+            assert_eq!(actual.audio_bytes as usize, expected.wav_bytes);
+            assert_eq!(actual.end_byte, expected.end_byte);
+            assert_eq!(actual.overlaps_previous, expected.overlaps_previous);
+            assert_eq!(actual.text.as_deref(), Some(expected.text.as_str()));
+        }
+        if oracle.chunks.len() >= 2 {
+            assert_eq!(
+                &oracle.completions[..2],
+                &[1, 0],
+                "The provider did not complete its first pair out of order."
+            );
+        }
+        let original = voiceprompt_client_protocol::dictation_text::stitch(
+            oracle
+                .chunks
+                .iter()
+                .map(|chunk| (chunk.text.as_str(), chunk.overlaps_previous)),
+        );
+        assert_eq!(
+            harness.entries()[0].raw_body.as_deref(),
+            Some(original.as_str())
+        );
+        assert_eq!(oracle.chunks.last().unwrap().end_byte, expected);
+        let bytes = oracle
+            .chunks
+            .iter()
+            .map(|chunk| chunk.wav_bytes as u64 - 44)
+            .sum::<u64>();
+        assert_ne!(
+            bytes, expected,
+            "The legacy profile must exercise real silence gating/overlap, not all-raw WAV concatenation."
+        );
+        let chunks: Vec<_> = oracle
+            .chunks
+            .iter()
+            .map(|chunk| {
+                serde_json::json!({
+                    "digest":chunk.digest,"wav_bytes":chunk.wav_bytes,"end_byte":chunk.end_byte,
+                    "overlaps_previous":chunk.overlaps_previous,"text":chunk.text
+                })
+            })
+            .collect();
+        legacy_result = Some(serde_json::json!({
+            "chunks":chunks,"provider_completion_order":oracle.completions,
+            "original_text":original,"expected_tail_audio_bytes":oracle.final_tail_audio_bytes,
+            "expected_tail_frame_bytes":0,"final_manifest_tail_bytes":state.tail.len()
+        }));
+        bytes
+    };
     assert_eq!(harness.ports.0.opened.load(Ordering::Acquire), 1);
     assert_eq!(harness.ports.0.stopped.load(Ordering::Acquire), 1);
     assert!(harness.ports.0.refiner.calls.load(Ordering::Acquire) > 0);
@@ -1069,12 +1345,14 @@ async fn run_controller_capture(
     if let Some(monitor) = monitor {
         monitor.finish(false).await;
     }
-    serde_json::json!({
+    let mut result = serde_json::json!({
+        "engine":profile.engine(),"pattern":profile.pattern(),
         "audio_seconds":seconds,"actual_capture_seconds":elapsed,
-        "captured_bytes":expected,"confirmed_bytes":expected,
-        "verified_provider_bytes":expected,"stream_starts":starts,
+        "captured_bytes":expected,"confirmed_bytes":state.confirmed_bytes,
+        "verified_provider_bytes":provider_bytes,"stream_starts":starts,
         "confirmed_cursors":cursors,"maximum_producer_lateness_ms":maximum_lateness.as_secs_f64()*1000.0,
-        "history_saved_before_handoff":true,"capture_joined":true,"polisher_exercised":true
+        "history_saved_before_handoff":true,"capture_joined":true,"polisher_exercised":true,
+        "delivery_acknowledged":true
         ,"capture_frame_bytes":FRAME_BYTES,"capture_frame_interval_ms":FRAME_MILLISECONDS
         ,"accepted_bytes":harness.ports.0.accepted_bytes.load(Ordering::Acquire),
         "writer_received_bytes":harness.ports.0.writer_received_bytes.load(Ordering::Acquire),
@@ -1082,14 +1360,18 @@ async fn run_controller_capture(
         "observed_max_queue_slots":harness.ports.0.observed_queue_slots.load(Ordering::Acquire),
         "engine_lock":harness.ports.0.capture_trace.get().map(|trace|trace.snapshot()),
         "recovery_io":harness.recovery.fixture_io_progress()
-    })
+    });
+    if let Some(legacy) = legacy_result {
+        result["legacy"] = legacy;
+    }
+    result
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn short_realtime_controller_smoke_joins_exact_pcm_and_outbox_without_physical_ports() {
     let mut harness = Harness::new(true, true);
     let outbox = HourOutbox::start(&harness);
-    let result = run_controller_capture(&mut harness, 2, None).await;
+    let result = run_controller_capture(&mut harness, 2, None, CaptureProfile::Streaming).await;
     for key in [
         "accepted_bytes",
         "writer_received_bytes",
@@ -1103,6 +1385,73 @@ async fn short_realtime_controller_smoke_joins_exact_pcm_and_outbox_without_phys
     harness.close().await;
     outbox.close().await;
     println!("short-controller-smoke: {result}; scope=2s-NoPorts-only; hour-acceptance=false");
+}
+
+#[test]
+fn controller_capture_profile_rejects_unknown_and_cross_engine_patterns() {
+    for (engine, pattern) in [
+        ("", "ordered-quiet-v1"),
+        ("unknown", "ordered-quiet-v1"),
+        ("legacy", "ordered-quiet-v1"),
+        ("streaming", "voiced-pause-overlap-v1"),
+    ] {
+        assert!(CaptureProfile::parse(engine, pattern).is_err());
+    }
+    for profile in [CaptureProfile::Streaming, CaptureProfile::Legacy] {
+        assert_eq!(
+            CaptureProfile::parse(profile.engine(), profile.pattern()),
+            Ok(profile)
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn short_realtime_legacy_controller_uses_source_oracle_delivery_ack_and_no_audit() {
+    let mut harness = Harness::new(false, true);
+    let outbox = HourOutbox::start(&harness);
+    let result = run_controller_capture(&mut harness, 3, None, CaptureProfile::Legacy).await;
+    assert_eq!(result["captured_bytes"], 96_000);
+    assert_eq!(result["confirmed_bytes"], 0);
+    assert!(result["delivery_acknowledged"].as_bool().unwrap());
+    hour_cleanup(&mut harness, &outbox).await;
+    harness.close().await;
+    outbox.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn legacy_profile_two_request_out_of_order_binding_matches_complete_source_oracle() {
+    let mut harness = Harness::new(false, true);
+    *harness.ports.0.backend.0.legacy.lock().unwrap() = Some(LegacyOracle::new(12));
+    harness.begin(DictationMode::Toggle).await;
+    let input: Vec<_> = (0..12 * 16_000)
+        .flat_map(|index| CaptureProfile::Legacy.sample(index).to_le_bytes())
+        .collect();
+    harness.ports.feed(&input).await;
+    harness.stop().await;
+    let (text, cancelled, reply) = harness.delivery().await;
+    assert_eq!(harness.entries()[0].body, text);
+    assert!(!cancelled.load(Ordering::Acquire));
+    {
+        let configured = harness.ports.0.backend.0.legacy.lock().unwrap();
+        let oracle = configured.as_ref().unwrap();
+        assert!(oracle.seen.iter().all(|seen| *seen));
+        assert_eq!(&oracle.completions[..2], &[1, 0]);
+        let expected = voiceprompt_client_protocol::dictation_text::stitch(
+            oracle
+                .chunks
+                .iter()
+                .map(|chunk| (chunk.text.as_str(), chunk.overlaps_previous)),
+        );
+        assert_eq!(
+            harness.entries()[0].raw_body.as_deref(),
+            Some(expected.as_str())
+        );
+    }
+    reply.send(DeliveryResult::CopiedOnly).unwrap();
+    harness.stage(DictationStage::PasteSkipped).await;
+    harness.idle().await;
+    assert!(harness.recovery.list().unwrap().is_empty());
+    harness.close().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1164,6 +1513,7 @@ async fn controlled_realtime_storage_failure(export_producer_context: bool) {
             &mut harness,
             3,
             export_producer_context.then_some(output.as_path()),
+            CaptureProfile::Streaming,
         )
         .await
     });
@@ -1283,6 +1633,15 @@ async fn hour_cleanup(harness: &mut Harness, outbox: &HourOutbox) {
         .await
         .unwrap();
     assert_eq!(result.failed, 0);
+    if !harness.settings.borrow().dictation_streaming_enabled {
+        assert_eq!(result.acknowledged, 0);
+        assert_eq!(outbox.uploads.load(Ordering::Acquire), 0);
+        assert!(harness.recovery.list().unwrap().is_empty());
+        assert_eq!(harness.entries().len(), 1);
+        assert!(harness.ui.try_recv().is_err());
+        harness.history.clear().unwrap();
+        return;
+    }
     tokio::time::timeout(Duration::from_secs(10), async {
         while outbox.uploads.load(Ordering::Acquire) == 0
             || !harness.recovery.list().unwrap().is_empty()
@@ -1312,10 +1671,18 @@ async fn realtime_synthetic_controller_hour() {
     crate::fixtures::validate(&root, None).unwrap();
     let options: serde_json::Value =
         serde_json::from_slice(&std::fs::read(root.join("capture-options.json")).unwrap()).unwrap();
+    assert_eq!(options.as_object().unwrap().len(), 5);
     assert_eq!(options["scope"], HOUR_SCOPE);
+    let profile = CaptureProfile::parse(
+        options["engine"].as_str().unwrap(),
+        options["pattern"].as_str().unwrap(),
+    )
+    .unwrap();
     let seconds = options["audio_seconds"].as_u64().unwrap();
     assert!((2..=3600).contains(&seconds));
+    assert!(profile == CaptureProfile::Streaming || matches!(seconds, 3 | 600));
     let nonce = options["nonce"].as_str().unwrap();
+    crate::fixtures::validate(&root, Some(nonce)).unwrap();
     let expected_names = ["capture-options.json", "migration-fixture.json"];
     let mut names: Vec<_> = std::fs::read_dir(&root)
         .unwrap()
@@ -1328,12 +1695,17 @@ async fn realtime_synthetic_controller_hour() {
         crate::lock_trace::verify_fixture_symbols();
     }
     let state_root = root.join("controller-state");
-    let mut warm = Harness::new_at(state_root.clone(), true, true, None);
+    let mut warm = Harness::new_at(
+        state_root.clone(),
+        profile == CaptureProfile::Streaming,
+        true,
+        None,
+    );
     warm.recovery
         .fixture_own_io()
         .set_sink(root.join("first-rename-failure.json"));
     let warm_outbox = HourOutbox::start(&warm);
-    run_controller_capture(&mut warm, 2, None).await;
+    run_controller_capture(&mut warm, 2, None, profile).await;
     hour_cleanup(&mut warm, &warm_outbox).await;
     warm.close().await;
     warm_outbox.close().await;
@@ -1350,7 +1722,12 @@ async fn realtime_synthetic_controller_hour() {
             }),
         );
     }
-    let mut harness = Harness::new_at(state_root.clone(), true, true, None);
+    let mut harness = Harness::new_at(
+        state_root.clone(),
+        profile == CaptureProfile::Streaming,
+        true,
+        None,
+    );
     let outbox = HourOutbox::start(&harness);
     tokio::time::sleep(Duration::from_secs(2)).await;
     assert!(!harness.policy.dictation_busy());
@@ -1359,19 +1736,21 @@ async fn realtime_synthetic_controller_hour() {
         &root,
         "ready.json",
         serde_json::json!({
-            "scope":HOUR_SCOPE,"pid":std::process::id(),"physical_ports":false,
+            "scope":HOUR_SCOPE,"engine":profile.engine(),"pattern":profile.pattern(),
+            "pid":std::process::id(),"physical_ports":false,
             "network_or_auth":false,"full_client_profile":false,"current_controller":true,
             "renderer":false,"main_ui_or_tray":false,"real_auth_or_pubsub":false,
             "polisher_and_outbox":true
         }),
     );
     hour_control(&root, "begin", nonce).await;
-    let mut result = run_controller_capture(&mut harness, seconds, Some(&root)).await;
+    let mut result = run_controller_capture(&mut harness, seconds, Some(&root), profile).await;
     hour_publish(
         &root,
         "transcription-complete.json",
         serde_json::json!({
-            "phase":"transcription-complete","confirmed_bytes":seconds*32000
+            "phase":"transcription-complete","engine":profile.engine(),
+            "confirmed_bytes":result["confirmed_bytes"]
         }),
     );
     hour_cleanup(&mut harness, &outbox).await;
@@ -1387,7 +1766,14 @@ async fn realtime_synthetic_controller_hour() {
     result["scope"] = HOUR_SCOPE.into();
     result["current_controller"] = true.into();
     result["renderer"] = false.into();
-    result["outbox_acknowledged"] = true.into();
+    result["outbox_acknowledged"] = if profile == CaptureProfile::Streaming {
+        true.into()
+    } else {
+        serde_json::Value::Null
+    };
+    if profile == CaptureProfile::Legacy {
+        result["audit_uploads"] = 0.into();
+    }
     hour_publish(&root, "idle-ready.json", result);
     hour_control(&root, "finish", nonce).await;
     harness.close().await;
@@ -1397,7 +1783,8 @@ async fn realtime_synthetic_controller_hour() {
         &root,
         "normal-exit.json",
         serde_json::json!({
-            "phase":"normal-exit","physical_ports":false,"current_controller":true
+            "phase":"normal-exit","physical_ports":false,"current_controller":true,
+            "engine":profile.engine(),"pattern":profile.pattern()
         }),
     );
 }
@@ -1963,7 +2350,7 @@ async fn sampled_monitor_does_not_wait_for_blocked_engine_or_journal_mutexes() {
     let sampled = tokio::time::timeout(
         Duration::from_millis(200),
         tokio::task::spawn_blocking(move || {
-            CaptureMonitor::sample(&probe, &recovery, Instant::now())
+            CaptureMonitor::sample(&probe, &recovery, Instant::now(), CaptureProfile::Streaming)
         }),
     )
     .await;

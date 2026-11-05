@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import array
+import hashlib
 import json
 import random
 import struct
@@ -12,6 +14,7 @@ from pathlib import Path
 
 CLIENT: Path
 REFERENCE: Path
+LEGACY_ORACLE_OUTPUT: Path | None = None
 
 
 def run(executable: list[str], mode: str, data: bytes) -> bytes:
@@ -63,6 +66,46 @@ def check_backend_model() -> None:
 
 
 class DictationParityTests(unittest.TestCase):
+    def test_legacy_functional_600s_sample_volume_oracle_matches_csharp_without_wallclock_capture(self) -> None:
+        samples = array.array("h", (
+            1200 + index % 257 - 128
+            if 9600 <= index % 192000 < 137600 or index % 192000 >= 147200
+            else index % 97 - 48
+            for index in range(600 * 16000)
+        ))
+        import sys
+        if sys.byteorder != "little":
+            samples.byteswap()
+        pcm = samples.tobytes()
+        self.assertEqual(len(pcm), 19_200_000)
+        rust = run([str(CLIENT.with_name("audio_contract.exe")), "chunk"], "1280", pcm)
+        csharp = run(["dotnet", str(REFERENCE), "chunk"], "1280", pcm)
+        self.assertEqual(rust, csharp)
+        count = struct.unpack_from("<I", rust)[0]
+        position = 4
+        chunks = []
+        for _ in range(count):
+            end, overlap, length = struct.unpack_from("<Q?I", rust, position)
+            position += 13
+            wav = rust[position:position + length]
+            position += length
+            chunks.append({"end_byte": end, "overlaps_previous": overlap,
+                           "wav_bytes": length, "digest": hashlib.sha256(wav).hexdigest()})
+        self.assertEqual(position, len(rust))
+        self.assertEqual(chunks[-1]["end_byte"], len(pcm))
+        self.assertTrue(any(chunk["wav_bytes"] == 192044 for chunk in chunks))
+        self.assertTrue(any(chunk["overlaps_previous"] for chunk in chunks))
+        self.assertTrue(any(chunk["end_byte"] < len(pcm) and chunk["wav_bytes"] < 192044 for chunk in chunks))
+        self.assertLess(chunks[-1]["wav_bytes"], 192044)
+        self.assertNotEqual(sum(chunk["wav_bytes"] - 44 for chunk in chunks), len(pcm))
+        self.assertEqual(len({chunk["digest"] for chunk in chunks}), len(chunks))
+        if LEGACY_ORACLE_OUTPUT is not None:
+            with LEGACY_ORACLE_OUTPUT.open("x", encoding="utf-8") as output:
+                json.dump({"scope": "offline-sample-volume-not-actual600-capture",
+                           "engine": "legacy", "pattern": "voiced-pause-overlap-v1",
+                           "audio_seconds": 600, "raw_bytes": len(pcm),
+                           "actual_rust_csharp_wav_bytes_equal": True, "chunks": chunks}, output, indent=2)
+
     def test_restored_maximum_four_chunk_legacy_batch_matches_actual_csharp(self) -> None:
         prefix = struct.pack("<h", 1200) * 95680
         raw = b"".join(
@@ -188,6 +231,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--client", type=Path, required=True)
     parser.add_argument("--reference", type=Path, required=True)
+    parser.add_argument("--legacy-oracle-output", type=Path)
     parser.add_argument(
         "--backend-model",
         action="store_true",
@@ -196,6 +240,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     CLIENT = args.client.resolve(strict=True)
     REFERENCE = args.reference.resolve(strict=True)
+    LEGACY_ORACLE_OUTPUT = args.legacy_oracle_output
     if args.backend_model:
         check_backend_model()
     unittest.main(argv=[__file__], verbosity=2)

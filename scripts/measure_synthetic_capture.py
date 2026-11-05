@@ -24,6 +24,15 @@ SCOPE = "native-streaming-engine-realtime-synthetic-pcm"
 TEST = "streaming_session::longevity_tests::realtime_synthetic_hour"
 CONTROLLER_SCOPE = "native-controller-realtime-synthetic-pcm"
 CONTROLLER_TEST = "dictation::controller_tests::realtime_synthetic_controller_hour"
+PATTERNS = {"streaming": "ordered-quiet-v1", "legacy": "voiced-pause-overlap-v1"}
+
+
+def controller_profile(engine: str, pattern: str | None = None) -> str:
+    if type(engine) is not str or engine not in PATTERNS:
+        raise ValueError("An explicit known controller engine is required.")
+    if pattern is not None and (type(pattern) is not str or pattern != PATTERNS[engine]):
+        raise ValueError("Controller engine/pattern mismatch.")
+    return PATTERNS[engine]
 
 
 def create(path: Path, data: bytes) -> None:
@@ -173,11 +182,14 @@ def read_control(
 
 
 def wait_ready(
-    owned: FixtureRoot, process: subprocess.Popen, binary: Path, digest: str, seconds: float
+    owned: FixtureRoot, process: subprocess.Popen, binary: Path, digest: str, seconds: float,
+    engine: str = "streaming", pattern: str | None = None,
 ) -> dict:
+    pattern = controller_profile(engine, pattern)
     ready, report = read_control(owned, process, binary, digest, "ready.json", seconds)
     expected = {
-        "scope": CONTROLLER_SCOPE, "pid": process.pid, "physical_ports": False,
+        "scope": CONTROLLER_SCOPE, "engine": engine, "pattern": pattern,
+        "pid": process.pid, "physical_ports": False,
         "network_or_auth": False, "full_client_profile": False,
         "current_controller": True, "renderer": False, "main_ui_or_tray": False,
         "real_auth_or_pubsub": False, "polisher_and_outbox": True,
@@ -194,8 +206,9 @@ def wait_ready(
 
 def observe_progress(
     owned: FixtureRoot, process: subprocess.Popen, binary: Path, digest: str,
-    minute: int, wall_deadline: float,
+    minute: int, wall_deadline: float, engine: str = "streaming", pattern: str | None = None,
 ) -> dict:
+    pattern = controller_profile(engine, pattern)
     try:
         item, report = read_control(
             owned, process, binary, digest, f"progress-{minute:04}.json", 0.1,
@@ -210,7 +223,7 @@ def observe_progress(
         raise
     keys = ["accepted_bytes", "writer_received_bytes", "writer_completed_bytes",
             "saved_bytes", "confirmed_bytes"]
-    if item.get("phase") != "capturing" or any(
+    if item.get("engine") != engine or item.get("pattern") != pattern or item.get("phase") != "capturing" or any(
         type(item.get(key)) is not int or item[key] < 0 for key in keys
     ) or type(item.get("elapsed_seconds")) not in (int, float) or not math.isfinite(item["elapsed_seconds"]) or item["elapsed_seconds"] < 0:
         raise ValueError("Owned progress control schema is invalid.")
@@ -237,10 +250,29 @@ def log_progress(directory: Path, row: dict) -> dict | None:
     return None
 
 
-def validate_completed(completed: dict, audio_seconds: int) -> None:
+def validate_completed(
+    completed: dict, audio_seconds: int, engine: str = "streaming", pattern: str | None = None,
+) -> None:
+    pattern = controller_profile(engine, pattern)
+    if engine == "legacy" and audio_seconds not in (3, 600):
+        raise RuntimeError("Unknown legacy duration/profile.")
+    keys = {
+        "engine", "pattern", "audio_seconds", "actual_capture_seconds", "captured_bytes",
+        "confirmed_bytes", "verified_provider_bytes", "stream_starts", "confirmed_cursors",
+        "maximum_producer_lateness_ms", "history_saved_before_handoff", "capture_joined",
+        "polisher_exercised", "delivery_acknowledged", "capture_frame_bytes",
+        "capture_frame_interval_ms", "accepted_bytes", "writer_received_bytes",
+        "writer_completed_bytes", "observed_max_queue_slots", "engine_lock", "recovery_io",
+        "scope", "current_controller", "renderer", "outbox_acknowledged",
+    }
+    if engine == "legacy":
+        keys |= {"legacy", "audit_uploads"}
+    if type(completed) is not dict or completed.keys() != keys:
+        raise RuntimeError("Functional final result has missing or unknown fields.")
+    if completed["engine"] != engine or completed["pattern"] != pattern:
+        raise RuntimeError("Functional final engine/pattern mismatch.")
     expected = audio_seconds * 32000
-    for key in ["captured_bytes", "confirmed_bytes", "verified_provider_bytes",
-                "accepted_bytes", "writer_received_bytes", "writer_completed_bytes"]:
+    for key in ["captured_bytes", "accepted_bytes", "writer_received_bytes", "writer_completed_bytes"]:
         if type(completed.get(key)) is not int or completed[key] != expected:
             raise RuntimeError(f"Exact functional PCM proof failed: {key}")
     if (
@@ -249,10 +281,10 @@ def validate_completed(completed: dict, audio_seconds: int) -> None:
         or completed["audio_seconds"] != audio_seconds
         or completed.get("current_controller") is not True
         or completed.get("renderer") is not False
-        or completed["engine_lock"]["saved_bytes"] != expected
-        or completed["engine_lock"]["confirmed_bytes"] != expected
-        or completed.get("capture_frame_bytes") != 1280
-        or completed.get("capture_frame_interval_ms") != 40
+        or type(completed["engine_lock"]["saved_bytes"]) is not int or completed["engine_lock"]["saved_bytes"] != expected
+        or type(completed["engine_lock"]["confirmed_bytes"]) is not int or completed["engine_lock"]["confirmed_bytes"] != expected
+        or type(completed.get("capture_frame_bytes")) is not int or completed["capture_frame_bytes"] != 1280
+        or type(completed.get("capture_frame_interval_ms")) is not int or completed["capture_frame_interval_ms"] != 40
     ):
         raise RuntimeError("Durable cursor, identity or original native frame contract mismatch.")
     cursors = completed.get("confirmed_cursors", [])
@@ -267,15 +299,74 @@ def validate_completed(completed: dict, audio_seconds: int) -> None:
         or not math.isfinite(completed["actual_capture_seconds"])
         or completed["actual_capture_seconds"] < audio_seconds
         or any(completed.get(key) is not True for key in [
-            "capture_joined", "outbox_acknowledged", "history_saved_before_handoff", "polisher_exercised"
+            "capture_joined", "delivery_acknowledged", "history_saved_before_handoff", "polisher_exercised"
         ])
-        or not cursors or cursors[-1] != expected
-        or any(left >= right for left, right in zip(cursors, cursors[1:]))
-        or not starts or starts[0] != 0
-        or any(type(start) is not int or (start != 0 and start not in committed) for start in starts)
-        or (audio_seconds > 3000 and len(starts) < 2)
     ):
         raise RuntimeError("Duration/order/rotation/stop-join/outbox proof failed.")
+    if engine == "streaming":
+        if (
+            type(completed["confirmed_bytes"]) is not int or completed["confirmed_bytes"] != expected
+            or type(completed["verified_provider_bytes"]) is not int or completed["verified_provider_bytes"] != expected
+            or completed["outbox_acknowledged"] is not True
+            or not cursors or cursors[-1] != expected
+            or any(left >= right for left, right in zip(cursors, cursors[1:]))
+            or not starts or starts[0] != 0
+            or any(type(start) is not int or (start != 0 and start not in committed) for start in starts)
+            or (audio_seconds > 3000 and len(starts) < 2)
+        ):
+            raise RuntimeError("Streaming exact provider/cursor/rotation/audit proof failed.")
+    else:
+        legacy = completed["legacy"]
+        if (
+            type(completed["confirmed_bytes"]) is not int or completed["confirmed_bytes"] != 0
+            or completed["outbox_acknowledged"] is not None
+            or type(completed["audit_uploads"]) is not int or completed["audit_uploads"] != 0
+            or starts or cursors
+            or type(legacy) is not dict
+            or legacy.keys() != {"chunks", "provider_completion_order", "original_text",
+                                 "expected_tail_audio_bytes", "expected_tail_frame_bytes", "final_manifest_tail_bytes"}
+        ):
+            raise RuntimeError("Legacy must preserve its schema cursor and inapplicable audit contract.")
+        chunks = legacy["chunks"]
+        if type(chunks) is not list or not chunks or len(chunks) > 4096:
+            raise RuntimeError("Legacy source-oracle chunk list is invalid.")
+        previous = 0
+        digests = set()
+        for index, chunk in enumerate(chunks):
+            if (
+                type(chunk) is not dict
+                or chunk.keys() != {"digest", "wav_bytes", "end_byte", "overlaps_previous", "text"}
+                or type(chunk["digest"]) is not str or not re.fullmatch("[0-9a-f]{64}", chunk["digest"])
+                or chunk["digest"] in digests
+                or type(chunk["wav_bytes"]) is not int or not 46 <= chunk["wav_bytes"] <= 192044
+                or chunk["wav_bytes"] % 2
+                or type(chunk["end_byte"]) is not int or not previous < chunk["end_byte"] <= expected
+                or chunk["end_byte"] % 2 or type(chunk["overlaps_previous"]) is not bool
+                or type(chunk["text"]) is not str or not chunk["text"].startswith(f"legacychunk{index:04} ")
+            ):
+                raise RuntimeError("Legacy ordered chunk/digest/result binding is invalid.")
+            previous = chunk["end_byte"]
+            digests.add(chunk["digest"])
+        order = legacy["provider_completion_order"]
+        if (
+            previous != expected or type(order) is not list
+            or any(type(index) is not int for index in order) or sorted(order) != list(range(len(chunks)))
+            or (len(chunks) >= 2 and order[:2] != [1, 0])
+            or legacy["original_text"] != " ".join(chunk["text"] for chunk in chunks)
+            or type(legacy["expected_tail_audio_bytes"]) is not int or not 0 < legacy["expected_tail_audio_bytes"] < 192000
+            or type(legacy["expected_tail_frame_bytes"]) is not int or legacy["expected_tail_frame_bytes"] != 0
+            or type(legacy["final_manifest_tail_bytes"]) is not int or legacy["final_manifest_tail_bytes"] != 0
+            or type(completed["verified_provider_bytes"]) is not int
+            or completed["verified_provider_bytes"] != sum(chunk["wav_bytes"] - 44 for chunk in chunks)
+            or completed["verified_provider_bytes"] == expected
+        ):
+            raise RuntimeError("Legacy WAV overlap/gating, result order, EOF or provider proof failed.")
+        if audio_seconds >= 12 and not (
+            any(chunk["wav_bytes"] == 192044 for chunk in chunks)
+            and any(chunk["overlaps_previous"] for chunk in chunks)
+            and any(chunk["end_byte"] < expected and chunk["wav_bytes"] < 192044 for chunk in chunks)
+        ):
+            raise RuntimeError("Legacy pattern did not exercise hard-bound overlap and silence cuts.")
     if any(type(completed["recovery_io"][key]) is not int or completed["recovery_io"][key] != 0 for key in [
         "active_pinned_reads", "active_manifest_inspections", "retained_manifest_capacity_bytes",
     ]):
@@ -412,6 +503,7 @@ def run(
                     "scope": scope,
                     "nonce": nonce,
                     "audio_seconds": audio_seconds,
+                    **({"engine": "streaming", "pattern": PATTERNS["streaming"]} if controller else {}),
                 }
             ).encode(),
         )
@@ -466,6 +558,7 @@ def run(
                         "main_ui_or_tray": False,
                         "real_auth_or_pubsub": False,
                         "polisher_and_outbox": True,
+                        "engine": "streaming", "pattern": PATTERNS["streaming"],
                     }
                 )
             if ready != expected_ready:
@@ -719,13 +812,16 @@ def run(
 
 def run_functional(
     binary: Path, directory: Path, revision: str, audio_seconds: int,
-    native_revision: str | None = None,
+    native_revision: str | None = None, engine: str = "streaming", pattern: str | None = None,
 ) -> None:
     """Current controller only: no debugger or process/resource/idle sampler."""
+    pattern = controller_profile(engine, pattern)
     if os.name != "nt" or binary.name != "VoicePromptNativeControllerFixture.exe":
         raise ValueError("An explicitly named frozen Windows controller libtest is required.")
-    if not 2 <= audio_seconds <= 3600:
+    if type(audio_seconds) is not int or not 2 <= audio_seconds <= 3600:
         raise ValueError("Functional capture must use bounded explicit seconds.")
+    if engine == "legacy" and audio_seconds not in (3, 600):
+        raise ValueError("The legacy profile is defined for the3s smoke or600s functional capture.")
     directory = directory.resolve(strict=True)
     if any(directory.iterdir()):
         raise ValueError("A new empty evidence directory is required.")
@@ -735,6 +831,7 @@ def run_functional(
         control, nonce = owned.path, owned.nonce
         create(control / "capture-options.json", json.dumps({
             "scope": CONTROLLER_SCOPE, "nonce": nonce, "audio_seconds": audio_seconds,
+            "engine": engine, "pattern": pattern,
         }).encode())
         environment = dict(os.environ)
         environment["VOICEPROMPT_SYNTHETIC_HOUR_DIRECTORY"] = str(control)
@@ -805,7 +902,7 @@ def run_functional(
                 "control_directory": str(control), "scope": CONTROLLER_SCOPE,
                 "functional_only": True, "resource_sampling": False,
             }).encode())
-            ready = wait_ready(owned, process, binary, digest, 15)
+            ready = wait_ready(owned, process, binary, digest, 15, engine, pattern)
             create(directory / "readiness.json", json.dumps(ready).encode())
             owned.owned()
             if process.poll() is not None:
@@ -820,7 +917,7 @@ def run_functional(
                 if time.monotonic() > deadline:
                     raise TimeoutError("Functional capture/completion wall budget expired.")
                 if minute <= audio_seconds and time.monotonic() >= began + minute:
-                    row = observe_progress(owned, process, binary, digest, minute, deadline)
+                    row = observe_progress(owned, process, binary, digest, minute, deadline, engine, pattern)
                     observations.append(row)
                     warning = log_progress(directory, row)
                     if warning is not None:
@@ -831,7 +928,7 @@ def run_functional(
                 owned, process, binary, digest, "idle-ready.json", 15,
                 wall_deadline=deadline, allow_exit=True,
             )
-            validate_completed(completed, audio_seconds)
+            validate_completed(completed, audio_seconds, engine, pattern)
             create(directory / "completion-read.json", json.dumps(last_essential_control).encode())
             create(control / "finish", nonce.encode())
             exit_deadline = time.monotonic() + 15
@@ -843,7 +940,8 @@ def run_functional(
                 owned, process, binary, digest, "normal-exit.json", 15,
                 wall_deadline=exit_deadline, allow_exit=True,
             )
-            expected_exit = {"phase": "normal-exit", "current_controller": True, "physical_ports": False}
+            expected_exit = {"phase": "normal-exit", "current_controller": True, "physical_ports": False,
+                             "engine": engine, "pattern": pattern}
             if exit_proof.keys() != expected_exit.keys() or any(
                 type(exit_proof[key]) is not type(value) or exit_proof[key] != value
                 for key, value in expected_exit.items()
@@ -857,6 +955,7 @@ def run_functional(
                 "native_source_revision": native_revision or revision, "binary_sha256": digest,
                 "pid": process.pid, "audio_seconds": audio_seconds, "actual_capture": completed,
                 "functional_only": True, "resource_sampling": False, "whole_migration_acceptance": False,
+                "engine": engine, "pattern": pattern,
                 "progress_observations": progress_summary(),
                 "precleanup_external_counts_cipher": "NOT_OBSERVED_EXTERNALLY; native final assertions precede ACK cleanup",
             }
@@ -906,13 +1005,17 @@ if __name__ == "__main__":
     parser.add_argument("--controller", action="store_true")
     parser.add_argument("--functional-only", action="store_true")
     parser.add_argument("--native-source-revision")
+    parser.add_argument("--engine", choices=PATTERNS, default="streaming")
+    parser.add_argument("--pattern")
     args = parser.parse_args()
     if args.functional_only:
         if not args.controller:
             parser.error("--functional-only requires --controller.")
         run_functional(args.oracle.resolve(strict=True), args.output_directory, args.source_revision,
-                       args.audio_seconds, args.native_source_revision)
+                       args.audio_seconds, args.native_source_revision, args.engine, args.pattern)
     else:
+        if args.engine != "streaming" or args.pattern not in (None, PATTERNS["streaming"]):
+            parser.error("Legacy/pattern selection is only available to functional controller fixtures.")
         run(
             args.oracle.resolve(strict=True),
             args.output_directory,

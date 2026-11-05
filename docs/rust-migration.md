@@ -45,7 +45,8 @@ uz uzivatel nechce.
 | Microphone readiness | Jeden actual240ms probe a samostatne schvalena30+30 paired serie prosly; first-PCM p95Rust80.75% C#baseline, bez audio souboru/uploadu |
 | Engine longevity | Actual3600s synthetic PCM/real50min rotation,115200000 exact bytes; worst idle growth1.645MiB<10MiB, engine-only PASS |
 | Current controller functionality/reliability | STREAMING AB98 actual3600.0017623s FUNCTIONALPASS/exact115200000PCM/rotation[0,96000000]/normaljoinsACK je ulozeny milnik. LEGACYownedsealer/sharedwindow: actualsingleworker192kRED->GREEN, EMITcadenceRED->GREEN/MAX4C#restore/working-vs-durableASRproof a odd64001RED->GREEN. Uzkyreview bezhighconfidencebug; final173native+7bin/189otherworkspace/5C#golden/7rollback/release/3s96000PASS. MatchingnewCI zbyva. AB98hour se NEPREZNACUJE na novyrefactor nebo legacy/fullGUI/physical/install/privateAzurePASS |
-| CI nativniho inkrementu | Exactab98d64/CI41977537100 Windows/Linux/MSRV1.85/container ALL5SUCCESS, Windows163nativePASS16ignored, samepacketguard/parity a3s NoPorts smoke PASS. NativeFS/fault integration je explicitneserialni; ostatniworkspaceparalelni. Old2f8/05/failedCI zustavaji revision-scoped, neni production cutover |
+| CI nativniho inkrementu | Legacycodeec6ad0c/CI42017380685 attempt2 ALL5SUCCESS se vsemi Winparity/release/3sstepsSUCCESS. Attempt1existingelapsedguardFAIL a tehdejsiSKIPPEDsteps zachovany; no sampler/budgetpatch. Novy test-onlylegacyprofile vyzaduje vlastni matchingCI, zatim pending. NativeFS/fault integration serialni, ostatniworkspaceparalelni; neni production cutover |
+| Legacy functional profile | ExistingNoPortsentry/producer/host ma strictengine+knownpattern, sourceWAVoracle a deliveryACK bez legacyAudit. Local176native+7bin/189other/20root+10host/6C#golden a oba current3ssmokes PASS. Actuallegacy600 je vyslovne zadany AZpo novemmatchingALL5CI; zatim NEZACAL |
 | OAuth/token-store/PubSub klient | Native flow implementovany; samostatny live Google auth-only/local-signout a assisted manual clipboard probe PASS, full signed-in backend/controller dictation stale chybi; samostatny automatic DesktopGuard port viz dalsi radek |
 | Automatic DesktopGuard paste port | NOVYexactonephysicalpostfix5b test PASS:one4eventnativeCtrlV/exactownfieldmarker/normalclosed,no retry. Nejdenifullcontroller/hold-toggle/hour/realbackend acceptance;older50040BLOCKED/45788assisted zustavaji |
 | Diktovani/recovery UI | Native microphone/hotkeys/overlay/paste controller, oba enginy, journal, polishing a outbox implementovany; real-world a rozsahlejsi fault/E2E akceptace zbyva |
@@ -5198,3 +5199,77 @@ Azuretest ani preznaceni AB98/528a actualhour na newbinary.
 Historicka legacy sourcegate `legacy_session.rs:225-238` popisovala syncIO
 pred B; owned/joined rawwindow ji nyni sourceopravuje. StreamingAB98hour
 neoveroval tuto novoulegacyimplementaci ani current sharedrefactorbinary.
+
+### Legacy source CI and test-only functional profile
+
+Code `ec6ad0cd7726ae2c111eed1892569c72960b226f`, Rusttree
+`2e1bf339d59d02076d1c3577d9ee94f8124edd71`, pushnuty na refactor-rust.
+ExactCI42017380685 attempt1:4jobsPASS, Win nativeSERIAL/ClippyPASS, pak
+EXISTINGprocessmeasurementguardFAIL "Actual elapsed time was not measured";
+nasledujiciWinparity/release/3sSKIPPED. Fullfailedlog/result zachovany.
+RequestedONEfailedjob rerun na STEJNEMsource, bez performance/sampler/
+budgetpatch. Attempt2 actualAPIreport ma ALL5jobsSUCCESS a vsechny drive
+SKIPPEDWinsteps vcetneparity/release/3ssmokeSUCCESS, nejen watcherExit0.
+`legacy-owned-sealer-work/ci-ec6ad0c-exact.json`. PrvniFAIL se nesmaze;
+firstsampleoverhead muze ze sourcevysvetlit guardlast-first>=.19 pri
+epochschedule0/.1/.2, ale rawCIvalues nebyly retained: exacttimingcause
+neni pozorovanydukaz. Neni to sealerregression ani novybenchmark.
+
+Nasledne vyslovne zadany TEST-ONLYinkrement nereimplementuje controller.
+Existing Harnessbool, ignoredentry, fail-fast1280B/40ms/50queueproducer,
+root/readiness/optionalGAP/normalexit/snapshot/cleanup zustavaji sdilene.
+Explicitengine+pattern:
+`streaming/ordered-quiet-v1` zachovava puvodni absolutni modulo97PCM
+a streamingcursor/rotation/ACKinvarianty; `legacy/voiced-pause-overlap-v1`
+ma12scycle quiet0-.6/voice.6-8.6/quiet8.6-9.2/voice9.2-12, s absolute
+samplemodulation. LegacyMAIN je definovan pro3ssmoke nebo600s; warmup
+zustava samostatny2s. Neznama/mismatchedmode/pattern/extraJSONfields
+nejsou fallbackstreaming. Ready/final/normalexit matchingprofile je strict.
+
+Legacy fixture sourceoracle pouziva NEZMENENY PcmChunker a canonical
+RecoveryManifest WAVdigest; zadne nove zavislosti nebo hash/chunker
+reimplementation. Provider overuje uniqueexpectedWAVhash/length/binding,
+nejvyse2requests, prvnidvojici dokonci [1,0] a ruznechunktexts se musi
+vratit v chronologicalHistoryorder. Finalnativeasserts porovnaji durable
+chunkdigest/endbyte/overlap/result a ulozenourawcapturecounter pred
+deliveryACK. To neni livehostcapturemanifestobserver. Oracle-tailmetadata
+jsou explicitEXPECTED; actualfinalmanifesttail je empty. Optionallegacy
+`provider_bytes` je NULL (streamcounterN/A), ne falseobserved0.
+
+Full600 SAMPLEVOLUME (NE wall-clockcapture) prosel binarybyte-exact
+Rustaudio_contract/C#golden: raw19200000,150WAVchunks, soucetproviderPCM
+20083200, lastend19200000/lastWAV95404. Overlap+silencedrop proto nelze
+overovat jako rawconcatenation/providerbytes==raw. C#matchedoracleJSON SHA
+`2da127c1948b112221f846775316dd7977c337f70c8754d1e1355c9cf9ea5e5e`
+v `legacy-functional-profile-work/legacy600-csharp-oracle.json`.
+Finalvoicedtail je partial6sCHUNK, nikoli partial20msframe:
+19200000 je presny nasobek1280 i640. Existujici17legacyfragment/restore/
+oddEOFtests zustavaji samostatne, zadna nova cosmeticcapturekalibrace.
+
+Legacy success NEMA productionauditupload: schema confirmed_bytes0,
+auditN/A/0uploads/outbox_acknowledgedNULL. Fixture vyzaduje skutecny
+deliveryACK, Historybeforehandoff, polisher a joineddelete_idle.
+Periodicoutboxworker je pouze no-op; zadne fakelegacyAudit pro greenproof.
+Raw produced/admitted/received/completed/saved musi byt presny expectedraw,
+providerPCM/WAVhash/cursors/order se overuji oddelene. Mode-specific final
+validator odmitne i chybnypattern, unknownfields, wrongcursor/order/text,
+fakeauditACK, missingdelivery a providerbytesrawassumption.
+
+Local currentchecks:176nativePASS16existingignored+7bin,189otherworkspace
+PASS1existingignored, fmt/allfeaturealltargetClippy/releasefixturePASS,
+20rootguards+10nativehostguards a6actualC#goldengroupsPASS.
+Vsech5productionfiles ma stejnehashes jako ec6ad; codecdelta/dependencies/
+storagepolicy/productionenginepatch zadny. Currentfixture SHA
+`446e7da9eb491b18764bc05fc8bea19b83f334fba659f1d3892981ff12d4bb7a`,
+PDB `93820abd3bfa2b58ad8a970ddabcc551cb5d4b26770116573c8f2a044f884519`.
+Oba actual3s NoPorts smokes independentlyverified: streaming3.0150241/
+96000raw=providerPCM/normalauditACK; legacy3.0042497/96000raw/
+82560providerPCM/schema0/noaudit/deliveryACK+joineddelete.
+Kazdy12POEXITsnapshotfilehashes/allfrozeninputs/PIDsabsent/onlyownTemp
+cleanup AZpo preservation. `short-smokes-independent.json` uchovava
+native/collectorPIDs a exactscope. Neni legacy600 nebo perf/humanPASS.
+
+Novy test-onlysourcecommit/matchingALL5CI se dokoncuje. Teprve pote je
+vyslovne zadany ONEactualLEGACY600FUNCTIONAL/newmarkedTemp/frozeninputs/
+PDBsourceoraclehash/normal30slegacy5sfixture proof; zadny600autoretry,
+legacyhour, novystreaminghour/CDB/physical/install/Azure scope.

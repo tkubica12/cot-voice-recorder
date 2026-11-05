@@ -20,6 +20,61 @@ ORACLE: Path
 
 
 class SyntheticCaptureTests(unittest.TestCase):
+    def test_functional_unknown_engine_or_mismatched_pattern_is_rejected_before_launch(self) -> None:
+        for engine, pattern in [(False, None), ("unknown", None), ("legacy", "ordered-quiet-v1"),
+                                ("streaming", "voiced-pause-overlap-v1")]:
+            with patch.object(capture.subprocess, "Popen") as start, self.assertRaises(ValueError):
+                capture.run_functional(ORACLE, Path("unused"), "invalid-profile", 3, engine=engine, pattern=pattern)
+            start.assert_not_called()
+
+    def test_legacy_actual_short_mode_has_ordered_oracle_results_no_audit_and_strict_final_schema(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="VoicePrompt-legacy-functional-") as directory:
+            root = Path(directory)
+            oracle = root / "VoicePromptNativeControllerFixture.exe"
+            shutil.copyfile(ORACLE, oracle)
+            evidence = root / "evidence"
+            evidence.mkdir()
+            with patch.object(capture, "sample", side_effect=AssertionError("No resource sampler")):
+                capture.run_functional(oracle, evidence, "legacy-functional-guard", 3, engine="legacy")
+            report = json.loads((evidence / "functional-controller.json").read_bytes())
+            actual = report["actual_capture"]
+            self.assertEqual(actual["engine"], "legacy")
+            self.assertEqual(actual["captured_bytes"], 96000)
+            self.assertEqual(actual["confirmed_bytes"], 0)
+            self.assertEqual(actual["audit_uploads"], 0)
+            self.assertIsNone(actual["outbox_acknowledged"])
+            self.assertTrue(actual["delivery_acknowledged"])
+            self.assertNotEqual(actual["verified_provider_bytes"], 96000)
+            self.assertEqual(actual["legacy"]["chunks"][-1]["end_byte"], 96000)
+            self.assertTrue(json.loads((evidence / "data-cleanup.json").read_bytes())["removed"])
+            from copy import deepcopy
+            for case in ["engine", "pattern", "unknown", "audit", "delivery", "provider", "raw", "cursor", "order", "text", "tail"]:
+                invalid = deepcopy(actual)
+                if case == "engine":
+                    invalid["engine"] = "streaming"
+                elif case == "pattern":
+                    invalid["pattern"] = capture.PATTERNS["streaming"]
+                elif case == "unknown":
+                    invalid["unexpected"] = True
+                elif case == "audit":
+                    invalid["outbox_acknowledged"] = True
+                elif case == "delivery":
+                    invalid["delivery_acknowledged"] = False
+                elif case == "provider":
+                    invalid["verified_provider_bytes"] = 96000
+                elif case == "raw":
+                    invalid["writer_completed_bytes"] -= 1280
+                elif case == "cursor":
+                    invalid["legacy"]["chunks"][-1]["end_byte"] -= 640
+                elif case == "order":
+                    invalid["legacy"]["provider_completion_order"] = [1]
+                elif case == "text":
+                    invalid["legacy"]["original_text"] = "wrong chunk order"
+                elif case == "tail":
+                    invalid["legacy"]["expected_tail_frame_bytes"] = 2
+                with self.subTest(case=case), self.assertRaises(RuntimeError):
+                    capture.validate_completed(invalid, 3, "legacy")
+
     def test_functional_required_result_denial_is_host_incomplete_not_a_cached_progress_pass(self) -> None:
         with tempfile.TemporaryDirectory(prefix="VoicePrompt-final-read-") as directory:
             root = Path(directory)
