@@ -28,13 +28,9 @@ param(
     [string] $ProjectName = 'cot-voice-recorder',
     [string] $ImageRepository = 'voice-recorder-backend',
     [string] $ImageTag = '',
-    # Source-only migration switch; Python remains the rollback/default image.
-    [ValidateSet('Python','Rust')]
-    [string] $BackendRuntime = 'Python',
-    # Public, unauthenticated Microsoft package feed proxy (direct PyPI TLS is
-    # broken on this workstation; the committed uv.lock references it). Passed as a
-    # Docker build-arg to the cloud `az acr build`. No credentials are involved.
-    [string] $PackageFeedProxy = 'https://packagefeedproxy.microsoft.io/pypi/simple/',
+    # Rust is the source default; executing this script still deploys real resources.
+    [ValidateSet('Rust')]
+    [string] $BackendRuntime = 'Rust',
     # Optional git-ignored parameters file with real OAuth audiences / owner email.
     [string] $LocalParametersFile = '',
     [switch] $SkipBuild,
@@ -52,7 +48,6 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 
 $InfraDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Split-Path -Parent $InfraDir
-$BackendDir = Join-Path $RepoRoot 'backend'
 $MainBicep = Join-Path $InfraDir 'main.bicep'
 $BaseParams = Join-Path $InfraDir 'main.parameters.json'
 
@@ -121,8 +116,8 @@ $imageRef = "$acrLoginServer/$ImageRepository`:$ImageTag"
 # ----------------------------------------------------------------- Build
 if (-not $SkipBuild) {
     Write-Host "`n--- Build & push image via az acr build ---" -ForegroundColor Cyan
-    $buildContext = if ($BackendRuntime -eq 'Rust') { $RepoRoot } else { $BackendDir }
-    $dockerfile = if ($BackendRuntime -eq 'Rust') { 'rust/cloud/Dockerfile' } else { 'Dockerfile' }
+    $buildContext = $RepoRoot
+    $dockerfile = 'rust/cloud/Dockerfile'
     Push-Location $buildContext
     try {
         $buildArgs = @(
@@ -131,10 +126,6 @@ if (-not $SkipBuild) {
             '--image', "$ImageRepository`:$ImageTag",
             '--file', $dockerfile
         )
-        if ($BackendRuntime -eq 'Python' -and $PackageFeedProxy) {
-            $buildArgs += @('--build-arg', "UV_DEFAULT_INDEX=$PackageFeedProxy")
-            $buildArgs += @('--build-arg', "PIP_INDEX_URL=$PackageFeedProxy")
-        }
         $buildArgs += @('.')
         # `az acr build` can crash the local CLI while streaming UTF-8 logs on a
         # Windows cp1252 console even though the server-side build succeeds. Tolerate

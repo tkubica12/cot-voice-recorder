@@ -23,10 +23,6 @@ from azure.storage.queue import QueueClient, TextBase64DecodePolicy, TextBase64E
 if TYPE_CHECKING:
     from measure_backend import Authority, Fixture
 
-    from voice_recorder.config import Settings
-    from voice_recorder.realtime.protocols import RealtimeGateway
-    from voice_recorder.services.context import ServiceContext
-
 SCOPE = "authenticated-https-azurite-http-no-ai-realtime"
 FIELDS = {"scope", "key", "blob", "queue", "table", "identity_endpoint", "identity_header"}
 
@@ -114,23 +110,9 @@ class LocalIdentity:
         self.http.close()
 
 
-def context(
-    root: Path, settings: Settings, realtime: RealtimeGateway, resources: ExitStack
-) -> ServiceContext:
-    from voice_recorder.ai.fakes import FakeRefiner, FakeTranscriber
-    from voice_recorder.clock import SystemClock
-    from voice_recorder.repositories.tables import (
-        AzureTableChunkRepository,
-        AzureTableRecordingRepository,
-        AzureTableTranscriptRepository,
-    )
-    from voice_recorder.services.context import ServiceContext
-    from voice_recorder.storage.blob import AzureBlobStore
-    from voice_recorder.storage.queue import AzureWorkQueue
-
+def sdk_clients(root: Path, resources: ExitStack) -> dict:
     config = load_fixture(root)
     names = resource_names(config["key"])
-    settings = settings.model_copy(update={**names, "use_fake_storage": False})
     credential = LocalIdentity(config)
     resources.callback(credential.close)
     transport = RequestsTransport(
@@ -161,23 +143,12 @@ def context(
         message_decode_policy=TextBase64DecodePolicy(),
     )
     resources.callback(queue.close)
-    return ServiceContext(
-        settings=settings,
-        clock=SystemClock(),
-        recordings=AzureTableRecordingRepository(table.get_table_client(names["recordings_table"])),
-        chunks=AzureTableChunkRepository(table.get_table_client(names["chunks_table"])),
-        transcripts=AzureTableTranscriptRepository(
-            table.get_table_client(names["transcripts_table"])
-        ),
-        blobs=AzureBlobStore(
-            blob,
-            [names[key] for key in ["audio_container", "transcript_container", "raw_container"]],
-        ),
-        queue=AzureWorkQueue(queue),
-        transcriber=FakeTranscriber(),
-        refiner=FakeRefiner(),
-        realtime=realtime,
-    )
+    for kind in ["audio_container", "transcript_container", "raw_container"]:
+        blob.create_container(names[kind])
+    for kind in ["recordings_table", "chunks_table", "transcripts_table"]:
+        table.create_table(names[kind])
+    queue.create_queue()
+    return {"blob": blob, "table": table, "queue": queue, "names": names}
 
 
 class AzureProfile:

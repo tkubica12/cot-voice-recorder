@@ -1,9 +1,8 @@
-# Rust migration foundation
+# Rust applications
 
-This is the staged foundation on `refactor-rust`, not a replacement
-Windows client or backend. The existing clients, release builds and cloud remain
-unchanged. Scope, targets, safeguards and progress are in
-[the migration plan](../docs/rust-migration.md).
+> **Source cleanup:** current compatibility commands use `rust/tests/golden` and `scripts/uv.lock`, not the removed C#/Python applications. Older revision-scoped measurement/reference descriptions below remain historical evidence, not runnable legacy-product instructions. The live Azure cutover remains separate and unperformed.
+
+Windows and cloud application source is Rust; Android remains Kotlin. The original application sources are retired, while independent frozen wire/data contracts and small OS/SDK test tools preserve compatibility. Existing public releases and the live Azure cloud have not been replaced by this source cleanup. See [the migration ledger](../docs/rust-migration.md).
 
 `voiceprompt-core` ports the current mono PCM16 WAV encoder, the backend's legacy
 and strict WAV validation modes, and the Windows legacy/recovery PCM chunker.
@@ -50,23 +49,14 @@ not claim to run it. Interactive tray startup is checked locally, not in CI.
 
 ## Cross-language parity
 
-The reference .NET executable now links the actual Core project (including
-`PcmChunker.cs` and the DPAPI protector), not a second implementation.
-The Python runner imports the actual backend WAV validator.
-All inputs are deterministic synthetic samples; there is no microphone, account,
-network, clipboard operation or personal recording.
+The versioned [golden corpus](tests/golden/README.md) was independently verified against the actual legacy implementations before removal. Rust black boxes now replay those contracts without importing the old apps. CurrentUser DPAPI/isolated IPC use only the small independent `tests/platform-oracle` tool; no Windows Core project is linked.
 
 ```powershell
-dotnet build rust\tests\reference\ReferenceAudio.csproj -c Release
-backend\.venv\Scripts\python.exe rust\tests\test_audio_parity.py `
-  --rust-oracle rust\target\release\examples\audio_contract.exe `
-  --dotnet-oracle rust\tests\reference\bin\Release\net8.0\ReferenceAudio.dll
+cargo build --manifest-path rust\Cargo.toml --offline --locked --release -p voiceprompt-core --example audio_contract
+cargo build --manifest-path rust\Cargo.toml --offline --locked --release -p voiceprompt-client-protocol --example client_contract
+cargo build --manifest-path rust\Cargo.toml --offline --locked --release -p voiceprompt-cloud --examples
+uv run --project scripts --locked python rust\tests\test_golden_contracts.py --examples rust\target\release\examples
 ```
-
-The Rust example and C# reference are test probes only. They accept stdin and emit
-WAV bytes, validation properties, or a binary chunk list including overlap flags
-and absolute cursors. They are not shipped in an installer. Errors return nonzero
-and print diagnostics to stderr.
 
 ## Read-only process measurement
 

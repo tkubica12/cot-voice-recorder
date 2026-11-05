@@ -1,5 +1,7 @@
 # Client authentication and realtime contracts
 
+> **Source cleanup:** current compatibility commands use `rust/tests/golden` and `scripts/uv.lock`, not the removed C#/Python applications. Older revision-scoped measurement/reference descriptions below remain historical evidence, not runnable legacy-product instructions. The live Azure cutover remains separate and unperformed.
+
 This crate ports client-side contracts and the transcript-delivery coordinator.
 The native tray has an opt-in explicit-state mode for interactive Google sign-in
 and realtime/clipboard/history delivery. Unattended tests use synthetic state and
@@ -94,11 +96,11 @@ From the repository root:
 cargo test --manifest-path rust\Cargo.toml --workspace --offline --locked
 cargo build --manifest-path rust\Cargo.toml --offline --locked --release -p voiceprompt-client-protocol --example client_contract
 cargo build --manifest-path rust\Cargo.toml --offline --locked --release -p voiceprompt-windows-pilot
-dotnet build rust\tests\reference\ReferenceAudio.csproj -c Release
-backend\.venv\Scripts\python.exe rust\client-protocol\tests\test_client_parity.py `
+dotnet build rust\tests\platform-oracle\PlatformOracle.csproj -c Release
+uv run --project scripts --locked python rust\client-protocol\tests\test_client_parity.py `
   --client rust\target\release\examples\client_contract.exe `
   --pilot rust\target\release\VoicePromptRustPilot.exe `
-  --reference rust\tests\reference\bin\Release\net8.0\ReferenceAudio.dll
+  --reference rust\tests\platform-oracle\bin\Release\net8.0\PlatformOracle.dll
 ```
 
 All inputs and temporary caches are synthetic. Tests compare actual C# Core
@@ -127,7 +129,8 @@ publication occurs under the session lock; a delayed
 refresh cannot restore SignedIn or vend a stale bearer after sign-out.
 
 ```powershell
-backend\.venv\Scripts\python.exe rust\client-protocol\tests\test_dictation_parity.py `
-  --client rust\target\release\examples\client_contract.exe `
-  --reference rust\tests\reference\bin\Release\net8.0\ReferenceAudio.dll
+cargo build --manifest-path rust\Cargo.toml --offline --locked --release -p voiceprompt-core --example audio_contract
+cargo build --manifest-path rust\Cargo.toml --offline --locked --release -p voiceprompt-client-protocol --example client_contract
+cargo build --manifest-path rust\Cargo.toml --offline --locked --release -p voiceprompt-cloud --examples
+uv run --project scripts --locked python rust\tests\test_golden_contracts.py --examples rust\target\release\examples
 ```

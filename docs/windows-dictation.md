@@ -69,10 +69,10 @@ with `VR_DICTATION_STREAM_DEPLOYMENT`.
 
 The MAI feature remains public preview without SLA. Neither healthy-path timing
 nor replay promises two-second completion during an outage. The reproducible live
-probe is `windows\tools\DictationProbe --stream-live synthetic.wav`: it uses the
-installed Google configuration, replays a synthetic WAV at capture cadence,
-requires full confirmation within two seconds after stop, archives and retrieves
-the exact result with 48-hour retention, and never records a microphone or pastes.
+probe used the previous managed `DictationProbe`; its source remains in Git
+history, not the current application tree. Current Rust regression tests use
+explicit synthetic providers and frozen wire/audio contracts. A real-provider
+test is a separate user-authorized operation, not a build or CI step.
 
 ## Original short-batch decision (legacy mode and recovery)
 
@@ -316,10 +316,11 @@ repeated prompts produced cache hits: the two matrices reported 230,768 input to
 access probe. These are usage observations, not a dollar-cost estimate or an uncached
 latency guarantee.
 
-The reproducible harness and offline safeguards are in
-`backend\tools\benchmark_refinement.py` and `backend\tests\test_refinement_benchmark.py`;
-the synthetic corpus is `backend\tests\fixtures\refinement_benchmark.json`.
-See [benchmark commands](../backend/README.md#opt-in-dictation-refinement-benchmark).
+The historical Python benchmark harness and corpus remain in Git history.
+They were retired with the old application sources; these observations are not
+relabelled as new Rust measurements. Current independent compatibility cases
+live in [`rust/tests/golden`](../rust/tests/golden/README.md). No new paid-model
+benchmark is required by source cleanup.
 Full request records, prompts, model outputs, assembled transcripts and summaries for this
 run are retained in the session artifacts `llm-benchmark-01` and `llm-benchmark-patch30`.
 
@@ -425,15 +426,12 @@ installation are separate from this source implementation.**
 ## Verification
 
 ```powershell
-dotnet test windows\tests\VoicePrompt.Core.Tests\VoicePrompt.Core.Tests.csproj -c Release
-dotnet run --project windows\tools\DictationProbe\DictationProbe.csproj -c Release
-dotnet run --project windows\tools\DictationProbe\DictationProbe.csproj -c Release -- --microphone
-dotnet run --project windows\tools\DictationProbe\DictationProbe.csproj -c Release -- --live <synthetic.wav>
-dotnet run --project windows\tools\DictationProbe\DictationProbe.csproj -c Release -- --refine-live
-dotnet run --project windows\tools\DictationProbe\DictationProbe.csproj -c Release -- --editor-live <synthetic.wav>
+cargo test --manifest-path rust\Cargo.toml --workspace --exclude voiceprompt-windows-pilot --offline --locked
+cargo test --manifest-path rust\Cargo.toml -p voiceprompt-windows-pilot --offline --locked -- --test-threads=1
+uv run --project scripts --locked python rust\tests\test_golden_contracts.py --examples rust\target\release\examples
 ```
 
-Core tests cover actual WAV bytes, irregular buffer boundaries, silence, short utterances,
+Rust and frozen compatibility tests cover actual WAV bytes, irregular buffer boundaries, silence, short utterances,
 hard-cut overlap reconstruction, final flush, concurrency, out-of-order responses, overload,
 cancellation, failure handling, seam deduplication, modifier/focus/clipboard delivery policy,
 binary upload replay after 401, settings compatibility and backend URL changes.

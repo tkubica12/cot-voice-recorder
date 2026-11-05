@@ -5,10 +5,8 @@ fn main() {
     let icon = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..")
+        .join("assets")
         .join("windows")
-        .join("src")
-        .join("VoicePrompt.App")
-        .join("Assets")
         .join("app.ico");
     println!("cargo:rerun-if-changed={}", icon.display());
     winresource::WindowsResource::new()

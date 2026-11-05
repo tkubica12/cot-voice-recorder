@@ -217,8 +217,8 @@ class ClientFixtureTests(unittest.TestCase):
             for value in [0, 61]:
                 with self.subTest(value=value), self.assertRaises(ValueError):
                     FixtureProcess(
-                        BINARIES["csharp"],
-                        "csharp",
+                        BINARIES["rust"],
+                        "rust",
                         Path(directory),
                         5,
                         readiness_timeout_seconds=value,
@@ -287,11 +287,9 @@ class ClientFixtureTests(unittest.TestCase):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--csharp", type=Path, required=True)
     parser.add_argument("--rust", type=Path, required=True)
     args = parser.parse_args()
     BINARIES = {
-        "csharp": args.csharp.resolve(strict=True),
         "rust": args.rust.resolve(strict=True),
     }
     unittest.main(argv=[__file__], verbosity=2)

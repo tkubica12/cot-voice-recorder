@@ -2,10 +2,16 @@
 
 **Think out loud anywhere. Paste a clean prompt on your PC.**
 
-**Latest release: 1.6.0.** Android **1.3.0** adds durable mobile uploads with one
-continuous cloud transcription session. Windows remains **1.5.1**, with streaming
-dictation, 48-hour cloud audit and immediate overlay hiding after successful paste.
-See the [release notes](docs/releases/v1.6.0.md).
+**Windows and cloud source now use Rust.** Android remains Kotlin. The current
+native Windows preview is installed and has completed a real user dictation
+workflow; it does not require the .NET Desktop Runtime.
+
+**Deployment/release boundary:** the existing Azure services have not been
+cut over by this source migration. Classic ACA, private networking, managed
+identity, queue scaling and hourly cleanup remain unchanged. Production Rust
+cutover is a separate authorized operation. The existing public **1.6.0** release
+still contains the historical Windows **1.5.1** managed installer and Android
+**1.3.0**; source cleanup does not replace those assets or publish a release.
 
 **Android 1.3.0:** reliable ten-second uploads feed one continuous cloud
 MAI session. Cloud audio is retained for full replay until completion; optional
@@ -54,12 +60,15 @@ in Windows, still with no final AI wait. Storage and paste problems remain visib
 
 Download installers from the [latest GitHub release](https://github.com/tkubica12/cot-voice-recorder/releases/latest):
 
-- [Windows x64 installer](https://github.com/tkubica12/cot-voice-recorder/releases/latest/download/VoicePrompt-Setup.exe)
-  (requires .NET 8 Desktop Runtime; not code-signed).
+- [Historical Windows x64 installer](https://github.com/tkubica12/cot-voice-recorder/releases/latest/download/VoicePrompt-Setup.exe)
+  (the previous managed release, not the current Rust preview).
 - [Signed Android APK](https://github.com/tkubica12/cot-voice-recorder/releases/latest/download/VoicePrompt-Android.apk)
   (Android 10 or newer).
 - [SHA-256 checksums](https://github.com/tkubica12/cot-voice-recorder/releases/latest/download/SHA256SUMS.txt).
 
+Build the current native preview with `scripts\Build-RustWindowsInstaller.ps1`.
+It is build-only and unsigned; native PE metadata is currently **0.1.0** while
+the preview setup retains **1.5.1** catalog text. No new public version is implied.
 The public Windows installer does not bundle local OAuth configuration, tokens or credentials.
 Existing configured installations retain their configuration; new installations need the
 [Desktop OAuth setup](docs/google-oauth.md). The hosted backend still restricts access to
@@ -103,7 +112,7 @@ not a summary.
 ```mermaid
 flowchart LR
     A["Android app<br/>record even when locked"]
-    API["FastAPI<br/>Azure Container Apps"]
+    API["Rust API source<br/>Azure Container Apps"]
     ST[("Private Azure Storage<br/>Blob · Queue · Table")]
     WK["Queue worker<br/>Azure Container Apps"]
     AI["Azure AI Foundry<br/>continuous MAI + optional cleanup"]
@@ -126,10 +135,10 @@ flowchart LR
 | Component | Technology | Responsibility |
 |-----------|------------|----------------|
 | [`android/`](android/) | Kotlin, Jetpack Compose, Room, WorkManager | Instant two-control capture, foreground service, contiguous 10 s segments, durable uploads and provisional preview |
-| [`backend/`](backend/) | Python 3.13, FastAPI | Authenticated recording API, state machine, chunk ingestion, transcript access |
+| [`rust/cloud/`](rust/cloud/) | Rust, Tokio, Axum | Authenticated recording API, state machine, chunk ingestion, transcript access |
 | [`infra/`](infra/) | Azure Bicep, PowerShell | Container Apps, private Storage, managed identity, Web PubSub, networking, deployment |
-| Azure worker | Same Python image, queue-scaled Container App | Leased continuous MAI session, full replay, optional final polishing; legacy independent STT remains available |
-| [`windows/`](windows/) | C#, .NET 8, WPF | Background tray listener, automatic clipboard copy, notifications, 48-hour history |
+| Azure worker source | Same Rust image, queue-scaled Container App | Leased continuous MAI session, full replay, optional final polishing; legacy independent STT remains available |
+| [`rust/windows-pilot/`](rust/windows-pilot/) | Rust, native Win32 | Background tray listener, automatic clipboard copy, notifications, dictation and 48-hour history |
 
 ### Processing pipeline
 
@@ -148,9 +157,8 @@ flowchart LR
 The API contract lives in [`openapi/voice-recorder.yaml`](openapi/voice-recorder.yaml).
 The complete state machine, retry semantics, sequence diagram, and security boundaries are
 documented in [`docs/architecture.md`](docs/architecture.md).
-The staged Windows/cloud Rust rewrite is tracked in
-[`docs/rust-migration.md`](docs/rust-migration.md) on `refactor-rust`; it does not
-replace the current clients, backend, or release installers yet.
+The implementation, historical evidence and explicit remaining deployment gates
+are tracked in [`docs/rust-migration.md`](docs/rust-migration.md).
 Older recordings and the Settings rollback retain the independent 30-second/1.5-second
 overlap pipeline. Durable capture protects persisted audio, not incomplete windows or
 queued writes lost in a hard process/device failure.
@@ -169,9 +177,11 @@ an APK and Windows through a local per-user installer.
   and the `gpt-4o-transcribe` fallback). The deployment
   creates the private Azure Speech resource required by `MAI-Transcribe-2`.
 - Azure CLI with permission to create resources and role assignments.
-- Python 3.13 and [`uv`](https://docs.astral.sh/uv/) for backend development.
+- Rust 1.85 or newer for source checks; the cloud container pins its build compiler.
+- Python 3.13 and [`uv`](https://docs.astral.sh/uv/) only for independent test tools.
 - JDK 17 and Android SDK 35 for the Android build.
-- .NET 8 SDK, .NET 8 Desktop Runtime, and Inno Setup 6 for Windows.
+- Windows SDK/resource compiler and Inno Setup 6 for the native installer.
+  .NET 8 SDK is needed only for the small independent Windows OS test oracle.
 - A Google Cloud project with OAuth consent configured.
 
 ### 1. Configure Google sign-in
@@ -191,7 +201,9 @@ Download all three client JSON files into a git-ignored `.secrets/` directory, t
 ```
 
 The script classifies the files and writes only git-ignored local configuration for the
-Android build, Azure deployment, and Windows installer. Client IDs, secrets, tokens, and the
+Android build, Azure deployment, and private Windows runtime provisioning.
+Desktop configuration is prepared under `.secrets\windows-runtime`, separately
+from the credential-free installer inputs. Client IDs, secrets, tokens, and the
 allowlisted email are never committed. Follow
 [`docs/google-oauth.md`](docs/google-oauth.md) for registration details and release
 certificate fingerprints.
@@ -237,18 +249,15 @@ differs from the build default, and sign in with the allowlisted Google account.
 ### 4. Build and install Windows
 
 ```powershell
-cd windows
-dotnet publish src\VoicePrompt.App\VoicePrompt.App.csproj `
-    -c Release -r win-x64 --self-contained false -o publish\win-x64
-
-cd installer
-& "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" /Q VoicePrompt.iss
-.\output\VoicePrompt-Setup.exe
+scripts\Build-RustWindowsInstaller.ps1
 ```
 
+This builds `rust\target\installer-output\VoicePrompt-Rust-Setup.exe` without
+running it. A new installation needs the private Desktop OAuth runtime file
+beside the installed executable and the existing backend URL in Settings.
 The app starts hidden in the notification area. Double-click its tray icon, open
-**Settings**, enter the API URL, enable startup if desired, and sign in. The installer is
-not code-signed, so Windows SmartScreen may require **More info → Run anyway**.
+**Settings**, enter the API URL, enable startup if desired, and sign in. The preview
+is unsigned; installation and any OS security prompts remain explicit user actions.
 
 ### 5. Verify the flow
 
@@ -281,25 +290,27 @@ downloaded on the phone and installed as an update.
 ## Development
 
 ```powershell
-# Backend
-cd backend
-uv sync --extra dev
-uv run pytest --ignore=tests/integration
+# Windows/cloud source and deterministic fault contracts
+cargo test --manifest-path rust\Cargo.toml --workspace --offline --locked
+cargo fmt --manifest-path rust\Cargo.toml --all --check
+cargo clippy --manifest-path rust\Cargo.toml --workspace --offline --locked --all-targets -- -D warnings
+
+# Independent test-only Python tools (approved feed and preserved lock)
+uv sync --project scripts --locked
+# Build the four contract examples first; see rust/tests/golden/README.md.
+uv run --project scripts --locked python rust\tests\test_golden_contracts.py --examples rust\target\release\examples
 
 # Android
 cd android
 ./gradlew.bat :app:testDebugUnitTest --no-watch-fs
 
-# Windows
-cd windows
-dotnet test VoicePrompt.sln -c Release
 ```
 
 Component-specific setup, tests, packaging, and troubleshooting:
 
-- [`backend/README.md`](backend/README.md)
+- [`rust/cloud/README.md`](rust/cloud/README.md)
 - [`android/README.md`](android/README.md)
-- [`windows/README.md`](windows/README.md)
+- [`rust/windows-pilot/README.md`](rust/windows-pilot/README.md)
 - [`infra/README.md`](infra/README.md)
 
 ## Repository layout
@@ -307,13 +318,14 @@ Component-specific setup, tests, packaging, and troubleshooting:
 ```text
 .
 ├── android/                       # Native Android capture app
-├── backend/                       # FastAPI API, worker, and cleanup command
-├── windows/                       # Native Windows tray app and installer
+├── rust/cloud/                    # Rust API, worker, and cleanup command
+├── rust/windows-pilot/            # Native Rust tray app and installer
+├── rust/tests/golden/             # Independent frozen legacy wire/data contracts
 ├── infra/                         # Azure Bicep and deployment orchestration
 ├── openapi/voice-recorder.yaml    # Authoritative API contract
 ├── docs/architecture.md           # Detailed design and state machine
 ├── docs/google-oauth.md           # OAuth registration and local config
-├── assets/voice-cloud.svg         # Shared application identity
+├── assets/                       # Shared identity and original Windows ICO/PNG
 └── scripts/Configure-OAuth.ps1    # Safe local OAuth configuration
 ```
 

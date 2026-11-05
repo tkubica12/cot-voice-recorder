@@ -1,1 +1,0 @@
-"""Realtime (Web PubSub) adapters."""

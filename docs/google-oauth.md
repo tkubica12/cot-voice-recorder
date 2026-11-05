@@ -85,7 +85,7 @@ It writes **only git-ignored** files and never prints a client id or secret:
 |--------|----------|
 | `android/keystore.properties` | sets/updates `googleWebClientId=<Web client id>`; existing signing values are preserved |
 | `infra/main.parameters.local.json` | `googleAllowedAudiences = <Web>,<Desktop>` and `allowlistedEmail` |
-| `windows/installer/staging/google-desktop-client.json` | copy of the Desktop client JSON for the installer to bundle |
+| `.secrets/windows-runtime/google-desktop-client.json` | private Desktop runtime configuration; never bundled in the public Rust installer |
 
 Re-run it any time a client is rotated; it is idempotent.
 

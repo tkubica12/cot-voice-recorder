@@ -5,11 +5,9 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
-import importlib.metadata
 import json
 import math
 import os
-import platform
 import queue
 import signal
 import statistics
@@ -115,20 +113,12 @@ class Fixture:
     def __init__(
         self, implementation: str, rust: Path, authority: Authority, azure_root: Path | None = None
     ) -> None:
-        if implementation not in {"python", "rust"} or rust.name not in {
+        if implementation != "rust" or rust.name not in {
             "cloud_contract",
             "cloud_contract.exe",
         }:
             raise ValueError("Only the named protocol fixture implementations are allowed.")
-        arguments = (
-            [str(rust), authority.url]
-            if implementation == "rust"
-            else [
-                sys.executable,
-                str(ROOT.joinpath("scripts", "backend_fixture.py")),
-                authority.url,
-            ]
-        )
+        arguments = [str(rust), authority.url]
         environment = {
             key: value
             for key, value in os.environ.items()
@@ -400,22 +390,6 @@ def exercise(fixture: Fixture, authority: Authority, index: int) -> dict[str, fl
     return timings
 
 
-def fingerprint(rust: Path) -> dict[str, str]:
-    sources = {}
-    paths = [
-        *ROOT.joinpath("backend", "src").rglob("*.py"),
-        ROOT.joinpath("backend", "uv.lock"),
-        Path(__file__),
-        ROOT.joinpath("scripts", "backend_fixture.py"),
-        ROOT.joinpath("scripts", "azure_api_fixture.py"),
-        ROOT.joinpath("scripts", "test_azure_rest.py"),
-    ]
-    for path in sorted(paths):
-        sources[str(path.relative_to(ROOT))] = hashlib.sha256(path.read_bytes()).hexdigest()
-    sources["rust_binary"] = hashlib.sha256(rust.read_bytes()).hexdigest()
-    return sources
-
-
 def publish(output: Path, result: dict) -> None:
     with tempfile.NamedTemporaryFile(dir=output.parent, suffix=".tmp", delete=False) as stream:
         temporary = Path(stream.name)
@@ -487,7 +461,7 @@ def metrics(startup: dict, samples: dict, memory: dict, trials: int, count: int)
 def check(rust: Path) -> None:
     authority = Authority()
     try:
-        for implementation in ["python", "rust"]:
+        for implementation in ["rust"]:
             fixture = Fixture(implementation, rust, authority)
             try:
                 controls(fixture, authority)
@@ -509,136 +483,11 @@ def measure(
     fixture_factory: Callable[[str, Path, Authority], Fixture] = Fixture,
     scope: str = SCOPE,
 ) -> None:
-    if not sys.platform.startswith("linux"):
-        raise RuntimeError("Backend performance requires Linux.")
     if output.exists():
         raise FileExistsError(output)
-    if scope not in {SCOPE, AZURE_SCOPE}:
-        raise ValueError("An explicit supported protocol/adapter profile scope is required.")
-    before = fingerprint(rust)
-    authority = Authority()
-    startup = {"python": [], "rust": []}
-    rows = []
-    samples = {"python": [], "rust": []}
-    memory = {"python": [], "rust": []}
-    memory_elapsed = {"python": [], "rust": []}
-    load_pids = {}
-    try:
-        for trial in range(trials):
-            for implementation in ["python", "rust"] if trial % 2 == 0 else ["rust", "python"]:
-                fixture = fixture_factory(implementation, rust, authority)
-                try:
-                    if fixture.storage_backend != ("azure" if scope == AZURE_SCOPE else "memory"):
-                        raise RuntimeError("Measured adapter scope does not match the actual API.")
-                    startup[implementation].append(fixture.startup_ms)
-                    rows.append(
-                        {
-                            "trial": trial + 1,
-                            "implementation": implementation,
-                            "pid": fixture.process.pid,
-                            "startup_ms": fixture.startup_ms,
-                        }
-                    )
-                finally:
-                    fixture.close()
-        fixtures = {}
-        try:
-            for implementation in ["python", "rust"]:
-                fixture = fixture_factory(implementation, rust, authority)
-                fixtures[implementation] = fixture
-                load_pids[implementation] = fixture.process.pid
-                controls(fixture, authority)
-                exercise(fixture, authority, 0)
-            for series in range(3):
-                for implementation in ["python", "rust"] if series % 2 == 0 else ["rust", "python"]:
-                    fixture = fixtures[implementation]
-                    latencies = []
-                    for index in range(count):
-                        latencies.append(exercise(fixture, authority, 1 + series * count + index))
-                    samples[implementation].append(latencies)
-                    readings = []
-                    elapsed = []
-                    started = time.perf_counter()
-                    for _ in range(10):
-                        readings.append(fixture.rss())
-                        elapsed.append(time.perf_counter() - started)
-                        time.sleep(0.05)
-                    memory[implementation].append(readings)
-                    memory_elapsed[implementation].append(elapsed)
-        finally:
-            errors = []
-            for fixture in fixtures.values():
-                try:
-                    fixture.close()
-                except Exception as error:
-                    errors.append(error)
-            if errors:
-                raise ExceptionGroup("Backend fixture cleanup failed.", errors)
-    finally:
-        authority.close()
-    if fingerprint(rust) != before:
-        raise RuntimeError("Measured implementation/bundle changed during collection.")
-    startups, api, rss, verdict = metrics(startup, samples, memory, trials, count)
-    result = {
-        "schema_version": 1,
-        "status": "complete",
-        "scope": scope,
-        "source_revision": revision,
-        "binary_source_and_lock_sha256": before,
-        "platform": platform.platform(),
-        "logical_cpu_count": os.cpu_count(),
-        "python_runtime": sys.version,
-        "python_packages": {
-            name: importlib.metadata.version(name)
-            for name in ["fastapi", "uvicorn", "httpx", "PyJWT", "cryptography"]
-        },
-        "whole_migration_acceptance": False,
-        "measures_azure_private_networking": False,
-        "actual_azure_storage_adapters": scope == AZURE_SCOPE,
-        "real_azure_resources_or_iam": False,
-        "measures_models_workers_or_realtime": False,
-        "real_rs256_jwks_auth": True,
-        "is_deployed_aca_or_container_profile": False,
-        "exclusive_machine_not_asserted": True,
-        "os_caches_not_reset": True,
-        "github_actions": os.environ.get("GITHUB_ACTIONS") == "true",
-        "idle_rss_is_short_post_load_observation": True,
-        "rss_source": "/proc/<owned-pid>/smaps_rollup:Rss",
-        "load_process_ids": load_pids,
-        "corpus": {
-            "completed_at": authority.completed_at,
-            "wav_sha256": hashlib.sha256(wav()).hexdigest(),
-            "recording_id_template": "fixture-{index}",
-            "audit_id_template": "UUID5(URL,synthetic-performance-{index})",
-            "final": "synthetic final",
-            "original": "synthetic original",
-        },
-        "startup_trial_count": trials,
-        "load_series": 3,
-        "flows_per_series": count,
-        "sufficient_for_this_protocol_profile": trials >= 30 and count >= 100,
-        "startup": startups,
-        "api_p95_ms_by_series": api,
-        "rss_mean_bytes_by_series": rss,
-        "profile_thresholds": verdict,
-        "startup_samples": rows,
-        "latency_samples_ms": samples,
-        "rss_samples_bytes": memory,
-        "rss_elapsed_seconds_by_series": memory_elapsed,
-    }
-    publish(output, result)
-    print(
-        json.dumps(
-            {
-                "scope": scope,
-                "profile_thresholds": verdict,
-                "sufficient_for_this_protocol_profile": result[
-                    "sufficient_for_this_protocol_profile"
-                ],
-                "whole_migration_acceptance": False,
-            }
-        ),
-        flush=True,
+    raise RuntimeError(
+        "Paired Python/Rust collection was retired with the Python application. "
+        "Historical report validators and the Rust-only contract fixture remain."
     )
 
 

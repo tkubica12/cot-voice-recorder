@@ -32,9 +32,7 @@ class MicrophoneMeasurementTests(unittest.TestCase):
     ) -> None:
         for prefix in ["PASS count-only\n", "\nrunning 1 test\ntest manual ... "]:
             expected = payload()
-            self.assertEqual(
-                reading((prefix + json.dumps(expected) + "\nok\n").encode()), expected
-            )
+            self.assertEqual(reading((prefix + json.dumps(expected) + "\nok\n").encode()), expected)
         with self.assertRaises(ValueError):
             reading((json.dumps(payload()) + "\n" + json.dumps(payload())).encode())
 

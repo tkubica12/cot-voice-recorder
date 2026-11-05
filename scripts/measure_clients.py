@@ -7,7 +7,6 @@ import hashlib
 import json
 import math
 import os
-import statistics
 import subprocess
 import tempfile
 import time
@@ -113,12 +112,8 @@ class FixtureProcess:
             raise RuntimeError("Client comparison requires Windows.")
         if not 1 <= readiness_timeout_seconds <= 60:
             raise ValueError("Fixture readiness requires an explicit one-to-sixty-second budget.")
-        expected = (
-            "VoicePromptClientFixture.exe"
-            if implementation == "csharp"
-            else "VoicePromptRustPilot.exe"
-        )
-        if binary.name != expected or implementation not in {"csharp", "rust"}:
+        expected = "VoicePromptRustPilot.exe"
+        if binary.name != expected or implementation != "rust":
             raise ValueError("Only the explicitly named isolated fixture binaries are allowed.")
         self.binary = binary.resolve(strict=True)
         self.implementation = implementation
@@ -130,25 +125,16 @@ class FixtureProcess:
         self.key = uuid.uuid4().hex
         self.inputs = fixture_files(self.state, self.key, history_count, epoch)
         ready = self.root.joinpath("ready.json")
-        if implementation == "csharp":
-            arguments = [
-                "--client-fixture",
-                str(self.state),
-                str(ready),
-                self.key,
-                "3600",
-            ]
-        else:
-            arguments = [
-                "--signed-out-fixture",
-                str(self.state),
-                "--fixture-ready-file",
-                str(ready),
-                "--instance-key",
-                self.key,
-                "--run-for-seconds",
-                "3600",
-            ]
+        arguments = [
+            "--signed-out-fixture",
+            str(self.state),
+            "--fixture-ready-file",
+            str(ready),
+            "--instance-key",
+            self.key,
+            "--run-for-seconds",
+            "3600",
+        ]
         environment = dict(os.environ)
         forbidden_oauth = self.root.joinpath("must-not-discover-oauth.json")
         forbidden_oauth.write_text(
@@ -216,11 +202,7 @@ class FixtureProcess:
     def close(self) -> None:
         try:
             if self.process.poll() is None:
-                arguments = (
-                    ["--client-fixture-quit", self.key]
-                    if self.implementation == "csharp"
-                    else ["--quit", "--instance-key", self.key]
-                )
+                arguments = ["--quit", "--instance-key", self.key]
                 quit_process = subprocess.run(
                     [str(self.binary), *arguments],
                     capture_output=True,
@@ -294,211 +276,12 @@ def measure(
 ) -> Path:
     directory = directory.resolve(strict=True)
     output = directory.joinpath("full-client-signed-out-comparison.json")
-    if (
-        output.exists()
-        or directory.joinpath("measurement-failure.json").exists()
-        or any(directory.glob("startup-*.json"))
-    ):
+    if output.exists() or directory.joinpath("measurement-failure.json").exists():
         raise FileExistsError(output)
-    binaries = {"csharp": csharp, "rust": native}
-    bundles = {name: bundle_hashes(path, name) for name, path in binaries.items()}
-    epoch = datetime.now(UTC)
-    corpus = None
-    startup: dict[str, list[float]] = {"csharp": [], "rust": []}
-    rows = []
-    for trial in range(trials):
-        order = ["csharp", "rust"] if trial % 2 == 0 else ["rust", "csharp"]
-        for implementation in order:
-            with FixtureProcess(
-                binaries[implementation],
-                implementation,
-                directory,
-                history_count,
-                epoch,
-            ) as fixture:
-                digest = {
-                    name: hashlib.sha256(fixture.inputs[name]).hexdigest()
-                    for name in ["settings.json", "history.json"]
-                }
-                if corpus is not None and corpus != digest:
-                    raise RuntimeError("Client input corpus changed.")
-                corpus = digest
-                startup[implementation].append(fixture.startup_ms)
-                rows.append(
-                    {
-                        "trial": trial + 1,
-                        "implementation": implementation,
-                        "pid": fixture.process.pid,
-                        "startup_ms": fixture.startup_ms,
-                    }
-                )
-                publish(
-                    directory.joinpath(f"startup-{implementation}-{trial + 1:02}.json"),
-                    {
-                        "scope": SCOPE,
-                        "source_revision": revision,
-                        "status": "observed-startup",
-                        "whole_migration_acceptance": False,
-                        **rows[-1],
-                    },
-                )
-                print(
-                    f"{implementation} startup {trial + 1}/{trials}: "
-                    f"{fixture.startup_ms:.3f} ms; owned PID {fixture.process.pid}",
-                    flush=True,
-                )
-    memory: dict[str, list[dict]] = {"csharp": [], "rust": []}
-    for index in range(series):
-        for implementation in ["csharp", "rust"] if index % 2 == 0 else ["rust", "csharp"]:
-            target = directory.joinpath(f"{implementation}-idle-{index + 1}.json")
-            if target.exists():
-                raise FileExistsError(target)
-            with FixtureProcess(
-                binaries[implementation],
-                implementation,
-                directory,
-                history_count,
-                epoch,
-            ) as fixture:
-                digest = {
-                    name: hashlib.sha256(fixture.inputs[name]).hexdigest()
-                    for name in ["settings.json", "history.json"]
-                }
-                if corpus != digest:
-                    raise RuntimeError("Client memory corpus differs from startup corpus.")
-                print(
-                    f"Sampling {implementation} series {index + 1}/{series}, "
-                    f"{samples} points, owned PID {fixture.process.pid}",
-                    flush=True,
-                )
-                subprocess.run(
-                    [
-                        "pwsh",
-                        "-NoProfile",
-                        "-NonInteractive",
-                        "-File",
-                        str(ROOT.joinpath("scripts", "Measure-VoicePromptProcess.ps1")),
-                        "-ProcessId",
-                        str(fixture.process.pid),
-                        "-Scenario",
-                        SCOPE,
-                        "-SampleCount",
-                        str(samples),
-                        "-IntervalMilliseconds",
-                        "1000",
-                        "-SourceRevision",
-                        revision,
-                        "-OutputPath",
-                        str(target),
-                    ],
-                    check=True,
-                    timeout=samples + 60,
-                )
-                report = json.loads(target.read_text(encoding="utf-8-sig"))
-                if (
-                    report["status"] != "complete"
-                    or report["scenario"] != SCOPE
-                    or report["source_revision"] != revision
-                    or report["process"]["id"] != fixture.process.pid
-                    or report["process"]["binary_sha256"].lower()
-                    != bundles[implementation][binaries[implementation].name]
-                    or report["measurement"]["sample_count"] != samples
-                    or len(report["samples"]) != samples
-                    or report["measurement"]["requested_interval_milliseconds"] != 1000
-                ):
-                    raise RuntimeError(
-                        "The process sampler did not prove the requested process, "
-                        "inputs and sample shape."
-                    )
-                memory[implementation].append(report)
-    private = {
-        implementation: [
-            sample["private_bytes"] for report in reports for sample in report["samples"]
-        ]
-        for implementation, reports in memory.items()
-    }
-    startup_summary = {
-        implementation: {
-            "mean_ms": statistics.mean(values),
-            "p95_ms": p95(values),
-            "max_ms": max(values),
-        }
-        for implementation, values in startup.items()
-    }
-    memory_summary = {
-        implementation: {
-            "mean_private_bytes": statistics.mean(values),
-            "max_private_bytes": max(values),
-        }
-        for implementation, values in private.items()
-    }
-    per_series = {
-        implementation: [
-            {
-                "mean_private_bytes": statistics.mean(
-                    sample["private_bytes"] for sample in report["samples"]
-                ),
-                "max_private_bytes": max(sample["private_bytes"] for sample in report["samples"]),
-            }
-            for report in reports
-        ]
-        for implementation, reports in memory.items()
-    }
-    if bundles != {name: bundle_hashes(path, name) for name, path in binaries.items()}:
-        raise RuntimeError("Client binaries changed during the measurement series.")
-    sufficient = trials >= 30 and series >= 3 and samples >= 301
-    result = {
-        "schema_version": 1,
-        "status": "complete",
-        "scope": SCOPE,
-        "source_revision": revision,
-        "history_entries": history_count,
-        "trial_count_per_implementation": trials,
-        "memory_series": series,
-        "samples_per_memory_series": samples,
-        "sufficient_for_this_idle_profile": sufficient,
-        "physical_ports_enabled": False,
-        "measures_microphone_or_hour_capture": False,
-        "measures_cloud_latency_or_billing": False,
-        "measures_os_cold_cache": False,
-        "whole_migration_acceptance": False,
-        "percentile_method": "nearest-rank",
-        "shared_machine": True,
-        "default_installed_entry_point": False,
-        "scope_exclusions": [
-            "signed-in networking",
-            "physical capture",
-            "clipboard/paste",
-            "registry autostart",
-            "installation",
-            "OS cold cache",
-        ],
-        "fixture_binary_bundle_sha256": bundles,
-        "corpus_sha256": corpus,
-        "fixture_epoch": epoch.isoformat(),
-        "binary_sha256": {
-            name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in binaries.items()
-        },
-        "startup": startup_summary,
-        "memory": memory_summary,
-        "memory_series_summary": per_series,
-        "observed_profile_thresholds": {
-            "startup": startup_summary["rust"]["p95_ms"] <= 1000
-            and startup_summary["rust"]["p95_ms"] <= startup_summary["csharp"]["p95_ms"] * 0.70,
-            "idle_private": memory_summary["rust"]["max_private_bytes"] <= 80 * 1024 * 1024
-            and all(
-                per_series["rust"][index]["mean_private_bytes"]
-                <= per_series["csharp"][index]["mean_private_bytes"] * 0.50
-                for index in range(series)
-            ),
-        },
-        "startup_samples": rows,
-        "memory_reports": {
-            name: [f"{name}-idle-{index + 1}.json" for index in range(series)] for name in binaries
-        },
-    }
-    publish(output, result)
-    return output
+    raise RuntimeError(
+        "Paired C#/Rust collection was retired with the C# application. "
+        "The isolated Rust lifecycle and immutable-evidence guards remain."
+    )
 
 
 def main() -> None:

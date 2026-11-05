@@ -94,7 +94,7 @@ Neither exception touches Storage, which remains fully private.
 `infra/deploy.ps1` is the authoritative, idempotent, **two-phase** orchestrator:
 
 1. **Phase 1** (`deployApps=false`) — provision all infrastructure + identity + RBAC.
-2. **Build** — `az acr build` publishes `backend/Dockerfile` to the new ACR.
+2. **Build** — `az acr build` publishes the root-context `rust/cloud/Dockerfile`.
 3. **Phase 2** (`deployApps=true`) — deploy `ca-api`, `ca-worker`, `caj-cleanup`.
 
 ```powershell
@@ -110,10 +110,11 @@ cd infra
 
 The script prints the API base URL and all resource outputs at the end.
 
-> **Package feed proxy.** Direct PyPI TLS is broken on the build workstation, so the
-> committed `backend/uv.lock` references the public, unauthenticated
-> `https://packagefeedproxy.microsoft.io/pypi/simple/`. `deploy.ps1` passes it to the
-> cloud build as `--build-arg UV_DEFAULT_INDEX=...`. No credentials are involved.
+The source default is now Rust (`-BackendRuntime Rust` remains accepted).
+Executing this script is still a real infrastructure/RBAC/build/deployment
+operation, not an offline check. The source change itself has not cut over the
+existing Azure services. Independent Python SDK test tools use the approved
+Microsoft feed and `scripts/uv.lock`; no Python runtime is packaged in the image.
 
 ### Parameters and secrets
 

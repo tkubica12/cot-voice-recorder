@@ -1,7 +1,8 @@
 # Native Windows migration client
 
-This is an isolated **native migration client**, not an accepted production
-replacement. Its default mode remains the platform-only foundation.
+> **Source cleanup:** current compatibility commands use `rust/tests/golden` and `scripts/uv.lock`, not the removed C#/Python applications. Older revision-scoped measurement/reference descriptions below remain historical evidence, not runnable legacy-product instructions. The live Azure cutover remains separate and unperformed.
+
+The installed `VoicePrompt.exe` is the native Rust client. It has completed a real user workflow; this is not a claim that every physical/accessibility scenario has been exercised. The checkout artifact keeps its historical `VoicePromptRustPilot.exe` name and safe diagnostic default; installed mode selects the full client.
 Closing the window or pressing Esc hides it. A second ordinary launch activates
 the existing pilot; benchmark launches with a readiness path reject duplicates.
 
@@ -47,13 +48,13 @@ This proves the encryption envelope only, **not** token JSON, complete recovery
 manifest formats, authentication behavior, or other users/machines.
 
 ```powershell
-dotnet build rust\tests\reference\ReferenceAudio.csproj -c Release
-backend\.venv\Scripts\python.exe rust\windows-pilot\tests\test_platform_parity.py `
+dotnet build rust\tests\platform-oracle\PlatformOracle.csproj -c Release
+uv run --project scripts --locked python rust\windows-pilot\tests\test_platform_parity.py `
   --pilot rust\target\release\VoicePromptRustPilot.exe `
-  --reference rust\tests\reference\bin\Release\net8.0\ReferenceAudio.dll
+  --reference rust\tests\platform-oracle\bin\Release\net8.0\PlatformOracle.dll
 ```
 
-The C# reference links the actual existing Core project. All parity inputs are
+The independent Windows OS oracle has no application/Core dependency. Frozen C# wire fixtures retain the original compatibility evidence. All parity inputs are
 synthetic; these commands do not read real tokens or recordings. CI runs native
 unit/parity checks on Windows, not the tray self-test on a potentially headless
 runner. Non-Windows invocation fails explicitly; the audio crate is portable.
@@ -672,9 +673,9 @@ C# `RecoveryStore`. Synthetic v1/v2 fixtures verify both readers and upgrades wi
 inventing absolute cursors or target context.
 
 ```powershell
-backend\.venv\Scripts\python.exe rust\windows-pilot\tests\test_recovery_parity.py `
+uv run --project scripts --locked python rust\windows-pilot\tests\test_recovery_parity.py `
   --pilot rust\target\release\VoicePromptRustPilot.exe `
-  --reference rust\tests\reference\bin\Release\net8.0\ReferenceAudio.dll
+  --reference rust\tests\platform-oracle\bin\Release\net8.0\PlatformOracle.dll
 ```
 
 `NativeRecoveryStore` now implements the real durable journal separately from
@@ -744,7 +745,7 @@ focus plus the actual native History list. It is not a production E2E or a real
 clipboard/paste test. CI does not run this desktop-dependent command.
 
 ```powershell
-backend\.venv\Scripts\python.exe rust\windows-pilot\tests\test_client_lifecycle.py `
+uv run --project scripts --locked python rust\windows-pilot\tests\test_client_lifecycle.py `
   --pilot rust\target\release\VoicePromptRustPilot.exe
 ```
 

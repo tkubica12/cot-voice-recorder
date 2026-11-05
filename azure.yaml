@@ -19,9 +19,9 @@ infra:
 
 services:
   api:
-    project: ./backend
-    language: python
+    project: .
+    language: docker
     host: containerapp
     docker:
-      path: Dockerfile
+      path: ./rust/cloud/Dockerfile
       context: .

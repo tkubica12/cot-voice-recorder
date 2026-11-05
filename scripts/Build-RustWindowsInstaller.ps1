@@ -15,7 +15,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Native release build failed.' }
 $stage = Join-Path $root 'rust\target\installer-staging'
 New-Item -ItemType Directory -Path $stage -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $root 'rust\target\release\VoicePromptRustPilot.exe') -Destination (Join-Path $stage 'VoicePrompt.exe') -Force
-Copy-Item -LiteralPath (Join-Path $root 'windows\src\VoicePrompt.App\Assets\app.ico') -Destination (Join-Path $stage 'app.ico') -Force
+Copy-Item -LiteralPath (Join-Path $root 'assets\windows\app.ico') -Destination (Join-Path $stage 'app.ico') -Force
 $unexpected = Get-ChildItem -LiteralPath $stage -File | Where-Object Name -NotIn @('VoicePrompt.exe', 'app.ico')
 if ($unexpected) { throw 'Installer staging contains unexpected files. No installer was built.' }
 & $Compiler /Qp "/DSourceDir=$stage" (Join-Path $root 'rust\windows-pilot\installer\VoicePrompt-Rust.iss')

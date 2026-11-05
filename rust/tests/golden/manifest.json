@@ -16035,6 +16035,51 @@
     },
     "8434d89796e9572d5a214d2e8d8ed04e767686f8e30f7b879133f4b4225d3ec5": {
       "bytes": 6865
+    },
+    "60fdc29c8aef0fa16b3ed5251d2110b67168f320c7f41eb7a969ffb4ec443f97": {
+      "bytes": 197120
+    },
+    "3bf971931e73d2c780b78a59f4c6d518d0b5aaf244e029c7a764ddbdcd4e80ff": {
+      "bytes": 443520
+    },
+    "6d4312b02f16d5d0e9f9314467af787e6b5ade5cb14b602549baaff2a2427c59": {
+      "bytes": 788480
+    },
+    "fcf4f4feab5516b6ed26b7b1a70ecc46f7696fe99f949a9f2ca43cad765425af": {
+      "bytes": 197120
+    },
+    "e234e6c0b8925fe551b3f8b8e665acfbbc0807a309f12b320f978edadfd17c82": {
+      "bytes": 443520
+    },
+    "91b63686a83813e2e38ed1a139f5a7b04ca5a131761c051f7db3a9c2a6c51195": {
+      "bytes": 788480
+    },
+    "4b4b3a16ba40360bcf20cd77aea98ec0af87c5f5e66dad33aa88ef7affa24a3a": {
+      "bytes": 197120
+    },
+    "50df57e521072a2f868bcf028e4404f7747c7639792b2aa43b65eed5fb4d8d21": {
+      "bytes": 443520
+    },
+    "f0f2732d4bff3468e362c95406ea7c3e5639c2054406fe0470b6868998c97e65": {
+      "bytes": 788480
+    },
+    "0b71d747c29a753fc1dfba9b4dc15dbf3c1cf5356c7ef257a0a80e70b7e75ae6": {
+      "bytes": 197120
+    },
+    "ca84a3c7bb0cf527a638e9eb3bf3990676391cd36ab8624331825ab88bf88ac3": {
+      "bytes": 443520
+    },
+    "19e9426f4720dceaa81734ff6d0b54403ded540be33f0cbd51e5cb1566e43c25": {
+      "bytes": 788480
+    },
+    "d33c40b986bb357a0769afb20c58b8b1aac8f6e44cecf834baf3daab5ccbda82": {
+      "bytes": 197120
+    },
+    "6fb423aa40ae0c953061c2fe3411f8e89deb9f288336c06f464bf831d50d542c": {
+      "bytes": 443520
+    },
+    "80d028c92adbdc122d5a6312ecaa63012080acc66bb7caae09d8de5f60320900": {
+      "bytes": 788480
     }
   },
   "persistence": {
@@ -16062,5 +16107,207 @@
   "exporter_sources": {
     "export_legacy_contracts.py": "567086d8534d9ccadccd111c6dcf73b331e7ad681c0bea8cd2d8a7dfb56619ca",
     "complete_legacy_goldens.py": "8434d89796e9572d5a214d2e8d8ed04e767686f8e30f7b879133f4b4225d3ec5"
+  },
+  "legacy_visual": {
+    "scope": "synthetic-WPF-raster-not-user-desktop-capture",
+    "source_commit": "8cd3a26dc28e1e4c20abc10edac3b8197f0d6ca3",
+    "independent_reference_sha_matched_previous_15_pair_comparison": true,
+    "frames": [
+      {
+        "name": "listening-empty-96",
+        "metadata": {
+          "width": 440,
+          "height": 112,
+          "dpi": 96,
+          "pixel_format": "Pbgra32",
+          "header": "Listening 00:01 - release to finish",
+          "preview": "Recognized words will appear here as you speak.",
+          "recording": true
+        },
+        "pixels": "60fdc29c8aef0fa16b3ed5251d2110b67168f320c7f41eb7a969ffb4ec443f97"
+      },
+      {
+        "name": "listening-empty-144",
+        "metadata": {
+          "width": 660,
+          "height": 168,
+          "dpi": 144,
+          "pixel_format": "Pbgra32",
+          "header": "Listening 00:01 - release to finish",
+          "preview": "Recognized words will appear here as you speak.",
+          "recording": true
+        },
+        "pixels": "3bf971931e73d2c780b78a59f4c6d518d0b5aaf244e029c7a764ddbdcd4e80ff"
+      },
+      {
+        "name": "listening-empty-192",
+        "metadata": {
+          "width": 880,
+          "height": 224,
+          "dpi": 192,
+          "pixel_format": "Pbgra32",
+          "header": "Listening 00:01 - release to finish",
+          "preview": "Recognized words will appear here as you speak.",
+          "recording": true
+        },
+        "pixels": "6d4312b02f16d5d0e9f9314467af787e6b5ade5cb14b602549baaff2a2427c59"
+      },
+      {
+        "name": "listening-preview-96",
+        "metadata": {
+          "width": 440,
+          "height": 112,
+          "dpi": 96,
+          "pixel_format": "Pbgra32",
+          "header": "Listening 00:02 - release to finish",
+          "preview": "Synthetic live preview. These words grow while you speak.",
+          "recording": true
+        },
+        "pixels": "fcf4f4feab5516b6ed26b7b1a70ecc46f7696fe99f949a9f2ca43cad765425af"
+      },
+      {
+        "name": "listening-preview-144",
+        "metadata": {
+          "width": 660,
+          "height": 168,
+          "dpi": 144,
+          "pixel_format": "Pbgra32",
+          "header": "Listening 00:02 - release to finish",
+          "preview": "Synthetic live preview. These words grow while you speak.",
+          "recording": true
+        },
+        "pixels": "e234e6c0b8925fe551b3f8b8e665acfbbc0807a309f12b320f978edadfd17c82"
+      },
+      {
+        "name": "listening-preview-192",
+        "metadata": {
+          "width": 880,
+          "height": 224,
+          "dpi": 192,
+          "pixel_format": "Pbgra32",
+          "header": "Listening 00:02 - release to finish",
+          "preview": "Synthetic live preview. These words grow while you speak.",
+          "recording": true
+        },
+        "pixels": "91b63686a83813e2e38ed1a139f5a7b04ca5a131761c051f7db3a9c2a6c51195"
+      },
+      {
+        "name": "listening-wrap-96",
+        "metadata": {
+          "width": 440,
+          "height": 112,
+          "dpi": 96,
+          "pixel_format": "Pbgra32",
+          "header": "Listening 00:03 - release to finish",
+          "preview": "Synthetic continuous preview wraps over several lines. Each new recognized phrase replaces the live preview without activating another application. This deliberately long sample checks the original three-line layout and character ellipsis rather than hiding or shrinking the text. No microphone or clipboard is used.",
+          "recording": true
+        },
+        "pixels": "4b4b3a16ba40360bcf20cd77aea98ec0af87c5f5e66dad33aa88ef7affa24a3a"
+      },
+      {
+        "name": "listening-wrap-144",
+        "metadata": {
+          "width": 660,
+          "height": 168,
+          "dpi": 144,
+          "pixel_format": "Pbgra32",
+          "header": "Listening 00:03 - release to finish",
+          "preview": "Synthetic continuous preview wraps over several lines. Each new recognized phrase replaces the live preview without activating another application. This deliberately long sample checks the original three-line layout and character ellipsis rather than hiding or shrinking the text. No microphone or clipboard is used.",
+          "recording": true
+        },
+        "pixels": "50df57e521072a2f868bcf028e4404f7747c7639792b2aa43b65eed5fb4d8d21"
+      },
+      {
+        "name": "listening-wrap-192",
+        "metadata": {
+          "width": 880,
+          "height": 224,
+          "dpi": 192,
+          "pixel_format": "Pbgra32",
+          "header": "Listening 00:03 - release to finish",
+          "preview": "Synthetic continuous preview wraps over several lines. Each new recognized phrase replaces the live preview without activating another application. This deliberately long sample checks the original three-line layout and character ellipsis rather than hiding or shrinking the text. No microphone or clipboard is used.",
+          "recording": true
+        },
+        "pixels": "f0f2732d4bff3468e362c95406ea7c3e5639c2054406fe0470b6868998c97e65"
+      },
+      {
+        "name": "finishing-96",
+        "metadata": {
+          "width": 440,
+          "height": 112,
+          "dpi": 96,
+          "pixel_format": "Pbgra32",
+          "header": "Finishing transcription - Esc discards",
+          "preview": "Synthetic live preview. These words grow while you speak.",
+          "recording": false
+        },
+        "pixels": "0b71d747c29a753fc1dfba9b4dc15dbf3c1cf5356c7ef257a0a80e70b7e75ae6"
+      },
+      {
+        "name": "finishing-144",
+        "metadata": {
+          "width": 660,
+          "height": 168,
+          "dpi": 144,
+          "pixel_format": "Pbgra32",
+          "header": "Finishing transcription - Esc discards",
+          "preview": "Synthetic live preview. These words grow while you speak.",
+          "recording": false
+        },
+        "pixels": "ca84a3c7bb0cf527a638e9eb3bf3990676391cd36ab8624331825ab88bf88ac3"
+      },
+      {
+        "name": "finishing-192",
+        "metadata": {
+          "width": 880,
+          "height": 224,
+          "dpi": 192,
+          "pixel_format": "Pbgra32",
+          "header": "Finishing transcription - Esc discards",
+          "preview": "Synthetic live preview. These words grow while you speak.",
+          "recording": false
+        },
+        "pixels": "19e9426f4720dceaa81734ff6d0b54403ded540be33f0cbd51e5cb1566e43c25"
+      },
+      {
+        "name": "saved-96",
+        "metadata": {
+          "width": 440,
+          "height": 112,
+          "dpi": 96,
+          "pixel_format": "Pbgra32",
+          "header": "Saved - paste skipped",
+          "preview": "Only confirmed final text is delivered.",
+          "recording": false
+        },
+        "pixels": "d33c40b986bb357a0769afb20c58b8b1aac8f6e44cecf834baf3daab5ccbda82"
+      },
+      {
+        "name": "saved-144",
+        "metadata": {
+          "width": 660,
+          "height": 168,
+          "dpi": 144,
+          "pixel_format": "Pbgra32",
+          "header": "Saved - paste skipped",
+          "preview": "Only confirmed final text is delivered.",
+          "recording": false
+        },
+        "pixels": "6fb423aa40ae0c953061c2fe3411f8e89deb9f288336c06f464bf831d50d542c"
+      },
+      {
+        "name": "saved-192",
+        "metadata": {
+          "width": 880,
+          "height": 224,
+          "dpi": 192,
+          "pixel_format": "Pbgra32",
+          "header": "Saved - paste skipped",
+          "preview": "Only confirmed final text is delivered.",
+          "recording": false
+        },
+        "pixels": "80d028c92adbdc122d5a6312ecaa63012080acc66bb7caae09d8de5f60320900"
+      }
+    ]
   }
 }

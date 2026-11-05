@@ -104,6 +104,11 @@ class GoldenContracts(unittest.TestCase):
             with self.subTest(mode=case["mode"]):
                 snapshot, _ = recovery_snapshot(blob(case["plaintext_files"]["manifest.enc"]))
                 self.assertEqual(snapshot, case["snapshot"])
+        frames = MANIFEST["legacy_visual"]["frames"]
+        self.assertEqual(len(frames), 15)
+        for frame in frames:
+            info = frame["metadata"]
+            self.assertEqual(len(blob(frame["pixels"])), info["width"] * info["height"] * 4)
 
     def test_corpus_has_independent_provenance_and_original_cases(self) -> None:
         self.assertEqual(MANIFEST["schema"], 1)
@@ -263,7 +268,83 @@ class HttpFixture:
 
 
 class HttpGoldenContracts(unittest.TestCase):
+    def test_openapi_structure_references_and_negative_wire_constraints(self) -> None:
+        import yaml
+        from jsonschema_lite import (
+            assert_keywords_supported,
+            assert_refs_resolve,
+            iter_schema_nodes,
+            validate,
+        )
+
+        spec = yaml.safe_load(
+            ROOT.joinpath("openapi", "voice-recorder.yaml").read_text(encoding="utf-8")
+        )
+        self.assertTrue(str(spec["openapi"]).startswith("3.1"))
+        self.assertTrue(spec["info"]["title"] and spec["info"]["version"])
+        self.assertTrue(spec["paths"] and spec["components"]["schemas"])
+        assert_refs_resolve(spec)
+        assert_keywords_supported(spec)
+        known = {"object", "array", "string", "integer", "number", "boolean", "null"}
+        for pointer, schema in iter_schema_nodes(spec):
+            declared = schema.get("type")
+            if declared is not None:
+                self.assertLessEqual(
+                    set(declared if isinstance(declared, list) else [declared]), known, pointer
+                )
+        ids = [
+            operation["operationId"]
+            for item in spec["paths"].values()
+            for method, operation in item.items()
+            if method in {"get", "put", "post", "delete", "patch", "head", "options"}
+        ]
+        self.assertEqual(len(ids), len(set(ids)))
+        schema = spec["components"]["schemas"]["DictationRefineResult"]
+        for value in [
+            {"text": "hello"},
+            {"text": "hello", "edits": [{"original": "", "replacement": "hello"}]},
+            {"text": "hello", "edits": [{"original": "a" * 257, "replacement": "hello"}]},
+            {"text": "hello", "edits": [{"original": "helo", "replacement": "b" * 257}]},
+            {"text": "hello", "edits": [{"original": "helo", "replacement": "hello", "start": 0}]},
+            {"text": "hello", "edits": [{"original": "helo", "replacement": "hello"}] * 65},
+        ]:
+            self.assertTrue(validate(value, schema, spec))
+        self.assertEqual(
+            validate(
+                {"text": "a test.", "edits": [{"original": "This is ", "replacement": ""}]},
+                schema,
+                spec,
+            ),
+            [],
+        )
+        recording = {
+            "recording_id": "01234567-89ab-cdef-0123-456789abcdef",
+            "client_recording_id": "abcdef01-2345-6789-abcd-ef0123456789",
+            "state": "failed",
+            "refine_model": "gpt-5.6-luna",
+            "language": "cs",
+            "progress": {
+                "expected_chunk_count": 1,
+                "received_chunk_count": 1,
+                "transcribed_chunk_count": 0,
+            },
+            "transcript_id": None,
+            "failure_reason": "not_a_real_reason",
+            "created_at": "2026-09-03T12:00:00Z",
+            "updated_at": "2026-09-03T12:00:00Z",
+        }
+        schema = spec["components"]["schemas"]["Recording"]
+        self.assertTrue(validate(recording, schema, spec))
+        recording["failure_reason"] = "missing_chunks"
+        self.assertEqual(validate(recording, schema, spec), [])
+
     def test_signed_http_shapes_errors_lifecycle_and_rejected_body_keepalive(self) -> None:
+        import yaml
+        from jsonschema_lite import resolve_pointer, validate
+
+        spec = yaml.safe_load(
+            ROOT.joinpath("openapi", "voice-recorder.yaml").read_text(encoding="utf-8")
+        )
         fixture = HttpFixture()
         self.addCleanup(fixture.close)
         identifiers: dict[str, str] = {}
@@ -330,6 +411,26 @@ class HttpGoldenContracts(unittest.TestCase):
                     self.assertEqual(response.headers.get(name), case["headers"][name], name)
                 expected = shifted_dates(json.loads(blob(case["body"])), delta)
                 actual = response.json()
+                if response.status_code >= 400:
+                    schema = spec["components"]["schemas"]["Problem"]
+                else:
+                    matches = [
+                        item
+                        for template, item in spec["paths"].items()
+                        if re.fullmatch(
+                            re.sub(r"\\\{[^}]+\\\}", r"[^/]+", re.escape(template)),
+                            urlsplit(path).path,
+                        )
+                    ]
+                    self.assertEqual(len(matches), 1)
+                    declared = matches[0][case["method"].lower()]["responses"][str(case["status"])]
+                    if "$ref" in declared:
+                        declared = resolve_pointer(spec, declared["$ref"])
+                    schema = declared["content"]["application/json"]["schema"]
+                self.assertEqual(
+                    validate(actual, schema, spec),
+                    validate(mapped(expected), schema, spec),
+                )
                 if case["status"] >= 400:
                     self.assertEqual(set(actual), set(expected))
                     for name in ("status", "code", "type", "instance", "trace_id"):
@@ -343,6 +444,39 @@ class HttpGoldenContracts(unittest.TestCase):
                     if case["status"] == 201 and "recording_id" in expected:
                         identifiers[expected["recording_id"]] = actual["recording_id"]
                     compare(mapped(expected), actual)
+        headers = {
+            "Authorization": fixture.bearer,
+            "X-Request-Id": "synthetic-openapi-contract",
+        }
+        created = fixture.client.post(
+            "/v1/recordings",
+            headers=headers,
+            json={"client_recording_id": "abcdef01-2345-6789-abcd-ef0123456789"},
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        recording_schema = spec["components"]["schemas"]["Recording"]
+        self.assertEqual(validate(created.json(), recording_schema, spec), [])
+        identifier = created.json()["recording_id"]
+        self.assertEqual(created.headers["Location"], f"/v1/recordings/{identifier}")
+        source = next(
+            row for row in MANIFEST["http"] if row["method"] == "PUT" and row["status"] == 202
+        )
+        options = dict(source["options"])
+        upload_headers = {**options["headers"], **headers}
+        uploaded = fixture.client.put(
+            f"/v1/recordings/{identifier}/chunks/0",
+            headers=upload_headers,
+            content=blob(options["content_blob"]),
+        )
+        self.assertEqual(uploaded.status_code, 202, uploaded.text)
+        self.assertEqual(
+            validate(uploaded.json(), spec["components"]["schemas"]["ChunkAccepted"], spec), []
+        )
+        completed = fixture.client.post(
+            f"/v1/recordings/{identifier}/complete", headers=headers, json={"chunk_count": 1}
+        )
+        self.assertEqual(completed.status_code, 202, completed.text)
+        self.assertEqual(validate(completed.json(), recording_schema, spec), [])
 
 
 if __name__ == "__main__":

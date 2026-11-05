@@ -19,8 +19,8 @@
                                         (only that line is touched; signing values kept).
       * infra/main.parameters.local.json -> googleAllowedAudiences = Web + Desktop,
                                         allowlistedEmail = <owner email>.
-      * windows/installer/staging/google-desktop-client.json -> a copy of the Desktop
-                                        client JSON for the installer to bundle locally.
+      * .secrets/windows-runtime/google-desktop-client.json -> private Desktop
+                                        runtime configuration, never installer payload.
 
     The Desktop JSON is sensitive operational config: it is only ever copied into an
     ignored path, never committed and never echoed.
@@ -34,7 +34,7 @@
     keep the value in the existing ignored infra/main.parameters.local.json.
 
 .PARAMETER SkipDesktopStage
-    Do not copy the Desktop JSON into the Windows installer staging path.
+    Do not write the private Desktop runtime configuration.
 #>
 [CmdletBinding()]
 param(
@@ -130,11 +130,11 @@ Write-Host 'Wrote infra/main.parameters.local.json (Web + Desktop audiences, own
 
 # --------------------------------------------------------- Windows desktop runtime config
 if (-not $SkipDesktopStage) {
-    $stageDir = Join-Path $RepoRoot 'windows/installer/staging'
+    $stageDir = Join-Path $RepoRoot '.secrets/windows-runtime'
     New-Item -ItemType Directory -Force -Path $stageDir | Out-Null
     $dest = Join-Path $stageDir 'google-desktop-client.json'
     Copy-Item -Path $desktopFile -Destination $dest -Force
-    Write-Host 'Staged Desktop OAuth client JSON for the installer (git-ignored).' -ForegroundColor Green
+    Write-Host 'Prepared private Desktop runtime config; public installer remains credential-free.' -ForegroundColor Green
 }
 
 Write-Host "`nDone. No client IDs or secrets were printed. All outputs are git-ignored." -ForegroundColor Cyan

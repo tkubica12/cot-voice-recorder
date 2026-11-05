@@ -40,6 +40,14 @@ IMAGE = (
     "sha256:dae2a5f96553962901304b94e72ef87e299d0825e4b679673bcc527a25076fe4"
 )
 TEST = "storage::azurite_tests::https_azure_contract"
+AZURITE_DEV_CONNECTION_STRING = (
+    "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;"
+    "AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/"
+    "K1SZFPTOtr/KBHBeksoGMGw==;"
+    "BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;"
+    "QueueEndpoint=http://127.0.0.1:10001/devstoreaccount1;"
+    "TableEndpoint=http://127.0.0.1:10002/devstoreaccount1;"
+)
 
 
 def certificate(root: Path) -> rsa.RSAPrivateKey:
@@ -217,9 +225,6 @@ def run(
     output = output.resolve(strict=True)
     if any(output.iterdir()):
         raise FileExistsError("Use a new empty emulator evidence directory.")
-    sys.path.insert(0, str(ROOT.joinpath("backend", "src")))
-    from voice_recorder.config import AZURITE_DEV_CONNECTION_STRING
-
     with tempfile.TemporaryDirectory(prefix="VoicePrompt-Azurite-", dir=output) as directory:
         root = Path(directory)
         identity = Identity(certificate(root))
@@ -477,46 +482,44 @@ def run(
             }
             if api_oracle is not None:
                 from azure_api_fixture import AzureProfile
-                from measure_backend import AZURE_SCOPE, measure
+                from measure_backend import Authority, controls, exercise
 
                 profile = AzureProfile(root, endpoints, identity, blob, queue, table)
-                profile_path = root.joinpath("backend-azure-performance.json")
-                measure(
-                    api_oracle,
-                    profile_path,
-                    revision,
-                    startup_trials,
-                    flows_per_series,
-                    fixture_factory=profile.fixture,
-                    scope=AZURE_SCOPE,
-                )
-                api_result = json.loads(profile_path.read_bytes())
+                authority = Authority()
+                try:
+                    fixture = profile.fixture("rust", api_oracle, authority)
+                    try:
+                        controls(fixture, authority)
+                        exercise(fixture, authority, 0)
+                    finally:
+                        fixture.close()
+                finally:
+                    authority.close()
                 observations = profile.observations
-                loads = [item for item in observations if item["recordings"] > 0]
                 if (
-                    len(observations) != startup_trials * 2 + 2
-                    or len(loads) != 2
-                    or {item["implementation"] for item in loads} != {"python", "rust"}
-                    or any(
-                        item["recordings"] != 1 + 3 * flows_per_series
-                        or item["chunks"] != item["recordings"]
-                        or item["transcripts"] != item["recordings"]
-                        or item["queued_messages"] < item["recordings"]
-                        or not item["resources_deleted"]
-                        or item["storage_backend"] != "azure"
-                        for item in loads
-                    )
+                    len(observations) != 1
+                    or observations[0]["implementation"] != "rust"
+                    or observations[0]["recordings"] != 1
+                    or observations[0]["chunks"] != 1
+                    or observations[0]["transcripts"] != 1
+                    or observations[0]["queued_messages"] < 1
+                    or not observations[0]["resources_deleted"]
+                    or observations[0]["storage_backend"] != "azure"
                 ):
-                    raise ValueError(
-                        "Actual SDK did not verify both measured persistent workloads."
-                    )
-                api_result["emulator_image"] = IMAGE
-                api_result["tls_verification_enabled"] = True
-                api_result["api_version_check_enabled"] = True
-                api_result["resource_observations"] = observations
-                api_result["namespace_setup_and_deletion_outside_timed_interval"] = True
-                api_result["same_emulator_shared_sequential_workload"] = True
-                api_result["synthetic_identity_requests"] = len(identity.resources)
+                    raise ValueError("The independent SDK did not verify the Rust API workload.")
+                api_result = {
+                    "status": "complete",
+                    "scope": "rust-authenticated-https-azurite-api-contract",
+                    "source_revision": revision,
+                    "emulator_image": IMAGE,
+                    "tls_verification_enabled": True,
+                    "api_version_check_enabled": True,
+                    "resource_observations": observations,
+                    "synthetic_identity_requests": len(identity.resources),
+                    "performance_profile": False,
+                    "real_azure_resources_or_iam": False,
+                    "whole_migration_acceptance": False,
+                }
         except BaseException as error:
             create(
                 output.joinpath("failure.json"),
@@ -575,7 +578,7 @@ def run(
         api_result["owned_emulator_and_identity_stopped"] = True
         api_result["temporary_private_key_removed"] = True
         create(
-            output.joinpath("backend-azure-performance.json"),
+            output.joinpath("rust-azure-api-contract.json"),
             json.dumps(api_result, indent=2).encode(),
         )
     print("Actual HTTPS Azurite, native REST and Azure SDK interop contract passed.", flush=True)

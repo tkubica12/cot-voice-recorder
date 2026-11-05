@@ -65,10 +65,8 @@ class PlatformParityTests(unittest.TestCase):
     ) -> None:
         original = (
             Path(__file__).resolve().parents[3]
+            / "assets"
             / "windows"
-            / "src"
-            / "VoicePrompt.App"
-            / "Assets"
             / "app.ico"
         ).read_bytes()
         self.assertEqual(original[:4], b"\0\0\1\0")

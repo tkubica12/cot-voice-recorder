@@ -94,6 +94,58 @@ async fn create_upload_complete_is_idempotent_and_conflicts_do_not_replace_publi
 }
 
 #[tokio::test]
+async fn concurrent_complete_replays_reserve_only_one_immediate_finalizer() {
+    let services = Arc::new(fixture());
+    let (record, _) = services
+        .create(create("concurrent-complete", false))
+        .await
+        .unwrap();
+    let id = record.recording_id;
+    services.upload(&id, upload(0)).await.unwrap();
+    let mut chunk = services.chunks(&id).await.unwrap().remove(0);
+    chunk.state = ChunkState::Transcribed;
+    chunk.text = Some("synthetic confirmed transcript".into());
+    services
+        .repository
+        .replace(&services.config.chunks_table, chunk.entity().unwrap())
+        .await
+        .unwrap();
+    let barrier = Arc::new(tokio::sync::Barrier::new(32));
+    let mut callers = tokio::task::JoinSet::new();
+    for _ in 0..32 {
+        let services = services.clone();
+        let id = id.clone();
+        let barrier = barrier.clone();
+        callers.spawn(async move {
+            barrier.wait().await;
+            services.complete(&id, 1).await
+        });
+    }
+    let mut created = 0;
+    while let Some(result) = callers.join_next().await {
+        let (record, status) = result.unwrap().unwrap();
+        assert_eq!(record.expected_chunk_count, Some(1));
+        assert!(record.finalize_enqueued);
+        assert!(matches!(status, 200 | 202));
+        created += usize::from(status == 202);
+    }
+    assert_eq!(created, 1);
+    let Queue::Memory(queue) = &services.queue else {
+        panic!("memory fixture")
+    };
+    assert_eq!(
+        queue
+            .messages
+            .lock()
+            .await
+            .iter()
+            .filter(|entry| entry.message.content["type"] == "finalize" && entry.delay == 0)
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
 async fn failed_queue_reservation_is_released_and_complete_replay_repairs_work() {
     let services = fixture();
     let (record, _) = services.create(create("client", false)).await.unwrap();

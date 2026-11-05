@@ -17,8 +17,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import azure_api_fixture as fixture
 import test_azure_rest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2].joinpath("backend", "src")))
-
 
 class AzureApiFixtureTests(unittest.TestCase):
     def config(self, root: Path) -> dict:
@@ -114,8 +112,6 @@ class AzureApiFixtureTests(unittest.TestCase):
             self.assertFalse(table.create_table.called)
 
     def test_actual_sdk_factory_uses_only_owned_https_paths_and_synthetic_bearer(self) -> None:
-        from voice_recorder.config import Settings
-
         with tempfile.TemporaryDirectory(prefix="VoicePrompt-api-sdk-") as directory:
             root = Path(directory)
             config = self.config(root)
@@ -156,13 +152,8 @@ class AzureApiFixtureTests(unittest.TestCase):
             root.joinpath("fixture.json").write_text(json.dumps(config))
             try:
                 with ExitStack() as resources:
-                    actual = fixture.context(
-                        root,
-                        Settings(_env_file=None, environment="test", use_fake_storage=True),
-                        Mock(),
-                        resources,
-                    )
-                    self.assertFalse(actual.settings.use_fake_storage)
+                    actual = fixture.sdk_clients(root, resources)
+                    self.assertEqual(actual["names"], fixture.resource_names(config["key"]))
                     self.assertEqual(len(requests), 7)
                     self.assertTrue(
                         all(path.startswith("/devstoreaccount1/") for _, path, _ in requests)

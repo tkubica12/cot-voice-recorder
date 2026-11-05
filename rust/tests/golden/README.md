@@ -31,6 +31,13 @@ the frozen Python envelope. Server-generated creation/receipt times must be
 valid and within the current run. All other checked wire fields remain frozen.
 The existing error contract checks and the complete 40-iteration rejected-body
 sequence are retained, without a performance profile.
+The historical lifecycle probe deliberately used the accepted free-form client
+ID `lifecycle`, whereas OpenAPI describes a UUID. That baseline is preserved,
+not silently rewritten or made stricter during source cleanup. Its schema errors
+must remain identical to the frozen Python result. A separate canonical-UUID
+Rust HTTP lifecycle must pass OpenAPI with no errors, including the nullable
+failure reason, chunk response and Location header. Schema reference/keyword
+guards and negative enum/edit bounds also remain checked.
 
 Windows DPAPI and named-kernel-object interoperability use the small independent
 `platform-oracle` test tool, not the old client/Core project. The tool uses

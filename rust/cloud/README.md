@@ -1,6 +1,8 @@
 # Rust cloud migration
 
-This crate provides runnable staged Rust API/worker/cleanup entry points, **not an
+> **Source cleanup:** current compatibility commands use `rust/tests/golden` and `scripts/uv.lock`, not the removed C#/Python applications. Older revision-scoped measurement/reference descriptions below remain historical evidence, not runnable legacy-product instructions. The live Azure cutover remains separate and unperformed.
+
+This crate provides source-default Rust API/worker/cleanup entry points, **not an
 accepted production replacement** for the existing Python services. Classical ACA, UAMI,
 private Storage/Speech and the Android contract remain unchanged.
 
@@ -95,9 +97,10 @@ It reads Python output in Rust and reopens Rust-generated entities in Python,
 including a 2.7-billion-sample counter and nullable source metadata.
 
 ```powershell
-cargo build --manifest-path rust\Cargo.toml --offline --locked --release -p voiceprompt-cloud --example entity_contract
-backend\.venv\Scripts\python.exe rust\cloud\tests\test_entity_parity.py `
-  --oracle rust\target\release\examples\entity_contract.exe
+cargo build --manifest-path rust\Cargo.toml --offline --locked --release -p voiceprompt-core --example audio_contract
+cargo build --manifest-path rust\Cargo.toml --offline --locked --release -p voiceprompt-client-protocol --example client_contract
+cargo build --manifest-path rust\Cargo.toml --offline --locked --release -p voiceprompt-cloud --examples
+uv run --project scripts --locked python rust\tests\test_golden_contracts.py --examples rust\target\release\examples
 ```
 
 This uncovered the Python reader's inability to unwrap SDK `EntityProperty`
@@ -121,10 +124,10 @@ services and compares Rust-generated envelope bytes, digests, fixed expiry,
 preview and original/final text. All fixtures are synthetic and in memory.
 
 ```powershell
-backend\.venv\Scripts\python.exe rust\cloud\tests\test_edit_parity.py --oracle rust\target\release\examples\entity_contract.exe
-backend\.venv\Scripts\python.exe rust\cloud\tests\test_archive_parity.py --oracle rust\target\release\examples\entity_contract.exe
-backend\.venv\Scripts\python.exe rust\cloud\tests\test_relay_parity.py --oracle rust\target\release\examples\entity_contract.exe
-backend\.venv\Scripts\python.exe rust\cloud\tests\test_pipeline_text_parity.py --oracle rust\target\release\examples\entity_contract.exe
+cargo build --manifest-path rust\Cargo.toml --offline --locked --release -p voiceprompt-core --example audio_contract
+cargo build --manifest-path rust\Cargo.toml --offline --locked --release -p voiceprompt-client-protocol --example client_contract
+cargo build --manifest-path rust\Cargo.toml --offline --locked --release -p voiceprompt-cloud --examples
+uv run --project scripts --locked python rust\tests\test_golden_contracts.py --examples rust\target\release\examples
 ```
 
 These do not prove live Azure connectivity, full WebSocket/worker parity,
@@ -147,14 +150,16 @@ The root-context `rust\cloud\Dockerfile` builds a non-root UID10001 image with t
 same API8000/worker/cleanup entry point. The current local Docker daemon is
 unavailable; CI has built and probed the image without publishing it. The source-only
 `infra\deploy.ps1 -BackendRuntime Rust` switch preserves all classical ACA topology
-and keeps Python as its default/rollback. Do not execute it until deployment is
+now selects Rust by default; prior deployed images and Git history remain rollback evidence. Do not execute it until deployment is
 separately approved.
 
 ## Actual HTTP reference contracts
 
 ```powershell
-cargo build --manifest-path rust\Cargo.toml --offline --locked --release -p voiceprompt-cloud --example cloud_contract
-backend\.venv\Scripts\python.exe rust\cloud\tests\test_http_parity.py --oracle rust\target\release\examples\cloud_contract.exe
+cargo build --manifest-path rust\Cargo.toml --offline --locked --release -p voiceprompt-core --example audio_contract
+cargo build --manifest-path rust\Cargo.toml --offline --locked --release -p voiceprompt-client-protocol --example client_contract
+cargo build --manifest-path rust\Cargo.toml --offline --locked --release -p voiceprompt-cloud --examples
+uv run --project scripts --locked python rust\tests\test_golden_contracts.py --examples rust\target\release\examples
 ```
 
 `backend-ci` also records a Linux **authenticated in-memory protocol** performance

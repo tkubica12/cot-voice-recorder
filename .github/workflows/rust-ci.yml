@@ -4,9 +4,9 @@ on:
   push:
     paths:
       - "rust/**"
-      - "windows/src/VoicePrompt.App/**"
-      - "windows/src/VoicePrompt.Core/**"
-      - "windows/tools/ClientFixture/**"
+      - "assets/windows/**"
+      - "scripts/pyproject.toml"
+      - "scripts/uv.lock"
       - "scripts/measure_clients.py"
       - "scripts/measure_microphone.py"
       - "scripts/tests/test_microphone_measurement.py"
@@ -26,9 +26,9 @@ on:
   pull_request:
     paths:
       - "rust/**"
-      - "windows/src/VoicePrompt.App/**"
-      - "windows/src/VoicePrompt.Core/**"
-      - "windows/tools/ClientFixture/**"
+      - "assets/windows/**"
+      - "scripts/pyproject.toml"
+      - "scripts/uv.lock"
       - "scripts/measure_clients.py"
       - "scripts/measure_microphone.py"
       - "scripts/tests/test_microphone_measurement.py"
@@ -129,6 +129,13 @@ jobs:
       - name: Build cloud entity contract probe
         run: cargo build --offline --locked --release -p voiceprompt-cloud --example entity_contract
 
+      - name: Build authenticated cloud HTTP contract probe
+        run: cargo build --offline --locked --release -p voiceprompt-cloud --example cloud_contract
+
+      - name: Frozen independent audio, Unicode, client, cloud and recovery contracts
+        working-directory: .
+        run: python rust/tests/test_golden_contracts.py --examples rust/target/release/examples --without-http
+
       - name: Windows process measurement safeguards
         if: runner.os == 'Windows'
         working-directory: .
@@ -182,16 +189,16 @@ jobs:
           path: ${{ runner.temp }}/VoicePrompt-focus-proof/focus-*.json
           if-no-files-found: warn
 
-      - name: Build existing C# DPAPI reference
+      - name: Build independent Windows OS oracle without application dependencies
         if: runner.os == 'Windows'
         working-directory: .
         shell: pwsh
         env:
           DOTNET_CLI_TELEMETRY_OPTOUT: "1"
         run: |
-          dotnet restore rust\tests\reference\ReferenceAudio.csproj --source https://packagefeedproxy.microsoft.io/nuget/v3/index.json
+          dotnet restore rust\tests\platform-oracle\PlatformOracle.csproj --source https://packagefeedproxy.microsoft.io/nuget/v3/index.json
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          dotnet build rust\tests\reference\ReferenceAudio.csproj -c Release --no-restore
+          dotnet build rust\tests\platform-oracle\PlatformOracle.csproj -c Release --no-restore
 
       - name: Windows DPAPI parity and startup guards
         if: runner.os == 'Windows'
@@ -200,7 +207,7 @@ jobs:
         run: >
           python rust\windows-pilot\tests\test_platform_parity.py
           --pilot rust\target\release\VoicePromptRustPilot.exe
-          --reference rust\tests\reference\bin\Release\net8.0\ReferenceAudio.dll
+          --reference rust\tests\platform-oracle\bin\Release\net8.0\PlatformOracle.dll
 
       - name: Actual hidden Settings viewport and isolated client lifecycle without physical ports
         if: runner.os == 'Windows'
@@ -218,7 +225,7 @@ jobs:
           python rust\client-protocol\tests\test_client_parity.py
           --client rust\target\release\examples\client_contract.exe
           --pilot rust\target\release\VoicePromptRustPilot.exe
-          --reference rust\tests\reference\bin\Release\net8.0\ReferenceAudio.dll
+          --reference rust\tests\platform-oracle\bin\Release\net8.0\PlatformOracle.dll
 
       - name: Windows recovery manifest v1-v4 compatibility
         if: runner.os == 'Windows'
@@ -227,27 +234,7 @@ jobs:
         run: >
           python rust\windows-pilot\tests\test_recovery_parity.py
           --pilot rust\target\release\VoicePromptRustPilot.exe
-          --reference rust\tests\reference\bin\Release\net8.0\ReferenceAudio.dll
-
-      - name: Windows dictation text and legacy audio checkpoint parity
-        if: runner.os == 'Windows'
-        working-directory: .
-        shell: pwsh
-        run: >
-          python rust\client-protocol\tests\test_dictation_parity.py
-          --client rust\target\release\examples\client_contract.exe
-          --reference rust\tests\reference\bin\Release\net8.0\ReferenceAudio.dll
-
-      - name: Build actual C# application fixture through the approved feed
-        if: runner.os == 'Windows'
-        working-directory: .
-        shell: pwsh
-        env:
-          DOTNET_CLI_TELEMETRY_OPTOUT: "1"
-        run: |
-          dotnet restore windows\tools\ClientFixture\ClientFixture.csproj --source https://packagefeedproxy.microsoft.io/nuget/v3/index.json
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          dotnet build windows\tools\ClientFixture\ClientFixture.csproj -c Release --no-restore
+          --reference rust\tests\platform-oracle\bin\Release\net8.0\PlatformOracle.dll
 
       - name: Full client fixture guards without physical ports or installed state
         if: runner.os == 'Windows'
@@ -255,7 +242,6 @@ jobs:
         shell: pwsh
         run: >
           python scripts\tests\test_full_client_fixture.py
-          --csharp windows\tools\ClientFixture\bin\Release\net8.0-windows\win-x64\VoicePromptClientFixture.exe
           --rust rust\target\release\VoicePromptRustPilot.exe
 
       - name: Pure first-PCM telemetry guards without physical-device access

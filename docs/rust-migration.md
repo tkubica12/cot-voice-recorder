@@ -35,15 +35,29 @@ Rust klienta, nikoli jen provisionalnim textem. Puvodne planovany izolovany
 own-target Ctrl+V ani presna delka tohoto realneho pokusu nebyly primo pozorovany;
 nejde o novy takto rizeny E2E PASS. Zadny dalsi realny capture se neopakuje.
 
-Aktualne probiha SOURCE cleanup pred mergem: pred odstranovanim reference
+SOURCE cleanup pred mergem odstranil tracked puvodni `windows/` a `backend/`
+aplikace i jejich app-linked reference projekty. Pred odstranovanim reference
 vznikl verzovany synteticky golden korpus s provenance stareho commitu a
 jednotlivych zdrojovych/probe hashy. Export prosel 32 skutecnymi C#/Python
 parity testy a 14 Windows platform/recovery testy. Rust blackbox nyni overuje
 808 wire/audio/client/cloud vektoru a 159 zachovanych signed HTTP pozadavku,
 vcetne rejected-body keepalive, plus puvodni prompty a recovery v1-v4.
 Samostatny maly CurrentUser DPAPI/isolated-IPC testtool nepotrebuje puvodni
-Windows Core ani aplikaci. Toto je nahrada testovacich vazeb pred source
-vymenou, nikoli tvrzeni, ze C#/Python zdroje uz byly odstraneny.
+Windows Core ani aplikaci. Source-default deploy a `azure.yaml` pouzivaji Rust,
+original ICO/PNG jsou ve sdilenych assets. Python zustava jen nezavislym
+testovym toolingem s redukovanym zamcenym graphem; neobsahuje stary backend.
+Zachovan je take nezavisly OpenAPI validator, negativni schema/HTTP/JWT testy,
+konkurencni finalizer race a 15 puvodnich syntetickych WPF rasteru.
+
+Lokalni source-cleanup kontrola: native release se sdilenymi assets,
+177 native + 7 bin testu, 190 ostatnich workspace testu (vcetne noveho race),
+fmt a all-target Clippy prosly. Platform/DPAPI/IPC7 + clientwire7 + recovery7
+a Rust-only lifecycle guards8 prosly bez puvodnich aplikaci. Aktualni
+build-only installer je `f95a8148fc021688329fe3033e49e69507fdda3a100e30620e3845178ffb65b8`,
+payload `f157cdb42a78073db6ff240ce2b8a0e9fb3f2ab30a5cba860fb606cf3a1d2af5`;
+NEBYL spusten ani nainstalovan. Bezici drive schvaleny klient zustava
+`2c6f5061...`, nove prihlaseni/data se nemenily. Current CI teto cele source
+vymeny musi byt samostatne potvrzeno pred finalnim mergem.
 
 Merge do `main` nasleduje az po source cleanup a CI a po konkretnim finalnim
 pokynu koordinatora. Vsechny ctyri verzovane workflow vetve pouze buildi/testuji
@@ -116,8 +130,9 @@ postupne commity a pushe do samostatne vetve `refactor-rust`.
 - Puvodni osobni stav byl pozdeji vyslovne schvalene jednorazove resetovan.
   Novou historii/tokeny/recovery bezici aplikace a cloudova data nadale zachovat.
 - Pouzivat lokalni synteticka data a oddeleny testovaci stav.
-- Zachovat soucasnou C#/Python implementaci jako referenci a rollback, dokud
-  neni konkretni nahrada kompletni a overena.
+- Kompatibilitu po odstraneni C#/Python source zachovat verzovanymi goldeny
+  overenymi proti puvodnim aplikacim a nezavislymi OS/SDK testtools. Git historie,
+  nasazene rollback images a soukroma programova zaloha se nemazou.
 - Externi Rust zavislosti pridavat teprve po overeni schvaleneho Cargo registry
   a dostupnosti verzi. Prvni zaklad muze pouzivat pouze standardni knihovnu
   a sestavovat se offline bez pristupu k registry.
