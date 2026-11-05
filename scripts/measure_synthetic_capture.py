@@ -254,7 +254,7 @@ def validate_completed(
     completed: dict, audio_seconds: int, engine: str = "streaming", pattern: str | None = None,
 ) -> None:
     pattern = controller_profile(engine, pattern)
-    if engine == "legacy" and audio_seconds not in (3, 600):
+    if engine == "legacy" and audio_seconds not in (3, 120, 600):
         raise RuntimeError("Unknown legacy duration/profile.")
     keys = {
         "engine", "pattern", "audio_seconds", "actual_capture_seconds", "captured_bytes",
@@ -820,8 +820,8 @@ def run_functional(
         raise ValueError("An explicitly named frozen Windows controller libtest is required.")
     if type(audio_seconds) is not int or not 2 <= audio_seconds <= 3600:
         raise ValueError("Functional capture must use bounded explicit seconds.")
-    if engine == "legacy" and audio_seconds not in (3, 600):
-        raise ValueError("The legacy profile is defined for the3s smoke or600s functional capture.")
+    if engine == "legacy" and audio_seconds not in (3, 120, 600):
+        raise ValueError("The legacy profile is defined for the3s smoke,120s or600s functional capture.")
     directory = directory.resolve(strict=True)
     if any(directory.iterdir()):
         raise ValueError("A new empty evidence directory is required.")

@@ -45,8 +45,8 @@ uz uzivatel nechce.
 | Microphone readiness | Jeden actual240ms probe a samostatne schvalena30+30 paired serie prosly; first-PCM p95Rust80.75% C#baseline, bez audio souboru/uploadu |
 | Engine longevity | Actual3600s synthetic PCM/real50min rotation,115200000 exact bytes; worst idle growth1.645MiB<10MiB, engine-only PASS |
 | Current controller functionality/reliability | STREAMING AB98 actual3600.0017623s FUNCTIONALPASS/exact115200000PCM/rotation[0,96000000]/normaljoinsACK je ulozeny milnik. LEGACYownedsealer/sharedwindow: actualsingleworker192kRED->GREEN, EMITcadenceRED->GREEN/MAX4C#restore/working-vs-durableASRproof a odd64001RED->GREEN. Uzkyreview bezhighconfidencebug; final173native+7bin/189otherworkspace/5C#golden/7rollback/release/3s96000PASS. MatchingnewCI zbyva. AB98hour se NEPREZNACUJE na novyrefactor nebo legacy/fullGUI/physical/install/privateAzurePASS |
-| CI nativniho inkrementu | Legacycodeec6ad0c/CI42017380685 attempt2 ALL5SUCCESS se vsemi Winparity/release/3sstepsSUCCESS. Attempt1existingelapsedguardFAIL a tehdejsiSKIPPEDsteps zachovany; no sampler/budgetpatch. Novy test-onlylegacyprofile vyzaduje vlastni matchingCI, zatim pending. NativeFS/fault integration serialni, ostatniworkspaceparalelni; neni production cutover |
-| Legacy functional profile | ExistingNoPortsentry/producer/host ma strictengine+knownpattern, sourceWAVoracle a deliveryACK bez legacyAudit. Local176native+7bin/189other/20root+10host/6C#golden a oba current3ssmokes PASS. Actuallegacy600 je vyslovne zadany AZpo novemmatchingALL5CI; zatim NEZACAL |
+| CI nativniho inkrementu | Legacycodeec6ad0c/CI42017380685 attempt2 ALL5SUCCESS; attempt1existingelapsedguardFAIL retained, no sampler/budgetpatch. Testprofileebea9a0/CI42029183984 ALL5SUCCESS vcetne Winlegacy+streamsmokes/6golden/20root+10host/MSRV/container. Nasledny fakeRefinerfix potrebuje NOVYmatchingCI, pending. NativeFS/fault integration serialni, ostatniworkspaceparalelni; neni production cutover |
+| Legacy functional profile | Actual600.0015811s NATIVE capture/storage/150C#WAV/ASRorder/deliveryjoinsPASS/raw19200000, ale collectorVERDICTFAIL kvuli42fakeRefinerprovenancewarnings, neoverallPASS. Minimaltest-onlyfakeRefiner RED->GREEN/current177native+7bin/189other/20root+10host/6C#golden/oba strictstderr0 3ssmokesPASS. ONEcorrectedactual120 zadany AZpo novemmatchingCI;600 se neopakuje |
 | OAuth/token-store/PubSub klient | Native flow implementovany; samostatny live Google auth-only/local-signout a assisted manual clipboard probe PASS, full signed-in backend/controller dictation stale chybi; samostatny automatic DesktopGuard port viz dalsi radek |
 | Automatic DesktopGuard paste port | NOVYexactonephysicalpostfix5b test PASS:one4eventnativeCtrlV/exactownfieldmarker/normalclosed,no retry. Nejdenifullcontroller/hold-toggle/hour/realbackend acceptance;older50040BLOCKED/45788assisted zustavaji |
 | Diktovani/recovery UI | Native microphone/hotkeys/overlay/paste controller, oba enginy, journal, polishing a outbox implementovany; real-world a rozsahlejsi fault/E2E akceptace zbyva |
@@ -5273,3 +5273,82 @@ Novy test-onlysourcecommit/matchingALL5CI se dokoncuje. Teprve pote je
 vyslovne zadany ONEactualLEGACY600FUNCTIONAL/newmarkedTemp/frozeninputs/
 PDBsourceoraclehash/normal30slegacy5sfixture proof; zadny600autoretry,
 legacyhour, novystreaminghour/CDB/physical/install/Azure scope.
+
+### Actual legacy600 native milestone and fake-refiner collector failure
+
+Exacttestprofile `ebea9a0bc380734224e3ad3fd0f2a37e19904800`,
+Rusttree34e49da0, fixture446e7da9/PDB93820abd, CI42029183984 ALL5SUCCESS
+overeny actualAPI+Winlog (176native/20root+10host/6C#golden/both3smodes).
+Teprve pote probehl ONEactualLEGACY600/newTemp830aae13a6a94f8c933c233bfd4dfc63.
+Strictready4.373442s/230attempts/15s, MAINBEGINnonce/PID/binhash/profile
+overeny; jednaMAIN+samostatnyexisting2swarmup/0extracapturekalibraci.
+Behemcapture zadnebuild/test/sourceedit/debug/perf/liveRecoverycontentreads.
+
+**NATIVEcapture/storage/data/order/joins/delivery milestone PASS:**
+actual600.0015811s, RAWproduced/admitted/received/completed/saved19200000,
+150/150WAVhash/length/endcursor/overlap presne podleC#oracle2da127c1,
+providerPCM20083200 (NEraw), providerfirstcompletion[1,0] a vsech150textu
+v chronologicaloriginalHistory. NativeExit0/test1PASS, normalexitmatching
+legacyprofile, Historybeforehandoff/polisher/deliveryACK+joineddelete.
+Legacyconfirmed0schema/auditupload0/outboxACKnullN/A; exportedpins/
+inspections/aliascapacity0. Room/reservationjobcounts UNEXPORTED,
+jen native/code lifetimeproof. Nativependingraw0/ASRresults0 predACK,
+nikoli zpetna rekonstrukce z prazdnehopostACKstavu.
+
+**COLLECTORVERDICTFAIL/Exit1, NE overallfunctionalPASS:** soleNative
+stderr4998B obsahuje42stejnych "Dictation polishing fallback" diagnostics.
+Hoststrictstderr check odmitl run AZPO normalnativeExit0; collector
+NEkillnuljob. ZadneobservedOverflow/storageerror/renamewitness/panic.
+FixtureRefiner vracel editoriginal="synthetic", ale nove indexedASRtexts
+obsahuji opakovanyRAW s viceidentickymislovy vpolishcall. Unchanged
+production `polishing.rs:99-103` SPRAVNE odmita neunikatniliteral a
+ponechava raw. Neni to sealerregression ani0x5causalityproof.
+
+Nativefinalidle-ready byl typedvalidated predexit; nezavisle porovnano
+vsech150C#chunks a preservednormalexit. POEXIT72snapshotfilehashes/
+allfrozeninputs+oldproofhashes unchanged, known100556/47240/94688 absent;
+pouzeexactTemp830aae odstranen AZpo verifiedsnapshot. Externaloriginal
+cipher/counts NOT_OBSERVED (po legitimateACKdelete0cipher); nesmi se
+preznacit na predcleanupcipherinspection. Optional10minuteGAP/0fresh
+zustavaji NOT_OBSERVED, nejsou finaldatacounters. Fullproof:
+`functional-controller-legacy600-ebea9a0/independent-verification.json`.
+Uzivatel/coordinator prijal tento NATIVE600milnik s timto PRESNYMscope;
+puvodni collector1/42warnings se NESMAZOU a zadny druhy600 se nespousti.
+
+### Minimal fake-refiner correction and bounded full-flow follow-up
+
+Deterministicky actualRefiner/unchangedvalidate_edits RED pro>1indexedchunk
+reprodukuje ambiguousanchor bez noveho capture. Test-onlycorrection vybira
+JEDINY literal "legacychunkNNNN synthetic" zkonkretnihoindexedASRchunku,
+replacement zachovavaID. Defaultstreamsingle-"synthetic" response zustava
+byte-exact. Tailbezkeyword vraci legitimateidentity/noedits, ne fakeerror.
+Productionuniquenessguard, stderrrejection a errornotifications NEZMENENY;
+zadna warningallowlist nebo maskovani42warnings.
+
+GREEN kontrolujeviceindexedchunks/callzacatinajiciuvnitrRAW, maximalni
+7996..8000Btext a finaltail, originalsingle-streamresponse aactual12s
+SAMPLEVOLUME/controller2ASRoutoforder/Historyraworder/0fallback.
+Existujiciproductionnegativeprovenance/failurefallbacktests zustavaji.
+Currentfullsuite177nativePASS16existingignored+7bin/189otherworkspace
+PASS1existingignored, fmt/allfeaturealltargetClippy/release/20root+10host/
+6C#goldenPASS. C#offline oracle ma nyni120i600samplevolumes, zadny
+novyactualcapture.120oracle: raw3840000/30WAV/providerPCM4006400/
+lastWAV95404end3840000,digest33fd2e70...b225d0, JSONSHA
+`1deeb428231c6c1013ab3cd0cd5fcf3cbb55315c5bd756b918c81add34785c1e`.
+
+Vsech5productionhashes i rebuildproductSHA2c6f5061 zustavaji NEZMENENY.
+Correctedfixture SHA
+`d42e1df48fde039cb2b816f5836b7a27010a27c318aebc3593294b20e59cb102`,
+PDB `2715834cb45751baaa7eeb4114ae362bf7dd91641c72fba58ef2084f5807995b`.
+Currentstrictstderr0/collector0 smokes: streaming3.0008431/96000rawPCM
+alegacy3.0013116/96000raw/82560providerPCM/noaudit/deliveryACK.
+Kazdy12postexitfilehashes/ownTempcleanup overeny; knownPIDcleanup overen
+znovu jako absent po prvnim prechodnemGetProcesspresence86856, jeho
+pricinaNEURCENA. Nejde o dalsicapture ani zatajeny processkill.
+
+Commit/push a NOVYexactALL5CI teto korekce se dokoncuji. AZpotom je vyslovne
+zadany ONEactual120sLEGACYFUNCTIONAL se strictnative+collectorExit0/
+stderr0/30oraclechunks/exactraw3840000, normal30slegacy5sfixture/delivery
+ACK/joineddelete a optionalGAPpolicy. Zadne120autoretry/600repeat/hour/
+performance/CDB/physical/install/Azure. Po strict120PASS nasleduje presny
+WindowsFUNCTIONALcompletionledger a oddelene real-world/releasecloudgates.

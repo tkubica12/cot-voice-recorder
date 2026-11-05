@@ -496,13 +496,62 @@ impl RefinementService for Refiner {
         if self.failed.load(Ordering::Acquire) {
             return Err(failure());
         }
-        Ok(DictationRefinement {
-            text: text.replacen("synthetic", "polished", 1),
-            edits: vec![DictationEdit {
-                original: "synthetic".into(),
-                replacement: "polished".into(),
-            }],
-        })
+        let anchor = text
+            .split_whitespace()
+            .filter(|word| word.starts_with("legacychunk"))
+            .map(|word| format!("{word} synthetic"))
+            .find(|anchor| text.matches(anchor.as_str()).count() == 1)
+            .or_else(|| text.contains("synthetic").then(|| "synthetic".to_owned()));
+        let mut response = DictationRefinement {
+            text: text.into(),
+            edits: Vec::new(),
+        };
+        if let Some(original) = anchor {
+            let replacement = original.replacen("synthetic", "polished", 1);
+            response.text = text.replacen(&original, &replacement, 1);
+            response.edits.push(DictationEdit {
+                original,
+                replacement,
+            });
+        }
+        Ok(response)
+    }
+}
+
+#[tokio::test]
+async fn fixture_refiner_preserves_unique_literal_provenance_across_indexed_legacy_chunks() {
+    let refiner = Refiner::default();
+    let mut maximum = (0..50)
+        .map(|index| format!("legacychunk{index:04} {RAW}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    while maximum.len() + 5 <= 8000 {
+        maximum.push_str(" tail");
+    }
+    assert!((7996..=8000).contains(&maximum.len()));
+    for text in [
+        RAW.to_owned(),
+        format!("legacychunk0000 {RAW} legacychunk0001 {RAW}"),
+        format!("{RAW} legacychunk0001 {RAW}"),
+        "only a trailing fragment without the keyword marker".to_owned(),
+        maximum,
+    ] {
+        let response = refiner.refine(&text, "cs").await.unwrap();
+        assert!(
+            voiceprompt_client_protocol::polishing::validate_edits(&text, &response, 0).is_some(),
+            "The synthetic refiner returned an ambiguous or absent literal anchor."
+        );
+        if text == RAW {
+            assert_eq!(response.text, RAW.replacen("synthetic", "polished", 1));
+            assert_eq!(response.edits[0].original, "synthetic");
+        }
+        for edit in &response.edits {
+            assert_eq!(text.matches(edit.original.as_str()).count(), 1);
+            if text.matches("synthetic").count() > 1 {
+                assert!(edit.original.starts_with("legacychunk"));
+                assert_eq!(edit.original.split_whitespace().count(), 2);
+            }
+        }
     }
 }
 
@@ -1218,6 +1267,10 @@ async fn run_controller_capture(
     let (text, cancelled, reply) = harness.delivery().await;
     assert_eq!(harness.entries()[0].body, text);
     assert!(!cancelled.load(Ordering::Acquire));
+    if profile == CaptureProfile::Legacy {
+        assert_eq!(harness.entries()[0].refinement_fallback_blocks, 0);
+        assert!(text.contains("polished"));
+    }
     assert!(harness.policy.dictation_busy());
     let rows = harness.recovery.list().unwrap();
     assert_eq!(rows.len(), 1);
@@ -1446,6 +1499,8 @@ async fn legacy_profile_two_request_out_of_order_binding_matches_complete_source
             harness.entries()[0].raw_body.as_deref(),
             Some(expected.as_str())
         );
+        assert_eq!(harness.entries()[0].refinement_fallback_blocks, 0);
+        assert!(text.contains("polished"));
     }
     reply.send(DeliveryResult::CopiedOnly).unwrap();
     harness.stage(DictationStage::PasteSkipped).await;
@@ -1680,7 +1735,7 @@ async fn realtime_synthetic_controller_hour() {
     .unwrap();
     let seconds = options["audio_seconds"].as_u64().unwrap();
     assert!((2..=3600).contains(&seconds));
-    assert!(profile == CaptureProfile::Streaming || matches!(seconds, 3 | 600));
+    assert!(profile == CaptureProfile::Streaming || matches!(seconds, 3 | 120 | 600));
     let nonce = options["nonce"].as_str().unwrap();
     crate::fixtures::validate(&root, Some(nonce)).unwrap();
     let expected_names = ["capture-options.json", "migration-fixture.json"];
