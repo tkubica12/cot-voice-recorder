@@ -240,14 +240,14 @@ fn delivery() -> (
 #[tokio::test(start_paused = true)]
 async fn ui_queue_backpressure_is_part_of_the_delivery_budget() {
     let (sender, mut receiver) = mpsc::channel(1);
-    sender.send(UiRequest::AuditWarning).await.unwrap();
+    sender.send(UiRequest::ReloadSettings).await.unwrap();
     let (request, reply, cancelled) = delivery();
     let result = deliver_to_ui(sender, request, reply, cancelled.clone()).await;
     assert_eq!(result, Err(UiDeliveryError::TimedOut));
     assert!(cancelled.load(Ordering::Acquire));
     assert!(matches!(
         receiver.try_recv().unwrap(),
-        UiRequest::AuditWarning
+        UiRequest::ReloadSettings
     ));
     assert!(receiver.try_recv().is_err());
 }

@@ -138,7 +138,6 @@ pub(crate) enum UiRequest {
         cancelled: Arc<AtomicBool>,
         reply: oneshot::Sender<DeliveryResult>,
     },
-    AuditWarning,
     ReloadSettings,
     ValidateShortcuts {
         settings: Arc<AppSettings>,
@@ -571,11 +570,9 @@ async fn run_client(
             api: api.clone(), backend: settings.backend_base_url.clone(),
         }));
         let policy = policy.clone();
-        let requests = requests.clone();
         let mut shutdown = stop.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(30));
-            let mut warning_at = None;
             loop {
                 tokio::select! {
                     biased;
@@ -585,13 +582,8 @@ async fn run_client(
                             _ = shutdown.changed() => break,
                             result = outbox.drain(&policy, time::OffsetDateTime::now_utc()) => result,
                         };
-                        let failed = match report {
-                            Ok(report) => report.failed > 0 || report.expired > 0,
-                            Err(error) => { eprintln!("Audit outbox: {error}"); true }
-                        };
-                        if failed && warning_at.is_none_or(|at: tokio::time::Instant| at.elapsed() >= Duration::from_secs(300)) {
-                            warning_at = Some(tokio::time::Instant::now());
-                            if requests.try_send(UiRequest::AuditWarning).is_err() { eprintln!("Audit warning could not be queued."); }
+                        if let Err(error) = report {
+                            eprintln!("Audit outbox: {error}");
                         }
                     }
                 }

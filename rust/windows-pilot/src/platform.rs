@@ -1341,11 +1341,6 @@ fn refresh_client_ui(hwnd: HWND, force_presentation: bool) -> Result<(), NativeE
                         else { let _ = reply.send(crate::dictation::DeliveryResult::CopiedOnly); }
                     });
                 }
-                UiRequest::AuditWarning => {
-                    if let Err(error) = notify(hwnd, "Dictation audit pending", "History is available. Cloud audit could not be uploaded or expired. Open Recovery for details.", true) {
-                        eprintln!("Audit warning notification failed: {error}");
-                    }
-                }
                 UiRequest::ReloadSettings => {
                     RELOAD_CLIENT.with(|slot| *slot.borrow_mut() = Some(host.options.clone()));
                 }

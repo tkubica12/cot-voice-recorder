@@ -49,7 +49,8 @@ identical retries do not extend retention and conflicting content returns 409.
 Audit uploads run while idle, retry every 30 seconds with ordinary API backoff and
 the existing Google refresh rule, and survive restart. The outbox is deleted only
 after cloud acknowledgement and cannot cross account/backend bindings. Failures
-are logged and produce a rate-limited warning. History/paste never wait for audit.
+are only logged; a pending audit stays visible in Recovery and never raises a
+notification. History/paste never wait for audit.
 
 Cloud audit entries have `source=windows_dictation`, retain `raw_body`, and are
 available through the existing transcript/history API. They emit **no**
