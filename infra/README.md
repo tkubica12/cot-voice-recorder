@@ -1,8 +1,9 @@
 # infra/ — Infrastructure
 
 **Owner:** infrastructure/deployment.
-**Tech:** Azure — Container Apps, Storage (Blob/Queue/Table), Web PubSub, ACR, Log
-Analytics, Azure Speech, AI Foundry (existing). IaC: **Bicep**, orchestrated by **`infra/deploy.ps1`**
+**Tech:** Azure — Container Apps, Storage (Blob/Queue/Table), Web PubSub, Log
+Analytics, Azure Speech, AI Foundry (existing); public **GHCR** image publishing.
+IaC: **Bicep**, orchestrated by **`infra/deploy.ps1`**
 (two-phase) with an `azure.yaml` for Azure Developer CLI familiarity.
 
 Provisions what [`../docs/architecture.md`](../docs/architecture.md) requires. The API
@@ -22,7 +23,6 @@ rg-cot-voice-recorder (Sweden Central)
 ├── pe-*-{blob,queue,table} + privatelink.{blob,queue,table}.core.windows.net zones
 ├── aispeech-cotvr-<token>  Azure Speech (North Europe) — public access/local auth DISABLED
 ├── pe-aispeech-* + privatelink.cognitiveservices.azure.com zone
-├── crcotvr<token>         ACR (Standard, admin disabled, MI pull)
 ├── wps-cotvr-<token>      Web PubSub (Free_F1, hub `transcripts`, local auth disabled)
 ├── id-cotvr-<token>       user-assigned managed identity (SHARED by all runtime apps)
 ├── log-cotvr-<token>      Log Analytics (Container Apps logs)
@@ -38,7 +38,7 @@ rg-cot-voice-recorder (Sweden Central)
 All three runtime components (`ca-api`, `ca-worker`, `caj-cleanup`) run as the **same
 user-assigned managed identity** (`id-cotvr-<token>`). Its client id is injected as
 `AZURE_CLIENT_ID` so `DefaultAzureCredential` selects it. A shared UAMI (vs. per-app
-system-assigned) makes RBAC, ACR pull and the KEDA queue authorization **deterministic
+system-assigned) makes RBAC and the KEDA queue authorization **deterministic
 and pre-created** before the apps start — no chicken-and-egg on first deploy.
 
 Least-privilege data-plane roles assigned to the identity (no keys anywhere):
@@ -48,7 +48,6 @@ Least-privilege data-plane roles assigned to the identity (no keys anywhere):
 | Storage account | Storage Blob Data Contributor |
 | Storage account | Storage Queue Data Contributor |
 | Storage account | Storage Table Data Contributor |
-| ACR | AcrPull |
 | Web PubSub | Web PubSub Service Owner (negotiate + send) |
 | Foundry account (RG `ai-services`) | Cognitive Services User (invoke deployments) |
 | Azure Speech account | Cognitive Services User (invoke MAI-Transcribe-2) |
@@ -73,9 +72,9 @@ available in Sweden Central.
 
 ### Deliberate network exceptions (Storage never weakened)
 
-- **ACR** is Standard with `publicNetworkAccess: Enabled`. ACR Private Link requires the
-  **Premium** SKU; Standard keeps `az acr build` and managed-identity pulls working over
-  the public endpoint while admin user is disabled and there are no registry credentials.
+- **GHCR** serves the public, credential-free Rust image over HTTPS. The image is
+  pulled by its verified digest; no registry PAT, Azure registry or AcrPull role
+  is required. The previous Standard ACR was explicitly retired.
 - **Web PubSub** keeps public client connectivity **by design** — the Windows tray client
   connects directly from the Internet using a short-lived, user-scoped client URL that the
   backend mints with its managed identity (`disableLocalAuth: true`, so no access keys).
@@ -85,8 +84,8 @@ Neither exception touches Storage, which remains fully private.
 ## Prerequisites
 
 - Azure CLI (`az`) logged in, with the target subscription selected.
-- Bicep CLI (bundled with `az`). Docker is **not** required — the image is built in the
-  cloud by `az acr build`.
+- Bicep CLI (bundled with `az`). Local Docker is **not** required — the image is
+  built and published by the trusted-main GitHub Actions workflow.
 - Permission to create resource groups and role assignments in the subscription.
 
 ## Deploy
@@ -129,8 +128,8 @@ rollback. Preserve their UAMI, private network, URL, scaling and hourly schedule
 do not rerun this full provisioning script for that update. An anonymous
 public GHCR image needs no PAT or new managed-identity role. The actual rollout
 succeeded without adding a GHCR registry entry; the old ACR entry was retained.
-Keep the existing ACR and prior digest for rollback until separately authorized
-for retirement. Neither the publish workflow nor CI deploys Azure automatically.
+Neither the publish workflow nor CI deploys Azure automatically. The former ACR
+and old cloud-image rollback were explicitly retired on November 6.
 
 ### Current verified deployment
 
@@ -157,13 +156,29 @@ The next natural cleanup execution, `caj-cleanup-29898540`, ran the new digest
 at `2026-11-05T21:00:00Z` and succeeded at `21:00:34Z`. No ad-hoc cleanup was
 triggered. Existing data retention policy was not changed.
 
-The Standard registry `crcotvrspddxkti` still exists with one repository and
-15 tagged image digests, including the original Python rollback image. No
-current project service image references it, but its three registry entries,
-27 inactive application revisions and AcrPull assignment remain. Deleting it
-would lose direct rollback to those image versions. Current Bicep also still
-declares that registry and its ACR-only wiring, so retirement must address both
-the exact resource and those source references under separate approval.
+### Verified ACR retirement
+
+On November 6, the owner explicitly confirmed no other consumers and accepted
+the loss of direct rollback to the 15 old image versions. The exact Standard
+registry `crcotvrspddxkti` in `rg-cot-voice-recorder` was deleted. Its three unused
+registry entries were removed from the API, worker and cleanup Job. The former
+AcrPull assignment is absent; the runtime identity's six other assignments
+remain. The original ReadOnly lock was restored with the same scope, name, notes
+and owners. Registry absence, empty registry arrays, unchanged non-ACR service
+configuration and actual API liveness/readiness were independently verified.
+
+The existing Bicep compiler built the pre/post module graphs. They differ only
+by the registry and its AcrPull assignment, associated outputs/parameters and
+three registry arrays; other resource properties, roles and module wiring are
+unchanged. No full Bicep deployment was applied. Future provisioning no longer
+recreates an ACR or expects its outputs. The Rust/Docker/publish graph was not
+changed and no replacement image was built.
+
+Historical inactive revisions may still describe the old ACR image, but that
+image is no longer available for reactivation. No inactive revision, Git
+history, private Windows backup, current GHCR image or customer data was deleted
+by this retirement. Removing the registry ends its ongoing resource charge;
+it does not refund historical usage.
 
 ### Parameters and secrets
 
@@ -208,10 +223,12 @@ container builds; an alternate approved project feed can override both.
 
 ### Azure Developer CLI (optional)
 
-`azure.yaml` maps the `api` service for `azd` familiarity. `azd provision` can create the
-infrastructure, but use `deploy.ps1` for the full flow: the Container Apps pull the image
-from the ACR created in phase 1, and Storage is private, so a single pass cannot both
-build the image and start healthy apps.
+`azure.yaml` keeps infrastructure-only `azd provision` familiarity; it does not
+map an implicit image build/deploy service. Image publishing belongs to GitHub
+Actions. `deploy.ps1` uses the already published GHCR digest for an explicitly
+authorized full-infrastructure setup. Its two phases establish private networking,
+identity and RBAC before starting the applications; existing image updates do not
+reprovision that infrastructure.
 
 ## Validate / operate
 
@@ -254,5 +271,5 @@ curl -i https://<api-fqdn>/v1/recordings/x   # 401 until Google auth is configur
 - Web PubSub **Free_F1** (no cost) is sufficient for one user.
 - Four private endpoints + a VNet incur a small hourly PE cost; this is the price of the
   closed Storage firewall the subscription policy requires.
-- ACR **Standard** avoids Premium's Private Link cost; the tradeoff is a public (but
-  credential-less, MI-only) registry endpoint.
+- The old Standard ACR has been removed. GHCR publishing and GitHub Actions usage
+  are separate from Azure resource billing; historical ACR charges are not refunded.

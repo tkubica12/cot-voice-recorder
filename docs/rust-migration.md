@@ -26,6 +26,49 @@ znovu v odpovidajicim scope.
 
 ## Aktualni progress
 
+**ACR RETIREMENT DOKONCEN 6. listopadu 2026.** Po skutecnem vyslovnem potvrzeni
+nepouzivani registru jinde a prijeti ztraty oldPython rollbacku byl smazan
+PRESNE Standard ACR `crcotvrspddxkti` v `rg-cot-voice-recorder`, vcetne jeho
+1repository/15tagged image verzi. Odstraneny jsou presne 3oldACRserverentries
+v existujicich `ca-api`, `ca-worker`, `caj-cleanup`. Puvodni AcrPull scoped
+assignment po resourcedelete neni pritomen; sest ostatnich runtime UAMI
+assignments zustava. Zadna jina role/principal, cloud service ani customer data
+se nemazaly. User potvrzeni external/AKS/other-subscription non-use bylo
+rozhodnutim vlastnika, nikoli agentem vymysleny globalni discovery proof.
+
+Source-only commit `fa8ece0673c9339662571a22af9f4e785733917b` odstranuje
+registry+AcrPull deklarace, vystupy/parametr/wiring a 3authenticated registry
+arrays. Existujici Bicep0.38.33 before/aftercompile a full normalized module
+graph comparison potvrdily jen tyto 2ACRresources a konkretni registry vazby
+jako rozdil; VSECHNYnonACRresourceproperties/roles/modules/otherparams jsou
+stejne (generator hash a descriptive metadata nejsou runtime invariant).
+Deploy helper nema stale ACR outputs a fullprovision uz registry nevytvori.
+Nebyl spusten Bicep apply/fullprovision a nezmenil se Rust/Docker/workflow
+graph; zadny dalsi image rebuild/publish nebyl potreba. Tyto infra-only paths
+nespousti existujici quality workflow, takze se netvrdi neexistujici novy CI
+PASS; primo relevantni existujici compiler+graph kontroly prosly.
+
+Po skutecnem DELETE a resource404/empty project registry list byly nezavisle
+overeny fullselectedservice snapshots: stale PUBLICGHCR143f, provisioning/ready
+Succeeded, URL/UAMI/environment/scalesKEDA/cron/args/envNAMES+secretREFS
+nezmeneny krome POUZEoldACRregistryentry removal. API actuallive+readyHTTP200.
+Lock `nesahat` byl v finally obnoven a fresh ARM GET potvrdil puvodni
+ReadOnly/name/id/scope/notes/owners shodu. Pri post-delete roleguardu CLI
+`--scope` validovalo uz smazany parent a konzervativne nahlasilo partial
+failure; tento puvodni report zustava. Nove independent read-only listovani
+PRESNEstejneho runtimeUAMI bezAADnames potvrdilo 0assignments na smazanem
+ACRscope a 6ostatnich roles. Neslo o dalsi IAM deletion nebo fail-open
+rollback; finalni absence/invariant proof je explicitni.
+
+Oldcloud9054 image rollback je zamerne ztracen; inactive historical revisions
+mohou stale popisovat puvodni image, ale neni uz pullable. Git historie,
+historicke publicreleaseassets a soukroma Windows zaloha zustaly.
+AktualniGHCRimage/servicesdata/Windowsapp/Android zustaly untouched.
+Zruseni registru odstranuje jeho prubezny resourcecost, ne historicalbillrefund.
+Podminky noveAIinferenceNOTRUN, workerEMPTY_WAITING vsrealprocessingNOTOBSERVED
+a predchozi normalnewimage cleanupSucceeded21:00Z zustavaji pravdive;
+neprovadel se novy workload, microphone/paste test ani ad-hoc cleanup.
+
 **ACTUAL PRODUCTION CUTOVER DOKONCEN 5. listopadu 2026.** Nasledujici novejsi stav
 nahrazuje starsi source-only/neprovedene-deployment hranice v historickem ledgeru.
 Zdroj `fd746f8625d3f7bf845ea899bba8f66acbe7c3b6` ma vsechny current quality jobs
@@ -74,9 +117,9 @@ Stary Standard ACR a digest `9054a0eb...` jsou zatim ponechany pro rollback:
 a exact-ACR image projection pro zname ARM container typy v explicitni
 subscription nasly 0aktivnich image consumers; AKS/external/jine subscription
 nejsou tim dokazany jako nepouzivane. ACR muze nadale uctovat poplatky.
-Jeho odstraneni a souvisejici ACR-only Bicep/registry wiring je samostatne
-destruktivni rozhodnuti, ktere dosud NEBYLO provedeno. Git historie, rollback
-images a soukroma Windows zaloha se v cutoveru nemazaly. Windows app/userdata,
+Toto byla ponechana rollback hranice pred naslednym explicitne schvalenym
+retirementem 6. listopadu, jehoz skutecny vysledek je popsan vyse. Git historie
+a soukroma Windows zaloha se v cutoveru nemazaly. Windows app/userdata,
 Android a backend URL zustaly beze zmeny.
 
 Dokonceno SOURCE cleanup + fast-forward merge/push do `main`: testovany source

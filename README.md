@@ -17,8 +17,12 @@ No new paid-model inference test was run, and an empty worker queue is not proof
 of real-job processing. The existing public **1.6.0** release
 still contains the historical Windows **1.5.1** managed installer and Android
 **1.3.0**; source cleanup does not replace those assets or publish a release.
-The old Standard ACR is still retained for rollback and can still incur charges;
-its removal is a separate destructive decision, not a completed saving.
+**ACR retired on November 6:** the old Standard registry, its 15 tagged image
+versions, three unused service registry entries and ACR-only provisioning/pull
+bindings have been removed under explicit approval. The GHCR services remain
+healthy. Direct rollback to the old Python image is no longer available; Git
+history and the private Windows backup remain intact. This removes the ongoing
+ACR resource cost, not previously accrued charges.
 
 **Android 1.3.0:** reliable ten-second uploads feed one continuous cloud
 MAI session. Cloud audio is retained for full replay until completion; optional
@@ -228,7 +232,7 @@ cd infra
 
 The idempotent deployment:
 
-1. creates the VNet, private endpoints, DNS zones, Storage, ACR, Web PubSub, managed identity,
+1. creates the VNet, private endpoints, DNS zones, Storage, Web PubSub, managed identity,
    and role assignments;
 2. uses the immutable public GHCR image published by the trusted-main Actions workflow;
 3. deploys the external API, queue-scaled worker, and hourly cleanup job.
@@ -237,8 +241,9 @@ The script prints the API URL when complete. Storage public access and shared-ke
 authentication remain disabled; runtime access uses managed identity. See
 [`infra/README.md`](infra/README.md) for parameters, redeployment, and operations.
 For an existing deployment, update only the three service images and necessary
-entrypoints; do not rerun full provisioning. ACR and its old image remain rollback
-resources until separately retired. Package visibility must be verified by an
+entrypoints; do not rerun full provisioning. The former ACR rollback was
+explicitly retired; retain verified GHCR digests for future Rust updates.
+Package visibility must be verified by an
 anonymous GHCR pull before switching production.
 
 ### 3. Build and install Android
@@ -290,7 +295,7 @@ downloaded on the phone and installed as an update.
 - Azure Storage is private: public network access and shared keys are disabled. Container
   Apps reaches Blob, Queue, and Table through VNet private endpoints and private DNS.
 - API, worker, and cleanup job use a shared user-assigned managed identity for Storage,
-  Foundry, Web PubSub, and ACR—there are no Azure data-plane keys.
+  Foundry and Web PubSub—there are no Azure data-plane keys.
 - Audio exists only while needed for processing. Streaming cloud segments survive model
   attempts until final transcript completion; legacy chunks are deleted after individual
   transcription. Android deletes its local copy only after server acknowledgement.

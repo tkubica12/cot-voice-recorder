@@ -41,7 +41,7 @@ param googleAllowedAudiences string
 param allowlistedEmail string
 
 // Configuration is delivered entirely through environment variables. No secrets:
-// Storage / Foundry / Web PubSub / ACR all authenticate with the managed identity.
+// Storage / Foundry / Web PubSub authenticate with the managed identity.
 var commonEnv = [
   {
     name: 'AZURE_CLIENT_ID'

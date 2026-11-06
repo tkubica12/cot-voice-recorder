@@ -447,7 +447,7 @@ resource webPubSubHub 'Microsoft.SignalRService/webPubSub/hubs@2024-03-01' = {
 
 // ------------------------------------------------------------- RBAC
 // Least-privilege data-plane roles for the shared runtime identity. Pre-created
-// so ACR pull / Storage access / Web PubSub are deterministic before apps start.
+// so Storage access / Web PubSub are deterministic before apps start.
 resource raBlob 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(storage.id, uami.id, roleBlobDataContributor)
   scope: storage
