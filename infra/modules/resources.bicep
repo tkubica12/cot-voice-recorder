@@ -1,6 +1,6 @@
 // =============================================================================
 // Core infrastructure (resource-group scoped): networking, private Storage,
-// ACR, Web PubSub, Log Analytics, user-assigned identity, RBAC and the
+// Web PubSub, Log Analytics, user-assigned identity, RBAC and the
 // Container Apps managed environment.
 // =============================================================================
 
@@ -21,7 +21,6 @@ param foundryEndpoint string
 
 // ------------------------------------------------------------------ names
 var storageAccountName = 'stcotvr${resourceToken}'
-var acrName = 'crcotvr${resourceToken}'
 var webPubSubName = 'wps-cotvr-${resourceToken}'
 var identityName = 'id-cotvr-${resourceToken}'
 var vnetName = 'vnet-cotvr'
@@ -33,7 +32,6 @@ var speechAccountName = 'aispeech-cotvr-${resourceToken}'
 var roleBlobDataContributor = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
 var roleQueueDataContributor = '974c5e8b-45b9-4653-ba55-5f855dd0fb88'
 var roleTableDataContributor = '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3'
-var roleAcrPull = '7f951dda-4ed3-4680-a7ca-43fe172d538d'
 var roleWebPubSubServiceOwner = '12cf5a90-567b-43ae-8102-96cf46c7d9b4'
 var roleCognitiveServicesUser = 'a97b65f3-24c7-4388-baec-2e87135dc908'
 
@@ -416,24 +414,6 @@ resource peSpeechDns 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@20
   }
 }
 
-// -------------------------------------------------- container registry
-// Standard SKU with public network access + managed-identity pull. ACR private
-// link requires Premium; Standard keeps `az acr build` automatable while the
-// runtime identity authenticates pulls without admin credentials.
-resource acr 'Microsoft.ContainerRegistry/registries@2023-11-01-preview' = {
-  name: acrName
-  location: location
-  tags: tags
-  sku: {
-    name: 'Standard'
-  }
-  properties: {
-    adminUserEnabled: false
-    publicNetworkAccess: 'Enabled'
-    anonymousPullEnabled: false
-  }
-}
-
 // --------------------------------------------------------- web pubsub
 // Free tier is sufficient for a single user. AAD-only (local auth disabled) so
 // the backend uses managed identity to mint client URLs and send events.
@@ -495,15 +475,6 @@ resource raTable 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roleTableDataContributor)
   }
 }
-resource raAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(acr.id, uami.id, roleAcrPull)
-  scope: acr
-  properties: {
-    principalId: uami.properties.principalId
-    principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roleAcrPull)
-  }
-}
 resource raWebPubSub 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(webPubSub.id, uami.id, roleWebPubSubServiceOwner)
   scope: webPubSub
@@ -558,8 +529,6 @@ output storageAccountName string = storageAccountName
 output blobEndpoint string = storage.properties.primaryEndpoints.blob
 output queueEndpoint string = storage.properties.primaryEndpoints.queue
 output tableEndpoint string = storage.properties.primaryEndpoints.table
-output acrName string = acr.name
-output acrLoginServer string = acr.properties.loginServer
 output webPubSubName string = webPubSub.name
 output webPubSubEndpoint string = 'https://${webPubSub.properties.hostName}'
 output speechAccountName string = speech.name

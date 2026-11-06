@@ -4,7 +4,7 @@
     Repeatable two-phase deployment of the cot-voice-recorder Azure backend.
 
 .DESCRIPTION
-    Phase 1  : provision all infrastructure (VNet, private Storage, ACR, Web PubSub,
+    Phase 1  : provision all infrastructure (VNet, private Storage, Web PubSub,
                Log Analytics, user-assigned identity, RBAC, Container Apps env) with
                deployApps=false.
     Image    : use an already published immutable public GHCR digest. Image
@@ -96,10 +96,7 @@ $phase1Raw = Invoke-Az $phase1Args 'Phase 1 deployment'
 $phase1 = ($phase1Raw | Out-String | ConvertFrom-Json)
 $o = $phase1.properties.outputs
 
-$acrName = $o.acrName.value
-$acrLoginServer = $o.acrLoginServer.value
 $storageAccountName = $o.storageAccountName.value
-Write-Host "ACR          : $acrName ($acrLoginServer)" -ForegroundColor Green
 Write-Host "Storage      : $storageAccountName" -ForegroundColor Green
 
 $imageRef = $ContainerImage
@@ -150,7 +147,6 @@ Write-Host "`n=== Deployment outputs ===" -ForegroundColor Cyan
     SpeechEndpoint      = $out.speechEndpoint.value
     ContainerEnv        = $out.managedEnvironmentName.value
     LogAnalytics        = $out.logAnalyticsName.value
-    Acr                 = $out.acrName.value
     Image               = $imageRef
 } | Format-List
 

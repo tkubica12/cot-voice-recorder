@@ -10,14 +10,11 @@ param location string
 @description('Resource tags.')
 param tags object
 
-@description('Backend container image (loginServer/repo:tag).')
+@description('Published immutable public GHCR image digest.')
 param containerImage string
 
 @description('Container Apps managed environment resource id.')
 param managedEnvironmentId string
-
-@description('ACR login server (e.g. crxxx.azurecr.io).')
-param acrLoginServer string
 
 @description('User-assigned managed identity resource id (shared).')
 param userAssignedIdentityId string
@@ -213,13 +210,6 @@ var commonEnv = [
   }
 ]
 
-var registries = [
-  {
-    server: acrLoginServer
-    identity: userAssignedIdentityId
-  }
-]
-
 // --------------------------------------------------------------- API app
 // Public external HTTPS ingress; one warm API replica for low-latency dictation.
 resource apiApp 'Microsoft.App/containerApps@2025-01-01' = {
@@ -249,7 +239,7 @@ resource apiApp 'Microsoft.App/containerApps@2025-01-01' = {
           }
         ]
       }
-      registries: registries
+      registries: []
     }
     template: {
       containers: [
@@ -321,7 +311,7 @@ resource workerApp 'Microsoft.App/containerApps@2025-01-01' = {
     workloadProfileName: 'Consumption'
     configuration: {
       activeRevisionsMode: 'Single'
-      registries: registries
+      registries: []
     }
     template: {
       containers: [
@@ -386,7 +376,7 @@ resource cleanupJob 'Microsoft.App/jobs@2025-01-01' = {
         parallelism: 1
         replicaCompletionCount: 1
       }
-      registries: registries
+      registries: []
     }
     template: {
       containers: [

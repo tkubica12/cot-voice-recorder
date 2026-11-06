@@ -6,8 +6,8 @@
 // Azure AI Foundry account.
 //
 // Two-phase orchestration (see infra/deploy.ps1):
-//   Phase 1: deployApps=false  -> provision infra, ACR, identity and RBAC.
-//   (build & push the backend image to the new ACR)
+//   Phase 1: deployApps=false  -> provision infra, identity and RBAC.
+//   (publish the backend image through the trusted-main GHCR workflow)
 //   Phase 2: deployApps=true   -> deploy API / worker container apps + cleanup job.
 //
 // Idempotent: re-running either phase converges to the declared state.
@@ -42,7 +42,7 @@ param foundryEndpoint string = 'https://tomaskubica-foundry-resource.cognitivese
 @description('Whether to deploy the Container Apps (API + worker) and the cleanup job. False on the first pass (before the image exists).')
 param deployApps bool = false
 
-@description('Fully qualified container image reference (registry/repo:tag) for the backend. Required when deployApps=true.')
+@description('Immutable public GHCR image digest for the backend. Required when deployApps=true.')
 param containerImage string = ''
 
 @description('Comma-separated Google OIDC audiences. Deny-all placeholder until real client IDs are registered.')
@@ -87,7 +87,6 @@ module apps 'modules/apps.bicep' = if (deployApps) {
     tags: tags
     containerImage: containerImage
     managedEnvironmentId: resources.outputs.managedEnvironmentId
-    acrLoginServer: resources.outputs.acrLoginServer
     userAssignedIdentityId: resources.outputs.userAssignedIdentityId
     userAssignedClientId: resources.outputs.userAssignedClientId
     storageAccountName: resources.outputs.storageAccountName
@@ -112,8 +111,6 @@ module foundryRbac 'modules/foundry-rbac.bicep' = {
 
 output resourceGroupNameOut string = rg.name
 output location string = location
-output acrName string = resources.outputs.acrName
-output acrLoginServer string = resources.outputs.acrLoginServer
 output storageAccountName string = resources.outputs.storageAccountName
 output blobEndpoint string = resources.outputs.blobEndpoint
 output queueEndpoint string = resources.outputs.queueEndpoint
