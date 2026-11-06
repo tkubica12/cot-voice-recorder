@@ -227,6 +227,11 @@ impl AzureStorage {
             .format(&time::format_description::well_known::Rfc2822)
             .map_err(|_| error())?
             .replace("+0000", "GMT");
+        // Azure Storage answers 411 to a PUT/POST (lease, queue update) that omits Content-Length.
+        let body = match body {
+            None if matches!(method, Method::PUT | Method::POST) => Some(Vec::new()),
+            body => body,
+        };
         let mut request = self
             .http
             .request(method, uri)
@@ -1027,6 +1032,58 @@ mod tests {
             )
             .await
             .unwrap();
+        server.await.unwrap();
+        identity_server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn bodyless_lease_and_queue_updates_declare_zero_length_instead_of_omitting_it() {
+        use tokio::io::AsyncWriteExt;
+        let (identity, identity_server) = identity_fixture().await;
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            for _ in 0..4 {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let (headers, body) = read_request(&mut stream).await;
+                let headers = headers.to_ascii_lowercase();
+                assert!(headers.starts_with("put "));
+                assert!(
+                    headers.contains("content-length: 0\r\n"),
+                    "Azure Storage rejects a body-less PUT without Content-Length with 411."
+                );
+                assert!(!headers.contains("transfer-encoding:"));
+                assert!(body.is_empty());
+                stream.write_all(b"HTTP/1.1 200 OK\r\nx-ms-lease-id: 00000000-0000-4000-8000-000000000001\r\nx-ms-popreceipt: renewed-receipt\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await.unwrap();
+            }
+        });
+        let storage = fixture(port, identity);
+        let lease = storage
+            .acquire_blob_lease(
+                "transcripts",
+                "fixture.txt",
+                "00000000-0000-4000-8000-000000000001",
+            )
+            .await
+            .unwrap();
+        storage
+            .renew_blob_lease("transcripts", "fixture.txt", &lease)
+            .await
+            .unwrap();
+        storage
+            .release_blob_lease("transcripts", "fixture.txt", &lease)
+            .await
+            .unwrap();
+        let message = QueueMessage {
+            id: "message".into(),
+            pop_receipt: "original-receipt".into(),
+            dequeue_count: 1,
+            content: serde_json::json!({"type":"stream","recording_id":"fixture"}),
+        };
+        let renewed = storage.renew_queue("work", &message, 300).await.unwrap();
+        assert_eq!(renewed.pop_receipt, "renewed-receipt");
         server.await.unwrap();
         identity_server.await.unwrap();
     }
