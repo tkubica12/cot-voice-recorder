@@ -26,6 +26,27 @@ znovu v odpovidajicim scope.
 
 ## Aktualni progress
 
+**STORAGE 411 FIX NASAZEN 6. listopadu 2026.** Windows toast "Dictation audit
+pending" odhalil skutecnou produkcni chybu: `AzureStorage::request()` posilal
+PUT bez body (blob lease acquire/renew/release, queue message renew) uplne bez
+`Content-Length`. Skutecne Azure vraci 411 a API na Windows audit upload
+odpovidalo 503; Azurite ani lokalni mocky to nevynucuji. Raw-socket regresni
+test nejdriv selhal stejnou 503; fix posila pro PUT/POST bez body explicitni
+`Content-Length: 0` (DELETE beze zmeny). Windows klient pending audit uz
+nenotifikuje, jen loguje; Recovery ho dal ukazuje. Commity `ebce390` a
+`c81f65b`; [publisher](https://github.com/tkubica12/cot-voice-recorder/actions/runs/42175421139)
+vydal `ghcr.io/tkubica12/cot-voice-recorder@sha256:c6a83a7a80e8e592a456c6eb46b74e3d86e129468d7235c18a38d41904c51723`.
+
+Lock `nesahat` byl na vyslovne prani vlastnika ODSTRANEN a neobnoven. IMAGE-ONLY
+update: `ca-api--0000012` (100 % traffic), `ca-worker--0000009` a `caj-cleanup`
+na stejnem digestu; UAMI/args/ingress/scale/cron beze zmeny. API live+ready
+HTTP200, audit uzivatele cekajici kvuli chybe se po prepnuti nahral (journal se
+pred 48 h maze jen po uspesnem uploadu) a nova revize nelogovala zadnou Storage
+chybu. Normalni scheduled `caj-cleanup-29899140` s novym digestem probehl
+`2026-11-06T07:00:00Z` az `07:00:46Z`, Succeeded. Synteticky worker job ani
+nova inference se nespoustely. Rollback:
+`sha256:143f87adcf1f115215e01f7258ec08fb97b3725e9221ef759b3b943a58f40e02`.
+
 **ACR RETIREMENT DOKONCEN 6. listopadu 2026.** Po skutecnem vyslovnem potvrzeni
 nepouzivani registru jinde a prijeti ztraty oldPython rollbacku byl smazan
 PRESNE Standard ACR `crcotvrspddxkti` v `rg-cot-voice-recorder`, vcetne jeho

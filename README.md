@@ -7,12 +7,12 @@ native Windows preview is installed and has completed a real user dictation
 workflow; it does not require the .NET Desktop Runtime.
 
 **Production cutover completed on November 5, 2026:** the existing API, worker
-and cleanup Job run the public GHCR image
+and cleanup Job moved to the public GHCR image
 `sha256:143f87adcf1f115215e01f7258ec08fb97b3725e9221ef759b3b943a58f40e02`
 from source `fd746f8625d3f7bf845ea899bba8f66acbe7c3b6`. Actual API readiness,
 private Storage bootstrap and the next normal scheduled cleanup succeeded.
 Classic ACA, private networking, managed identity, URL, queue scaling and hourly
-cleanup remain unchanged; the original resource-group ReadOnly lock was restored.
+cleanup remain unchanged.
 No new paid-model inference test was run, and an empty worker queue is not proof
 of real-job processing. The existing public **1.6.0** release
 still contains the historical Windows **1.5.1** managed installer and Android
@@ -23,6 +23,15 @@ bindings have been removed under explicit approval. The GHCR services remain
 healthy. Direct rollback to the old Python image is no longer available; Git
 history and the private Windows backup remain intact. This removes the ongoing
 ACR resource cost, not previously accrued charges.
+**Storage fix deployed on November 6:** the API, worker and cleanup Job now run
+`sha256:c6a83a7a80e8e592a456c6eb46b74e3d86e129468d7235c18a38d41904c51723`
+from source `c81f65b6f8f293fed7f50f3ebee798fd587ad3e6`. Body-less Azure Storage
+writes (blob lease acquire/renew/release, queue message renew) now send
+`Content-Length: 0`; real Azure had rejected them with 411, so Windows dictation
+audit uploads failed with 503. A pending audit uploaded right after the
+image-only update. The Windows source no longer toasts pending audits; Recovery
+still shows them. The resource-group ReadOnly lock was removed at the owner's
+request.
 
 **Android 1.3.0:** reliable ten-second uploads feed one continuous cloud
 MAI session. Cloud audio is retained for full replay until completion; optional

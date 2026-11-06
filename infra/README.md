@@ -133,7 +133,34 @@ and old cloud-image rollback were explicitly retired on November 6.
 
 ### Current verified deployment
 
-`ca-api`, `ca-worker` and `caj-cleanup` run the same immutable public image
+Since November 6, `ca-api`, `ca-worker` and `caj-cleanup` run the same immutable
+public image
+`ghcr.io/tkubica12/cot-voice-recorder@sha256:c6a83a7a80e8e592a456c6eb46b74e3d86e129468d7235c18a38d41904c51723`,
+published by [the trusted-main workflow](https://github.com/tkubica12/cot-voice-recorder/actions/runs/42175421139)
+from `c81f65b6f8f293fed7f50f3ebee798fd587ad3e6` (Linux/amd64, UID 10001, native
+entrypoint; an anonymous manifest read returned the digest before rollout). It
+fixes body-less Azure Storage writes (blob lease acquire/renew/release and queue
+message renew) that omitted `Content-Length`: real Azure rejected them with 411
+and the API answered Windows dictation audit uploads with 503. Azurite and the
+local fixtures do not enforce this, so a raw-socket regression test now pins
+`Content-Length: 0`. Backend, Rust and Windows CI for that commit passed.
+
+The image-only update created `ca-api--0000012` (100% traffic) and
+`ca-worker--0000009`; identity, launch arguments, ingress, scaling and the hourly
+cron matched the previous snapshot. API liveness/readiness returned 200, a
+Windows audit left pending by the bug uploaded right after the switch, and the
+new API revision logged no Storage errors. The next natural cleanup execution,
+`caj-cleanup-29899140`, ran the new digest at `2026-11-06T07:00:00Z` and
+succeeded at `07:00:46Z`. No synthetic worker job or model
+inference was issued. The rollback target is the previous public digest
+`sha256:143f87adcf1f115215e01f7258ec08fb97b3725e9221ef759b3b943a58f40e02`.
+
+The resource-group `nesahat` ReadOnly lock was removed at the owner's explicit
+request on November 6 and has not been restored.
+
+#### November 5 cutover
+
+`ca-api`, `ca-worker` and `caj-cleanup` moved to the immutable public image
 `ghcr.io/tkubica12/cot-voice-recorder@sha256:143f87adcf1f115215e01f7258ec08fb97b3725e9221ef759b3b943a58f40e02`,
 published by [the trusted-main workflow](https://github.com/tkubica12/cot-voice-recorder/actions/runs/42093843593)
 from `fd746f8625d3f7bf845ea899bba8f66acbe7c3b6`.
